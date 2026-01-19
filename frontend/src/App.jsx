@@ -16,6 +16,14 @@ const CANDLE_LIMIT_OPTIONS = [
   { value: 100000, label: '100,000' },
 ]
 
+const PRICE_PRECISION_OPTIONS = [
+  { value: 2, label: '2 decimals' },
+  { value: 3, label: '3 decimals' },
+  { value: 4, label: '4 decimals' },
+  { value: 5, label: '5 decimals' },
+  { value: 6, label: '6 decimals' },
+]
+
 function App() {
   const [sidebarWidth, setSidebarWidth] = useState(320)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -32,24 +40,37 @@ function App() {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}candleLimit`)
     return saved ? parseInt(saved, 10) : 5000
   })
+  const [pricePrecision, setPricePrecision] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}pricePrecision`)
+    return saved ? parseInt(saved, 10) : 5
+  })
   const [chartType, setChartType] = useState('m1') // 'm1' | 'renko'
   const [renkoSettings, setRenkoSettings] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}renkoSettings`)
     if (saved) {
       const parsed = JSON.parse(saved)
-      // Validate brickSize - must be reasonable for pips (at least 1 for fixed_pip)
-      if (parsed.brickMethod === 'fixed_pip' && parsed.brickSize < 1) {
-        parsed.brickSize = 10 // Reset to default if invalid
+      // Migrate old settings format
+      if (parsed.brickMethod === 'fixed_pip') {
+        parsed.brickMethod = 'ticks'
       }
-      if (!parsed.reversalMultiplier || parsed.reversalMultiplier < 1) {
-        parsed.reversalMultiplier = 2
+      // Validate brickSize - must be a valid price value
+      if (!parsed.brickSize || parsed.brickSize <= 0) {
+        parsed.brickSize = 0.0010
+      }
+      // Migrate from reversalMultiplier to reversalSize
+      if (parsed.reversalMultiplier && !parsed.reversalSize) {
+        parsed.reversalSize = parsed.brickSize * parsed.reversalMultiplier
+        delete parsed.reversalMultiplier
+      }
+      if (!parsed.reversalSize || parsed.reversalSize <= 0) {
+        parsed.reversalSize = 0.0020
       }
       return parsed
     }
     return {
-      brickMethod: 'fixed_pip',
-      brickSize: 10,
-      reversalMultiplier: 2,
+      brickMethod: 'ticks',
+      brickSize: 0.0010,
+      reversalSize: 0.0020,
       atrPeriod: 14
     }
   })
@@ -181,6 +202,12 @@ function App() {
     }
   }
 
+  const handlePricePrecisionChange = (e) => {
+    const newPrecision = parseInt(e.target.value, 10)
+    setPricePrecision(newPrecision)
+    localStorage.setItem(`${STORAGE_PREFIX}pricePrecision`, newPrecision.toString())
+  }
+
   const loadRenko = async (instrument, settings = renkoSettings) => {
     if (!instrument) return
 
@@ -192,7 +219,7 @@ function App() {
         body: JSON.stringify({
           brick_method: settings.brickMethod,
           brick_size: settings.brickSize,
-          reversal_multiplier: settings.reversalMultiplier || 2,
+          reversal_size: settings.reversalSize,
           atr_period: settings.atrPeriod
         })
       })
@@ -344,6 +371,19 @@ function App() {
               onChange={handleRenkoSettingsChange}
             />
           )}
+          {activeInstrument && (
+            <select
+              className="precision-select mono"
+              value={pricePrecision}
+              onChange={handlePricePrecisionChange}
+            >
+              {PRICE_PRECISION_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       </header>
 
@@ -383,6 +423,7 @@ function App() {
             chartType={chartType}
             isLoading={isLoading}
             activeInstrument={activeInstrument}
+            pricePrecision={pricePrecision}
           />
         </main>
       </div>

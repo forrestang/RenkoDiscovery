@@ -2,10 +2,32 @@ import { useRef, useEffect, useState } from 'react'
 import { createChart } from 'lightweight-charts'
 import './ChartArea.css'
 
-function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument }) {
+// Format timestamp for crosshair label (includes year)
+function formatTimestamp(isoString) {
+  if (!isoString) return null
+  const date = new Date(isoString)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}`
+}
+
+// Short format for tick marks
+function formatTickMark(isoString) {
+  if (!isoString) return null
+  const date = new Date(isoString)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${month}-${day}`
+}
+
+function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument, pricePrecision = 5 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
+  const datetimesRef = useRef([])
 
   // Create chart on mount or when chartType changes
   useEffect(() => {
@@ -48,11 +70,17 @@ function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument })
       timeScale: {
         borderColor: '#27272a',
         timeVisible: false,
-        // Custom formatter to show bar/brick index instead of time
-        tickMarkFormatter: (time) => String(time),
+        // Custom formatter to show timestamps
+        tickMarkFormatter: (index) => {
+          const dt = datetimesRef.current[index]
+          return dt ? formatTickMark(dt) : String(index)
+        },
       },
       localization: {
-        timeFormatter: (time) => `${label} ${time}`,
+        timeFormatter: (index) => {
+          const dt = datetimesRef.current[index]
+          return dt ? formatTimestamp(dt) : `${label} ${index}`
+        },
       },
       handleScroll: {
         mouseWheel: true,
@@ -104,7 +132,19 @@ function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument })
   useEffect(() => {
     if (!seriesRef.current || !chartData?.data) return
 
-    const { open, high, low, close } = chartData.data
+    const { open, high, low, close, datetime } = chartData.data
+
+    // Store datetime array for formatter access
+    datetimesRef.current = datetime || []
+
+    // Apply price precision from user setting
+    seriesRef.current.applyOptions({
+      priceFormat: {
+        type: 'price',
+        precision: pricePrecision,
+        minMove: Math.pow(10, -pricePrecision),
+      },
+    })
 
     // Transform data using sequential index as "time"
     const data = open.map((_, i) => ({
@@ -125,7 +165,7 @@ function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument })
         to: data.length - 1,
       })
     }
-  }, [chartData, chartType])
+  }, [chartData, chartType, pricePrecision])
 
   if (!chartData && !isLoading) {
     return (

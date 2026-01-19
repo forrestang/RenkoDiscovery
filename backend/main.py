@@ -65,9 +65,9 @@ class ChartDataRequest(BaseModel):
 
 
 class RenkoRequest(BaseModel):
-    brick_method: str = "fixed_pip"  # "fixed_pip" | "percentage" | "atr"
-    brick_size: float = 10.0  # pips for fixed_pip, percentage for percentage, multiplier for atr
-    reversal_multiplier: float = 2.0  # reversal = brick_size * reversal_multiplier (standard is 2)
+    brick_method: str = "ticks"  # "ticks" | "percentage" | "atr"
+    brick_size: float = 0.0010  # raw price value for ticks, percentage for percentage, multiplier for atr
+    reversal_size: float = 0.0020  # raw price value for reversal threshold
     atr_period: int = 14  # only used for ATR method
     working_dir: Optional[str] = None
 
@@ -513,17 +513,20 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     print(f"DEBUG: Index type: {type(df.index)}, first: {df.index[0]}, last: {df.index[-1]}")
 
     # Calculate brick size based on method
-    if request.brick_method == "fixed_pip":
-        pip_value = get_pip_value(instrument)
-        brick_size = request.brick_size * pip_value
+    if request.brick_method == "ticks":
+        # Direct raw price value
+        brick_size = request.brick_size
+        reversal_size = request.reversal_size
     elif request.brick_method == "percentage":
         # Use percentage of current price
         current_price = df['close'].iloc[-1]
         brick_size = current_price * (request.brick_size / 100)
+        reversal_size = current_price * (request.reversal_size / 100)
     elif request.brick_method == "atr":
-        # Use ATR multiplier
+        # Use ATR-based calculation
         atr_value = calculate_atr(df.reset_index(), request.atr_period)
         brick_size = atr_value * request.brick_size
+        reversal_size = atr_value * request.reversal_size
     else:
         raise HTTPException(status_code=400, detail=f"Invalid brick_method: {request.brick_method}")
 
@@ -544,25 +547,28 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     if estimated_bricks > 100000:
         raise HTTPException(
             status_code=400,
-            detail=f"Brick size too small ({brick_size:.6f}). Would create ~{int(estimated_bricks)} bricks. For fixed_pip, use values like 5, 10, 20 pips."
+            detail=f"Brick size too small ({brick_size:.6f}). Would create ~{int(estimated_bricks)} bricks. Use a larger value."
         )
 
     # Generate Renko data
     try:
-        reversal_mult = float(request.reversal_multiplier)
         brick_size = float(brick_size)
+        reversal_size = float(reversal_size)
 
-        print(f"DEBUG: brick_size={brick_size}, reversal_multiplier={reversal_mult}")
+        print(f"DEBUG: brick_size={brick_size}, reversal_size={reversal_size}")
 
-        # Use custom implementation for non-standard reversal, renkodf for standard 2x
-        if abs(reversal_mult - 2.0) < 0.01:
-            # Standard 2x reversal - use optimized renkodf library
+        # Use renkodf for standard 2x reversal, custom implementation otherwise
+        # Check if reversal_size is approximately 2x brick_size
+        is_standard_reversal = abs(reversal_size - (brick_size * 2)) < (brick_size * 0.01)
+
+        if is_standard_reversal:
             print(f"DEBUG: Using renkodf (standard 2x reversal)")
             renko = Renko(df, brick_size)
             renko_df = renko.renko_df('wicks')
         else:
-            # Custom reversal multiplier - use our implementation
-            print(f"DEBUG: Using custom Renko (reversal_multiplier={reversal_mult})")
+            # Custom reversal size - use our implementation
+            reversal_mult = reversal_size / brick_size
+            print(f"DEBUG: Using custom Renko (reversal_size={reversal_size}, multiplier={reversal_mult:.2f}x)")
             renko_df = generate_renko_custom(df, brick_size, reversal_mult)
 
         print(f"DEBUG: Renko generated, shape={renko_df.shape}")
@@ -606,8 +612,7 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         "instrument": instrument,
         "brick_method": request.brick_method,
         "brick_size": brick_size,
-        "brick_size_pips": request.brick_size if request.brick_method == "fixed_pip" else None,
-        "reversal_multiplier": request.reversal_multiplier,
+        "reversal_size": reversal_size,
         "data": {
             "datetime": datetime_list,
             "open": renko_df['open'].tolist(),

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 
 const BRICK_METHODS = [
-  { value: 'fixed_pip', label: 'Fixed Pips' },
+  { value: 'ticks', label: 'Ticks' },
   { value: 'percentage', label: 'Percentage' },
   { value: 'atr', label: 'ATR' },
 ]
@@ -37,18 +37,18 @@ function RenkoControls({ settings, onChange }) {
   }
 
   const handleReversalChange = (e) => {
-    const value = parseFloat(e.target.value) || 2
-    setLocalSettings(prev => ({ ...prev, reversalMultiplier: value }))
+    const value = parseFloat(e.target.value) || 0
+    setLocalSettings(prev => ({ ...prev, reversalSize: value }))
   }
 
   const handleReversalBlur = () => {
-    if (localSettings.reversalMultiplier >= 1) {
+    if (localSettings.reversalSize > 0) {
       onChange(localSettings)
     }
   }
 
   const handleReversalKeyDown = (e) => {
-    if (e.key === 'Enter' && localSettings.reversalMultiplier >= 1) {
+    if (e.key === 'Enter' && localSettings.reversalSize > 0) {
       onChange(localSettings)
     }
   }
@@ -72,14 +72,27 @@ function RenkoControls({ settings, onChange }) {
 
   const getBrickSizeLabel = () => {
     switch (localSettings.brickMethod) {
-      case 'fixed_pip':
-        return 'Pips'
+      case 'ticks':
+        return 'Brick'
       case 'percentage':
         return '%'
       case 'atr':
         return 'ATR x'
       default:
         return 'Size'
+    }
+  }
+
+  const getReversalLabel = () => {
+    switch (localSettings.brickMethod) {
+      case 'ticks':
+        return 'Rev'
+      case 'percentage':
+        return '% Rev'
+      case 'atr':
+        return 'ATR Rev'
+      default:
+        return 'Rev'
     }
   }
 
@@ -104,8 +117,8 @@ function RenkoControls({ settings, onChange }) {
           onChange={handleBrickSizeChange}
           onBlur={handleBrickSizeBlur}
           onKeyDown={handleBrickSizeKeyDown}
-          min="0.1"
-          step={localSettings.brickMethod === 'percentage' ? '0.1' : '1'}
+          min="0.00001"
+          step="0.0001"
         />
         <span className="input-suffix">{getBrickSizeLabel()}</span>
       </div>
@@ -113,15 +126,14 @@ function RenkoControls({ settings, onChange }) {
         <input
           type="number"
           className="mono"
-          value={localSettings.reversalMultiplier || 2}
+          value={localSettings.reversalSize}
           onChange={handleReversalChange}
           onBlur={handleReversalBlur}
           onKeyDown={handleReversalKeyDown}
-          min="1"
-          max="10"
-          step="0.5"
+          min="0.00001"
+          step="0.0001"
         />
-        <span className="input-suffix">x Rev</span>
+        <span className="input-suffix">{getReversalLabel()}</span>
       </div>
       {localSettings.brickMethod === 'atr' && (
         <div className="renko-atr-input">
