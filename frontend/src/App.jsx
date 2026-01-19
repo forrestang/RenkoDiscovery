@@ -1,0 +1,393 @@
+import { useState, useCallback, useEffect } from 'react'
+import Sidebar from './components/Sidebar'
+import ChartArea from './components/ChartArea'
+import RenkoControls from './components/RenkoControls'
+import './styles/App.css'
+
+const API_BASE = 'http://localhost:8000'
+const STORAGE_PREFIX = 'RenkoDiscovery_'
+
+const CANDLE_LIMIT_OPTIONS = [
+  { value: 0, label: 'All' },
+  { value: 5000, label: '5,000' },
+  { value: 10000, label: '10,000' },
+  { value: 25000, label: '25,000' },
+  { value: 50000, label: '50,000' },
+  { value: 100000, label: '100,000' },
+]
+
+function App() {
+  const [sidebarWidth, setSidebarWidth] = useState(320)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [activeTab, setActiveTab] = useState('data')
+  const [files, setFiles] = useState([])
+  const [selectedFiles, setSelectedFiles] = useState([])
+  const [cachedInstruments, setCachedInstruments] = useState([])
+  const [activeInstrument, setActiveInstrument] = useState(null)
+  const [chartData, setChartData] = useState(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [processingResults, setProcessingResults] = useState(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [candleLimit, setCandleLimit] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}candleLimit`)
+    return saved ? parseInt(saved, 10) : 5000
+  })
+  const [chartType, setChartType] = useState('m1') // 'm1' | 'renko'
+  const [renkoSettings, setRenkoSettings] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}renkoSettings`)
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      // Validate brickSize - must be reasonable for pips (at least 1 for fixed_pip)
+      if (parsed.brickMethod === 'fixed_pip' && parsed.brickSize < 1) {
+        parsed.brickSize = 10 // Reset to default if invalid
+      }
+      if (!parsed.reversalMultiplier || parsed.reversalMultiplier < 1) {
+        parsed.reversalMultiplier = 2
+      }
+      return parsed
+    }
+    return {
+      brickMethod: 'fixed_pip',
+      brickSize: 10,
+      reversalMultiplier: 2,
+      atrPeriod: 14
+    }
+  })
+  const [renkoData, setRenkoData] = useState(null)
+
+  // Fetch files on mount
+  useEffect(() => {
+    fetchFiles()
+    fetchCache()
+  }, [])
+
+  const fetchFiles = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/files`)
+      if (res.ok) {
+        const data = await res.json()
+        setFiles(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch files:', err)
+    }
+  }
+
+  const fetchCache = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/cache`)
+      if (res.ok) {
+        const data = await res.json()
+        setCachedInstruments(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch cache:', err)
+    }
+  }
+
+  const handleFileSelect = useCallback((filepath) => {
+    setSelectedFiles(prev => {
+      if (prev.includes(filepath)) {
+        return prev.filter(f => f !== filepath)
+      }
+      return [...prev, filepath]
+    })
+  }, [])
+
+  const handleSelectAll = useCallback((instrument) => {
+    const instrumentFiles = files.filter(f => f.instrument === instrument)
+    const allSelected = instrumentFiles.every(f => selectedFiles.includes(f.filepath))
+
+    if (allSelected) {
+      setSelectedFiles(prev => prev.filter(fp => !instrumentFiles.some(f => f.filepath === fp)))
+    } else {
+      setSelectedFiles(prev => {
+        const newSelection = [...prev]
+        instrumentFiles.forEach(f => {
+          if (!newSelection.includes(f.filepath)) {
+            newSelection.push(f.filepath)
+          }
+        })
+        return newSelection
+      })
+    }
+  }, [files, selectedFiles])
+
+  const handleProcess = async () => {
+    if (selectedFiles.length === 0) return
+
+    setIsProcessing(true)
+    setProcessingResults(null)
+
+    try {
+      const res = await fetch(`${API_BASE}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: selectedFiles })
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        setProcessingResults(data.results)
+        setSelectedFiles([])
+        fetchCache()
+
+        // Auto-load first processed instrument
+        if (data.results.length > 0 && data.results[0].status === 'success') {
+          loadChart(data.results[0].instrument)
+        }
+      }
+    } catch (err) {
+      console.error('Processing failed:', err)
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const loadChart = async (instrument, limit = candleLimit) => {
+    setActiveInstrument(instrument)
+    setRenkoData(null) // Clear renko data when loading new instrument
+    setIsLoading(true)
+
+    try {
+      const url = limit > 0
+        ? `${API_BASE}/chart/${instrument}?limit=${limit}`
+        : `${API_BASE}/chart/${instrument}`
+      const res = await fetch(url)
+      if (res.ok) {
+        const data = await res.json()
+        setChartData(data)
+        // If renko mode is active, also load renko data
+        if (chartType === 'renko') {
+          loadRenko(instrument)
+        }
+      } else {
+        const error = await res.json()
+        console.error('Failed to load chart:', error.detail)
+      }
+    } catch (err) {
+      console.error('Failed to load chart:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleCandleLimitChange = (e) => {
+    const newLimit = parseInt(e.target.value, 10)
+    setCandleLimit(newLimit)
+    localStorage.setItem(`${STORAGE_PREFIX}candleLimit`, newLimit.toString())
+    if (activeInstrument) {
+      loadChart(activeInstrument, newLimit)
+    }
+  }
+
+  const loadRenko = async (instrument, settings = renkoSettings) => {
+    if (!instrument) return
+
+    setIsLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/renko/${instrument}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brick_method: settings.brickMethod,
+          brick_size: settings.brickSize,
+          reversal_multiplier: settings.reversalMultiplier || 2,
+          atr_period: settings.atrPeriod
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setRenkoData(data)
+      } else {
+        const error = await res.json()
+        console.error('Failed to load renko:', error.detail)
+      }
+    } catch (err) {
+      console.error('Failed to load renko:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleChartTypeChange = (type) => {
+    setChartType(type)
+    if (type === 'renko' && activeInstrument && !renkoData) {
+      loadRenko(activeInstrument)
+    }
+  }
+
+  const handleRenkoSettingsChange = (newSettings) => {
+    setRenkoSettings(newSettings)
+    localStorage.setItem(`${STORAGE_PREFIX}renkoSettings`, JSON.stringify(newSettings))
+    if (activeInstrument && chartType === 'renko') {
+      loadRenko(activeInstrument, newSettings)
+    }
+  }
+
+  const deleteCache = async (instrument) => {
+    try {
+      const res = await fetch(`${API_BASE}/cache/${instrument}`, {
+        method: 'DELETE'
+      })
+      if (res.ok) {
+        fetchCache()
+        // Clear chart if we deleted the active instrument
+        if (activeInstrument === instrument) {
+          setActiveInstrument(null)
+          setChartData(null)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete cache:', err)
+    }
+  }
+
+  const deleteAllCache = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/cache`, {
+        method: 'DELETE'
+      })
+      if (res.ok) {
+        fetchCache()
+        setActiveInstrument(null)
+        setChartData(null)
+      }
+    } catch (err) {
+      console.error('Failed to delete all cache:', err)
+    }
+  }
+
+  // Resize handling
+  const handleResizeStart = useCallback((e) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = sidebarWidth
+
+    const handleMouseMove = (e) => {
+      const newWidth = Math.max(240, Math.min(600, startWidth + e.clientX - startX))
+      setSidebarWidth(newWidth)
+    }
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [sidebarWidth])
+
+  return (
+    <div className="app">
+      <header className="app-header">
+        <div className="header-brand">
+          <svg className="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 3v18h18" />
+            <path d="M7 16l4-8 4 4 6-8" />
+          </svg>
+          <span className="brand-text">RenkoDiscovery</span>
+        </div>
+        <div className="header-status">
+          {activeInstrument && (
+            <span className="active-instrument mono">{activeInstrument}</span>
+          )}
+          {activeInstrument && (
+            <div className="chart-type-toggle">
+              <button
+                className={`toggle-btn ${chartType === 'm1' ? 'active' : ''}`}
+                onClick={() => handleChartTypeChange('m1')}
+              >
+                M1
+              </button>
+              <button
+                className={`toggle-btn ${chartType === 'renko' ? 'active' : ''}`}
+                onClick={() => handleChartTypeChange('renko')}
+              >
+                Renko
+              </button>
+            </div>
+          )}
+          {chartType === 'm1' && chartData && (
+            <span className="data-count mono">
+              {(chartData.displayed_rows || chartData.total_rows || 0).toLocaleString()}
+              {chartData.displayed_rows !== chartData.total_rows && (
+                <span className="total-hint"> / {(chartData.total_rows || 0).toLocaleString()}</span>
+              )}
+            </span>
+          )}
+          {chartType === 'renko' && renkoData && (
+            <span className="data-count mono">
+              {renkoData.total_bricks.toLocaleString()} bricks
+            </span>
+          )}
+          {chartType === 'm1' && (
+            <select
+              className="candle-limit-select mono"
+              value={candleLimit}
+              onChange={handleCandleLimitChange}
+            >
+              {CANDLE_LIMIT_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          )}
+          {chartType === 'renko' && activeInstrument && (
+            <RenkoControls
+              settings={renkoSettings}
+              onChange={handleRenkoSettingsChange}
+            />
+          )}
+        </div>
+      </header>
+
+      <div className="app-body">
+        <aside
+          className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}
+          style={{ width: sidebarCollapsed ? 48 : sidebarWidth }}
+        >
+          <Sidebar
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            files={files}
+            selectedFiles={selectedFiles}
+            onFileSelect={handleFileSelect}
+            onSelectAll={handleSelectAll}
+            onProcess={handleProcess}
+            isProcessing={isProcessing}
+            processingResults={processingResults}
+            cachedInstruments={cachedInstruments}
+            activeInstrument={activeInstrument}
+            onLoadChart={loadChart}
+            // Cache management
+            onDeleteCache={deleteCache}
+            onDeleteAllCache={deleteAllCache}
+          />
+
+          {!sidebarCollapsed && (
+            <div className="resize-handle" onMouseDown={handleResizeStart} />
+          )}
+        </aside>
+
+        <main className="main-content">
+          <ChartArea
+            chartData={chartType === 'renko' ? renkoData : chartData}
+            chartType={chartType}
+            isLoading={isLoading}
+            activeInstrument={activeInstrument}
+          />
+        </main>
+      </div>
+    </div>
+  )
+}
+
+export default App

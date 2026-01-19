@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pandas
+pyarrow
+python-multipart
+pydantic
+renkodf

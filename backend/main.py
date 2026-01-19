@@ -1,0 +1,625 @@
+"""
+RenkoDiscovery Backend - Financial Data Processing API
+"""
+import os
+import re
+from pathlib import Path
+from typing import Optional
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from renkodf import Renko
+
+app = FastAPI(title="RenkoDiscovery API", version="1.0.0")
+
+# CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Default working directory
+WORKING_DIR = Path(r"C:\Users\lawfp\Desktop\Data_renko")
+
+# Known instrument patterns for auto-detection
+INSTRUMENT_PATTERNS = [
+    # Forex pairs
+    r'(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD|EURGBP|EURJPY|GBPJPY|'
+    r'AUDJPY|EURAUD|EURCHF|AUDNZD|AUDCAD|AUDCHF|CADJPY|CHFJPY|EURAUD|EURCAD|'
+    r'EURNZD|GBPAUD|GBPCAD|GBPCHF|GBPNZD|NZDCAD|NZDCHF|NZDJPY)',
+    # Crypto
+    r'(BTC|ETH|XRP|LTC|BCH|ADA|DOT|LINK|XLM|DOGE)',
+    # Indices
+    r'(DAX|SPX|NDX|DJI|FTSE|CAC|NIKKEI|HSI)',
+]
+
+
+class FileInfo(BaseModel):
+    filename: str
+    filepath: str
+    instrument: Optional[str]
+    year: Optional[int]
+    timeframe: Optional[str]
+    size_bytes: int
+    modified: str
+
+
+class ProcessRequest(BaseModel):
+    files: list[str]
+    working_dir: Optional[str] = None
+
+
+class ChartDataRequest(BaseModel):
+    instrument: str
+    working_dir: Optional[str] = None
+    limit: Optional[int] = 5000
+
+
+class RenkoRequest(BaseModel):
+    brick_method: str = "fixed_pip"  # "fixed_pip" | "percentage" | "atr"
+    brick_size: float = 10.0  # pips for fixed_pip, percentage for percentage, multiplier for atr
+    reversal_multiplier: float = 2.0  # reversal = brick_size * reversal_multiplier (standard is 2)
+    atr_period: int = 14  # only used for ATR method
+    working_dir: Optional[str] = None
+
+
+def extract_instrument(filename: str) -> Optional[str]:
+    """Extract instrument symbol from filename."""
+    filename_upper = filename.upper()
+    for pattern in INSTRUMENT_PATTERNS:
+        match = re.search(pattern, filename_upper)
+        if match:
+            return match.group(1)
+    return None
+
+
+def extract_year(filename: str) -> Optional[int]:
+    """Extract year from filename."""
+    match = re.search(r'(20\d{2})', filename)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def extract_timeframe(filename: str) -> Optional[str]:
+    """Extract timeframe from filename (M1, M5, H1, etc.)."""
+    match = re.search(r'[_\-](M1|M5|M15|M30|H1|H4|D1|W1)[_\-\.]', filename, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return None
+
+
+@app.get("/")
+def root():
+    return {"status": "ok", "app": "RenkoDiscovery API"}
+
+
+@app.get("/files", response_model=list[FileInfo])
+def list_files(working_dir: Optional[str] = None):
+    """List all data files in the working directory's data folder."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    data_dir = base_dir / "data"
+
+    if not data_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Data directory not found: {data_dir}")
+
+    files = []
+    for filepath in data_dir.iterdir():
+        if filepath.is_file() and filepath.suffix.lower() in ['.csv', '.txt', '.dat']:
+            stat = filepath.stat()
+            files.append(FileInfo(
+                filename=filepath.name,
+                filepath=str(filepath),
+                instrument=extract_instrument(filepath.name),
+                year=extract_year(filepath.name),
+                timeframe=extract_timeframe(filepath.name),
+                size_bytes=stat.st_size,
+                modified=datetime.fromtimestamp(stat.st_mtime).isoformat()
+            ))
+
+    # Sort by instrument, then year
+    files.sort(key=lambda f: (f.instrument or "", f.year or 0))
+    return files
+
+
+@app.get("/cache")
+def list_cache(working_dir: Optional[str] = None):
+    """List all cached parquet files."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    cache_dir = base_dir / "cache"
+
+    if not cache_dir.exists():
+        return []
+
+    parquets = []
+    for filepath in cache_dir.iterdir():
+        if filepath.is_file() and filepath.suffix.lower() == '.parquet':
+            stat = filepath.stat()
+            parquets.append({
+                "filename": filepath.name,
+                "filepath": str(filepath),
+                "instrument": filepath.stem,
+                "size_bytes": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
+            })
+
+    return parquets
+
+
+@app.delete("/cache/{instrument}")
+def delete_cache_instrument(instrument: str, working_dir: Optional[str] = None):
+    """Delete a specific cached parquet file."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    cache_dir = base_dir / "cache"
+    parquet_path = cache_dir / f"{instrument}.parquet"
+
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"No cached data for {instrument}")
+
+    parquet_path.unlink()
+    return {"status": "deleted", "instrument": instrument}
+
+
+@app.delete("/cache")
+def delete_cache_all(working_dir: Optional[str] = None):
+    """Delete all cached parquet files."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    cache_dir = base_dir / "cache"
+
+    if not cache_dir.exists():
+        return {"status": "ok", "deleted": 0}
+
+    deleted = 0
+    for filepath in cache_dir.iterdir():
+        if filepath.is_file() and filepath.suffix.lower() == '.parquet':
+            filepath.unlink()
+            deleted += 1
+
+    return {"status": "ok", "deleted": deleted}
+
+
+@app.post("/process")
+def process_files(request: ProcessRequest):
+    """Process selected files into parquet format, stitching by instrument."""
+    base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
+    cache_dir = base_dir / "cache"
+    cache_dir.mkdir(exist_ok=True)
+
+    # Group files by instrument
+    instrument_files: dict[str, list[str]] = {}
+    for filepath in request.files:
+        instrument = extract_instrument(filepath)
+        if instrument:
+            if instrument not in instrument_files:
+                instrument_files[instrument] = []
+            instrument_files[instrument].append(filepath)
+
+    if not instrument_files:
+        raise HTTPException(status_code=400, detail="No valid instruments found in selected files")
+
+    results = []
+
+    for instrument, filepaths in instrument_files.items():
+        # Sort files by year for proper stitching
+        filepaths.sort(key=lambda f: extract_year(f) or 0)
+
+        dfs = []
+        for fp in filepaths:
+            try:
+                # Read CSV - handle NinjaTrader format (semicolon-delimited, YYYYMMDD HHMMSS)
+                df = pd.read_csv(
+                    fp,
+                    sep=';',
+                    header=None,
+                    names=['datetime', 'open', 'high', 'low', 'close', 'volume'],
+                )
+                # Parse custom datetime format: "20220102 170300" -> proper datetime
+                df['datetime'] = pd.to_datetime(df['datetime'], format='%Y%m%d %H%M%S')
+                dfs.append(df)
+            except Exception as e:
+                results.append({
+                    "instrument": instrument,
+                    "file": fp,
+                    "status": "error",
+                    "message": str(e)
+                })
+                continue
+
+        if dfs:
+            # Concatenate and deduplicate
+            combined = pd.concat(dfs, ignore_index=True)
+            combined = combined.drop_duplicates(subset=['datetime'], keep='first')
+            combined = combined.sort_values('datetime').reset_index(drop=True)
+
+            # Ensure proper dtypes
+            combined['open'] = pd.to_numeric(combined['open'], errors='coerce')
+            combined['high'] = pd.to_numeric(combined['high'], errors='coerce')
+            combined['low'] = pd.to_numeric(combined['low'], errors='coerce')
+            combined['close'] = pd.to_numeric(combined['close'], errors='coerce')
+            combined['volume'] = pd.to_numeric(combined['volume'], errors='coerce').fillna(0).astype(int)
+
+            # Save as parquet
+            output_path = cache_dir / f"{instrument}.parquet"
+            combined.to_parquet(output_path, engine='pyarrow', index=False)
+
+            results.append({
+                "instrument": instrument,
+                "status": "success",
+                "output": str(output_path),
+                "rows": len(combined),
+                "date_range": {
+                    "start": combined['datetime'].min().isoformat(),
+                    "end": combined['datetime'].max().isoformat()
+                }
+            })
+
+    return {"results": results}
+
+
+@app.get("/chart/{instrument}")
+def get_chart_data(instrument: str, working_dir: Optional[str] = None, limit: Optional[int] = None):
+    """Get OHLC data for charting."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    cache_dir = base_dir / "cache"
+    parquet_path = cache_dir / f"{instrument}.parquet"
+
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"No cached data for {instrument}")
+
+    df = pd.read_parquet(parquet_path)
+    total_rows = len(df)
+
+    # Apply limit if specified (return last N rows)
+    if limit and len(df) > limit:
+        df = df.tail(limit)
+
+    return {
+        "instrument": instrument,
+        "data": {
+            "datetime": df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S').tolist(),
+            "open": df['open'].tolist(),
+            "high": df['high'].tolist(),
+            "low": df['low'].tolist(),
+            "close": df['close'].tolist(),
+            "volume": df['volume'].tolist(),
+        },
+        "total_rows": total_rows,
+        "displayed_rows": len(df)
+    }
+
+
+def calculate_atr(df: pd.DataFrame, period: int = 14) -> float:
+    """Calculate Average True Range."""
+    high = df['high']
+    low = df['low']
+    close = df['close']
+
+    # True Range components
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(window=period).mean()
+
+    return float(atr.iloc[-1])
+
+
+def get_pip_value(instrument: str) -> float:
+    """Get pip value for instrument (assumes forex pairs)."""
+    # JPY pairs have 2 decimal places, others have 4
+    if 'JPY' in instrument.upper():
+        return 0.01
+    return 0.0001
+
+
+def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0) -> pd.DataFrame:
+    """
+    Generate Renko bricks with configurable reversal multiplier.
+
+    Standard Renko uses reversal_multiplier=2 (need 2x brick size to reverse).
+    This implementation allows custom reversal thresholds.
+    """
+    close_prices = df['close'].values
+    timestamps = df.index
+
+    if len(close_prices) < 2:
+        return pd.DataFrame()
+
+    reversal_size = brick_size * reversal_multiplier
+    bricks = []
+
+    # Find starting reference price (round to brick boundary)
+    first_price = close_prices[0]
+    ref_price = np.floor(first_price / brick_size) * brick_size
+
+    # Track state
+    direction = 0  # 0 = undetermined, 1 = up, -1 = down
+    brick_high = first_price
+    brick_low = first_price
+    tick_idx_open = 0
+    last_brick_close = ref_price
+
+    for i, price in enumerate(close_prices):
+        brick_high = max(brick_high, price)
+        brick_low = min(brick_low, price)
+
+        if direction == 0:
+            # Determine initial direction
+            if price >= ref_price + brick_size:
+                # First brick is up
+                direction = 1
+                brick_close = ref_price + brick_size
+                bricks.append({
+                    'datetime': timestamps[tick_idx_open],
+                    'open': ref_price,
+                    'high': max(brick_high, brick_close),
+                    'low': min(brick_low, ref_price),
+                    'close': brick_close,
+                    'direction': 1,
+                    'is_reversal': 0,
+                    'tick_index_open': tick_idx_open,
+                    'tick_index_close': i
+                })
+                last_brick_close = brick_close
+                brick_high = price
+                brick_low = price
+                tick_idx_open = i
+            elif price <= ref_price - brick_size:
+                # First brick is down
+                direction = -1
+                brick_close = ref_price - brick_size
+                bricks.append({
+                    'datetime': timestamps[tick_idx_open],
+                    'open': ref_price,
+                    'high': max(brick_high, ref_price),
+                    'low': min(brick_low, brick_close),
+                    'close': brick_close,
+                    'direction': -1,
+                    'is_reversal': 0,
+                    'tick_index_open': tick_idx_open,
+                    'tick_index_close': i
+                })
+                last_brick_close = brick_close
+                brick_high = price
+                brick_low = price
+                tick_idx_open = i
+
+        elif direction == 1:
+            # Check for continuation bricks (up)
+            while price >= last_brick_close + brick_size:
+                brick_open = last_brick_close
+                brick_close = brick_open + brick_size
+                bricks.append({
+                    'datetime': timestamps[tick_idx_open],
+                    'open': brick_open,
+                    'high': max(brick_high, brick_close),
+                    'low': min(brick_low, brick_open),
+                    'close': brick_close,
+                    'direction': 1,
+                    'is_reversal': 0,
+                    'tick_index_open': tick_idx_open,
+                    'tick_index_close': i
+                })
+                last_brick_close = brick_close
+                brick_high = price
+                brick_low = price
+                tick_idx_open = i
+
+            # Check for reversal (need to drop by reversal_size)
+            if price <= last_brick_close - reversal_size:
+                direction = -1
+                brick_open = last_brick_close
+                brick_close = brick_open - brick_size
+                bricks.append({
+                    'datetime': timestamps[tick_idx_open],
+                    'open': brick_open,
+                    'high': max(brick_high, brick_open),
+                    'low': min(brick_low, brick_close),
+                    'close': brick_close,
+                    'direction': -1,
+                    'is_reversal': 1,
+                    'tick_index_open': tick_idx_open,
+                    'tick_index_close': i
+                })
+                last_brick_close = brick_close
+                brick_high = price
+                brick_low = price
+                tick_idx_open = i
+
+        else:  # direction == -1
+            # Check for continuation bricks (down)
+            while price <= last_brick_close - brick_size:
+                brick_open = last_brick_close
+                brick_close = brick_open - brick_size
+                bricks.append({
+                    'datetime': timestamps[tick_idx_open],
+                    'open': brick_open,
+                    'high': max(brick_high, brick_open),
+                    'low': min(brick_low, brick_close),
+                    'close': brick_close,
+                    'direction': -1,
+                    'is_reversal': 0,
+                    'tick_index_open': tick_idx_open,
+                    'tick_index_close': i
+                })
+                last_brick_close = brick_close
+                brick_high = price
+                brick_low = price
+                tick_idx_open = i
+
+            # Check for reversal (need to rise by reversal_size)
+            if price >= last_brick_close + reversal_size:
+                direction = 1
+                brick_open = last_brick_close
+                brick_close = brick_open + brick_size
+                bricks.append({
+                    'datetime': timestamps[tick_idx_open],
+                    'open': brick_open,
+                    'high': max(brick_high, brick_close),
+                    'low': min(brick_low, brick_open),
+                    'close': brick_close,
+                    'direction': 1,
+                    'is_reversal': 1,
+                    'tick_index_open': tick_idx_open,
+                    'tick_index_close': i
+                })
+                last_brick_close = brick_close
+                brick_high = price
+                brick_low = price
+                tick_idx_open = i
+
+    if not bricks:
+        return pd.DataFrame()
+
+    result_df = pd.DataFrame(bricks)
+    result_df = result_df.set_index('datetime')
+    return result_df
+
+
+@app.post("/renko/{instrument}")
+def get_renko_data(instrument: str, request: RenkoRequest):
+    """Generate Renko chart data with wicks."""
+    base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
+    cache_dir = base_dir / "cache"
+    parquet_path = cache_dir / f"{instrument}.parquet"
+
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"No cached data for {instrument}")
+
+    # Read source data
+    df = pd.read_parquet(parquet_path)
+
+    # Ensure datetime index for renkodf
+    df = df.set_index('datetime')
+
+    # Clean data - remove any NaN values
+    df = df.dropna()
+
+    # Ensure data is sorted by datetime
+    df = df.sort_index()
+
+    # Debug: check data quality
+    print(f"DEBUG: Data range - min close: {df['close'].min()}, max close: {df['close'].max()}")
+    print(f"DEBUG: Index type: {type(df.index)}, first: {df.index[0]}, last: {df.index[-1]}")
+
+    # Calculate brick size based on method
+    if request.brick_method == "fixed_pip":
+        pip_value = get_pip_value(instrument)
+        brick_size = request.brick_size * pip_value
+    elif request.brick_method == "percentage":
+        # Use percentage of current price
+        current_price = df['close'].iloc[-1]
+        brick_size = current_price * (request.brick_size / 100)
+    elif request.brick_method == "atr":
+        # Use ATR multiplier
+        atr_value = calculate_atr(df.reset_index(), request.atr_period)
+        brick_size = atr_value * request.brick_size
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid brick_method: {request.brick_method}")
+
+    # Debug logging
+    print(f"DEBUG: brick_method={request.brick_method}, request.brick_size={request.brick_size}, calculated brick_size={brick_size}")
+    print(f"DEBUG: df shape={df.shape}, columns={list(df.columns)}")
+
+    # Validate brick size (check for NaN and <= 0)
+    if brick_size is None or np.isnan(brick_size) or brick_size <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid brick size: {brick_size}. Check your settings."
+        )
+
+    # Validate brick size is not too small (would create too many bricks)
+    price_range = df['close'].max() - df['close'].min()
+    estimated_bricks = price_range / brick_size
+    if estimated_bricks > 100000:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Brick size too small ({brick_size:.6f}). Would create ~{int(estimated_bricks)} bricks. For fixed_pip, use values like 5, 10, 20 pips."
+        )
+
+    # Generate Renko data
+    try:
+        reversal_mult = float(request.reversal_multiplier)
+        brick_size = float(brick_size)
+
+        print(f"DEBUG: brick_size={brick_size}, reversal_multiplier={reversal_mult}")
+
+        # Use custom implementation for non-standard reversal, renkodf for standard 2x
+        if abs(reversal_mult - 2.0) < 0.01:
+            # Standard 2x reversal - use optimized renkodf library
+            print(f"DEBUG: Using renkodf (standard 2x reversal)")
+            renko = Renko(df, brick_size)
+            renko_df = renko.renko_df('wicks')
+        else:
+            # Custom reversal multiplier - use our implementation
+            print(f"DEBUG: Using custom Renko (reversal_multiplier={reversal_mult})")
+            renko_df = generate_renko_custom(df, brick_size, reversal_mult)
+
+        print(f"DEBUG: Renko generated, shape={renko_df.shape}")
+
+        if renko_df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="No Renko bricks generated. Try a smaller brick size."
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"DEBUG: Renko failed with brick_size={brick_size}")
+        print(f"DEBUG: Exception type: {type(e).__name__}")
+        print(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Renko generation failed: {str(e)}")
+
+    # Reset index to get datetime as column
+    renko_df = renko_df.reset_index()
+
+    # Handle volume - sum if available, otherwise use brick count
+    if 'volume' not in renko_df.columns:
+        renko_df['volume'] = 1
+
+    # Determine datetime column name (varies based on reset_index behavior)
+    datetime_col = None
+    for col in ['datetime', 'date', 'index']:
+        if col in renko_df.columns:
+            datetime_col = col
+            break
+
+    # Format datetime if found, otherwise use brick index
+    if datetime_col is not None and hasattr(renko_df[datetime_col], 'dt'):
+        datetime_list = renko_df[datetime_col].dt.strftime('%Y-%m-%d %H:%M:%S').tolist()
+    else:
+        datetime_list = [f"Brick {i}" for i in range(len(renko_df))]
+
+    return {
+        "instrument": instrument,
+        "brick_method": request.brick_method,
+        "brick_size": brick_size,
+        "brick_size_pips": request.brick_size if request.brick_method == "fixed_pip" else None,
+        "reversal_multiplier": request.reversal_multiplier,
+        "data": {
+            "datetime": datetime_list,
+            "open": renko_df['open'].tolist(),
+            "high": renko_df['high'].tolist(),
+            "low": renko_df['low'].tolist(),
+            "close": renko_df['close'].tolist(),
+            "volume": renko_df['volume'].tolist() if 'volume' in renko_df.columns else [1] * len(renko_df),
+        },
+        "total_bricks": len(renko_df)
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
