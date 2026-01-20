@@ -168,6 +168,94 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edit-dir-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.edit-dir-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+}
+
+.edit-dir-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.working-dir-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.working-dir-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 11px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.working-dir-actions {
+  display: flex;
+  gap: var(--space-1);
+  justify-content: flex-end;
+}
+
+.dir-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.dir-action-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dir-action-btn.save {
+  color: var(--bullish);
+}
+
+.dir-action-btn.save:hover {
+  background: var(--bullish-bg);
+  border-color: var(--bullish);
+}
+
+.dir-action-btn.cancel {
+  color: var(--text-muted);
+}
+
+.dir-action-btn.cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 /* File list */

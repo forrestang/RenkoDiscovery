@@ -6,6 +6,12 @@ const BRICK_METHODS = [
   { value: 'atr', label: 'ATR' },
 ]
 
+const WICK_MODES = [
+  { value: 'all', label: 'All Wicks' },
+  { value: 'big', label: 'Big Wicks' },
+  { value: 'none', label: 'No Wicks' },
+]
+
 function RenkoControls({ settings, onChange }) {
   const [localSettings, setLocalSettings] = useState(settings)
 
@@ -15,6 +21,12 @@ function RenkoControls({ settings, onChange }) {
 
   const handleMethodChange = (e) => {
     const newSettings = { ...localSettings, brickMethod: e.target.value }
+    setLocalSettings(newSettings)
+    onChange(newSettings)
+  }
+
+  const handleWickModeChange = (e) => {
+    const newSettings = { ...localSettings, wickMode: e.target.value }
     setLocalSettings(newSettings)
     onChange(newSettings)
   }
@@ -150,6 +162,17 @@ function RenkoControls({ settings, onChange }) {
           <span className="input-suffix">Period</span>
         </div>
       )}
+      <select
+        className="renko-wick-select mono"
+        value={localSettings.wickMode || 'all'}
+        onChange={handleWickModeChange}
+      >
+        {WICK_MODES.map(mode => (
+          <option key={mode.value} value={mode.value}>
+            {mode.label}
+          </option>
+        ))}
+      </select>
     </div>
   )
 }

@@ -7,15 +7,6 @@ import './styles/App.css'
 const API_BASE = 'http://localhost:8000'
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
-const CANDLE_LIMIT_OPTIONS = [
-  { value: 0, label: 'All' },
-  { value: 5000, label: '5,000' },
-  { value: 10000, label: '10,000' },
-  { value: 25000, label: '25,000' },
-  { value: 50000, label: '50,000' },
-  { value: 100000, label: '100,000' },
-]
-
 const PRICE_PRECISION_OPTIONS = [
   { value: 2, label: '2 decimals' },
   { value: 3, label: '3 decimals' },
@@ -25,9 +16,20 @@ const PRICE_PRECISION_OPTIONS = [
 ]
 
 function App() {
-  const [sidebarWidth, setSidebarWidth] = useState(320)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [activeTab, setActiveTab] = useState('data')
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}sidebarWidth`)
+    return saved ? parseInt(saved, 10) : 320
+  })
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}sidebarCollapsed`)
+    return saved === 'true'
+  })
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}activeTab`) || 'data'
+  })
+  const [workingDir, setWorkingDir] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}workingDir`) || 'C:\\Users\\lawfp\\Desktop\\Data_renko'
+  })
   const [files, setFiles] = useState([])
   const [selectedFiles, setSelectedFiles] = useState([])
   const [cachedInstruments, setCachedInstruments] = useState([])
@@ -36,15 +38,13 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingResults, setProcessingResults] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [candleLimit, setCandleLimit] = useState(() => {
-    const saved = localStorage.getItem(`${STORAGE_PREFIX}candleLimit`)
-    return saved ? parseInt(saved, 10) : 5000
-  })
   const [pricePrecision, setPricePrecision] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}pricePrecision`)
     return saved ? parseInt(saved, 10) : 5
   })
-  const [chartType, setChartType] = useState('m1') // 'm1' | 'renko'
+  const [chartType, setChartType] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}chartType`) || 'm1'
+  }) // 'm1' | 'renko' | 'overlay'
   const [renkoSettings, setRenkoSettings] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}renkoSettings`)
     if (saved) {
@@ -65,26 +65,56 @@ function App() {
       if (!parsed.reversalSize || parsed.reversalSize <= 0) {
         parsed.reversalSize = 0.0020
       }
+      // Default wickMode if not present
+      if (!parsed.wickMode) {
+        parsed.wickMode = 'all'
+      }
       return parsed
     }
     return {
       brickMethod: 'ticks',
       brickSize: 0.0010,
       reversalSize: 0.0020,
-      atrPeriod: 14
+      atrPeriod: 14,
+      wickMode: 'all'
     }
   })
   const [renkoData, setRenkoData] = useState(null)
 
-  // Fetch files on mount
+  // Persist UI settings to localStorage
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}sidebarWidth`, sidebarWidth.toString())
+  }, [sidebarWidth])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}sidebarCollapsed`, sidebarCollapsed.toString())
+  }, [sidebarCollapsed])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}activeTab`, activeTab)
+  }, [activeTab])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}chartType`, chartType)
+  }, [chartType])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}workingDir`, workingDir)
+  }, [workingDir])
+
+  // Refetch files and cache when working directory changes
   useEffect(() => {
     fetchFiles()
     fetchCache()
-  }, [])
+    // Clear current data when directory changes
+    setActiveInstrument(null)
+    setChartData(null)
+    setRenkoData(null)
+  }, [workingDir])
 
   const fetchFiles = async () => {
     try {
-      const res = await fetch(`${API_BASE}/files`)
+      const res = await fetch(`${API_BASE}/files?working_dir=${encodeURIComponent(workingDir)}`)
       if (res.ok) {
         const data = await res.json()
         setFiles(data)
@@ -96,7 +126,7 @@ function App() {
 
   const fetchCache = async () => {
     try {
-      const res = await fetch(`${API_BASE}/cache`)
+      const res = await fetch(`${API_BASE}/cache?working_dir=${encodeURIComponent(workingDir)}`)
       if (res.ok) {
         const data = await res.json()
         setCachedInstruments(data)
@@ -144,7 +174,7 @@ function App() {
       const res = await fetch(`${API_BASE}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: selectedFiles })
+        body: JSON.stringify({ files: selectedFiles, working_dir: workingDir })
       })
 
       if (res.ok) {
@@ -165,21 +195,18 @@ function App() {
     }
   }
 
-  const loadChart = async (instrument, limit = candleLimit) => {
+  const loadChart = async (instrument) => {
     setActiveInstrument(instrument)
     setRenkoData(null) // Clear renko data when loading new instrument
     setIsLoading(true)
 
     try {
-      const url = limit > 0
-        ? `${API_BASE}/chart/${instrument}?limit=${limit}`
-        : `${API_BASE}/chart/${instrument}`
-      const res = await fetch(url)
+      const res = await fetch(`${API_BASE}/chart/${instrument}?working_dir=${encodeURIComponent(workingDir)}`)
       if (res.ok) {
         const data = await res.json()
         setChartData(data)
-        // If renko mode is active, also load renko data
-        if (chartType === 'renko') {
+        // If renko or overlay mode is active, also load renko data
+        if (chartType === 'renko' || chartType === 'overlay') {
           loadRenko(instrument)
         }
       } else {
@@ -190,15 +217,6 @@ function App() {
       console.error('Failed to load chart:', err)
     } finally {
       setIsLoading(false)
-    }
-  }
-
-  const handleCandleLimitChange = (e) => {
-    const newLimit = parseInt(e.target.value, 10)
-    setCandleLimit(newLimit)
-    localStorage.setItem(`${STORAGE_PREFIX}candleLimit`, newLimit.toString())
-    if (activeInstrument) {
-      loadChart(activeInstrument, newLimit)
     }
   }
 
@@ -220,7 +238,9 @@ function App() {
           brick_method: settings.brickMethod,
           brick_size: settings.brickSize,
           reversal_size: settings.reversalSize,
-          atr_period: settings.atrPeriod
+          atr_period: settings.atrPeriod,
+          wick_mode: settings.wickMode || 'all',
+          working_dir: workingDir
         })
       })
       if (res.ok) {
@@ -239,7 +259,7 @@ function App() {
 
   const handleChartTypeChange = (type) => {
     setChartType(type)
-    if (type === 'renko' && activeInstrument && !renkoData) {
+    if ((type === 'renko' || type === 'overlay') && activeInstrument && !renkoData) {
       loadRenko(activeInstrument)
     }
   }
@@ -247,14 +267,14 @@ function App() {
   const handleRenkoSettingsChange = (newSettings) => {
     setRenkoSettings(newSettings)
     localStorage.setItem(`${STORAGE_PREFIX}renkoSettings`, JSON.stringify(newSettings))
-    if (activeInstrument && chartType === 'renko') {
+    if (activeInstrument && (chartType === 'renko' || chartType === 'overlay')) {
       loadRenko(activeInstrument, newSettings)
     }
   }
 
   const deleteCache = async (instrument) => {
     try {
-      const res = await fetch(`${API_BASE}/cache/${instrument}`, {
+      const res = await fetch(`${API_BASE}/cache/${instrument}?working_dir=${encodeURIComponent(workingDir)}`, {
         method: 'DELETE'
       })
       if (res.ok) {
@@ -272,7 +292,7 @@ function App() {
 
   const deleteAllCache = async () => {
     try {
-      const res = await fetch(`${API_BASE}/cache`, {
+      const res = await fetch(`${API_BASE}/cache?working_dir=${encodeURIComponent(workingDir)}`, {
         method: 'DELETE'
       })
       if (res.ok) {
@@ -337,6 +357,12 @@ function App() {
               >
                 Renko
               </button>
+              <button
+                className={`toggle-btn ${chartType === 'overlay' ? 'active' : ''}`}
+                onClick={() => handleChartTypeChange('overlay')}
+              >
+                Overlay
+              </button>
             </div>
           )}
           {chartType === 'm1' && chartData && (
@@ -352,20 +378,12 @@ function App() {
               {renkoData.total_bricks.toLocaleString()} bricks
             </span>
           )}
-          {chartType === 'm1' && (
-            <select
-              className="candle-limit-select mono"
-              value={candleLimit}
-              onChange={handleCandleLimitChange}
-            >
-              {CANDLE_LIMIT_OPTIONS.map(opt => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+          {chartType === 'overlay' && chartData && renkoData && (
+            <span className="data-count mono">
+              {(chartData.displayed_rows || chartData.total_rows || 0).toLocaleString()} bars + {renkoData.total_bricks.toLocaleString()} bricks
+            </span>
           )}
-          {chartType === 'renko' && activeInstrument && (
+          {(chartType === 'renko' || chartType === 'overlay') && activeInstrument && (
             <RenkoControls
               settings={renkoSettings}
               onChange={handleRenkoSettingsChange}
@@ -397,6 +415,8 @@ function App() {
             onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            workingDir={workingDir}
+            onWorkingDirChange={setWorkingDir}
             files={files}
             selectedFiles={selectedFiles}
             onFileSelect={handleFileSelect}
@@ -420,6 +440,7 @@ function App() {
         <main className="main-content">
           <ChartArea
             chartData={chartType === 'renko' ? renkoData : chartData}
+            renkoData={chartType === 'overlay' ? renkoData : null}
             chartType={chartType}
             isLoading={isLoading}
             activeInstrument={activeInstrument}

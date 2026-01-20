@@ -14,7 +14,6 @@ import pyarrow.parquet as pq
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from renkodf import Renko
 
 app = FastAPI(title="RenkoDiscovery API", version="1.0.0")
 
@@ -69,6 +68,8 @@ class RenkoRequest(BaseModel):
     brick_size: float = 0.0010  # raw price value for ticks, percentage for percentage, multiplier for atr
     reversal_size: float = 0.0020  # raw price value for reversal threshold
     atr_period: int = 14  # only used for ATR method
+    wick_mode: str = "all"  # "all" | "big" | "none"
+    limit: Optional[int] = None  # limit M1 data to last N bars (for overlay mode alignment)
     working_dir: Optional[str] = None
 
 
@@ -322,18 +323,52 @@ def get_pip_value(instrument: str) -> float:
     return 0.0001
 
 
-def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0) -> pd.DataFrame:
+def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0, wick_mode: str = "all") -> tuple[pd.DataFrame, dict]:
     """
     Generate Renko bricks with configurable reversal multiplier.
 
     Standard Renko uses reversal_multiplier=2 (need 2x brick size to reverse).
     This implementation allows custom reversal thresholds.
+
+    wick_mode options:
+        - "all": Show all wicks (any retracement)
+        - "big": Only show wicks when retracement > brick_size
+        - "none": No wicks at all
+
+    Returns:
+        tuple: (completed_bricks_df, pending_brick_dict)
     """
+    def calc_up_brick_low(brick_low_val, brick_open):
+        """Calculate low for up bar based on wick mode."""
+        if wick_mode == "none":
+            return brick_open
+        elif wick_mode == "big":
+            retracement = brick_open - brick_low_val
+            if retracement > brick_size:
+                return min(brick_low_val, brick_open)
+            return brick_open
+        else:  # "all"
+            return min(brick_low_val, brick_open)
+
+    def calc_down_brick_high(brick_high_val, brick_open):
+        """Calculate high for down bar based on wick mode."""
+        if wick_mode == "none":
+            return brick_open
+        elif wick_mode == "big":
+            retracement = brick_high_val - brick_open
+            if retracement > brick_size:
+                return max(brick_high_val, brick_open)
+            return brick_open
+        else:  # "all"
+            return max(brick_high_val, brick_open)
+
     close_prices = df['close'].values
+    high_prices = df['high'].values
+    low_prices = df['low'].values
     timestamps = df.index
 
     if len(close_prices) < 2:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
     reversal_size = brick_size * reversal_multiplier
     bricks = []
@@ -348,10 +383,15 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
     brick_low = first_price
     tick_idx_open = 0
     last_brick_close = ref_price
+    # Track pending brick high/low using actual M1 high/low values
+    pending_high = high_prices[0]
+    pending_low = low_prices[0]
 
     for i, price in enumerate(close_prices):
         brick_high = max(brick_high, price)
         brick_low = min(brick_low, price)
+        pending_high = max(pending_high, high_prices[i])
+        pending_low = min(pending_low, low_prices[i])
 
         if direction == 0:
             # Determine initial direction
@@ -362,8 +402,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': ref_price,
-                    'high': max(brick_high, brick_close),
-                    'low': min(brick_low, ref_price),
+                    'high': brick_close,  # Up bar: high = close (no upper wick)
+                    'low': calc_up_brick_low(brick_low, ref_price),
                     'close': brick_close,
                     'direction': 1,
                     'is_reversal': 0,
@@ -373,6 +413,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 last_brick_close = brick_close
                 brick_high = price
                 brick_low = price
+                pending_high = high_prices[i]
+                pending_low = low_prices[i]
                 tick_idx_open = i
             elif price <= ref_price - brick_size:
                 # First brick is down
@@ -381,8 +423,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': ref_price,
-                    'high': max(brick_high, ref_price),
-                    'low': min(brick_low, brick_close),
+                    'high': calc_down_brick_high(brick_high, ref_price),
+                    'low': brick_close,  # Down bar: low = close (no lower wick)
                     'close': brick_close,
                     'direction': -1,
                     'is_reversal': 0,
@@ -392,6 +434,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 last_brick_close = brick_close
                 brick_high = price
                 brick_low = price
+                pending_high = high_prices[i]
+                pending_low = low_prices[i]
                 tick_idx_open = i
 
         elif direction == 1:
@@ -402,8 +446,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
-                    'high': max(brick_high, brick_close),
-                    'low': min(brick_low, brick_open),
+                    'high': brick_close,  # Up bar: high = close (no upper wick)
+                    'low': calc_up_brick_low(brick_low, brick_open),
                     'close': brick_close,
                     'direction': 1,
                     'is_reversal': 0,
@@ -413,6 +457,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 last_brick_close = brick_close
                 brick_high = price
                 brick_low = price
+                pending_high = high_prices[i]
+                pending_low = low_prices[i]
                 tick_idx_open = i
 
             # Check for reversal (need to drop by reversal_size)
@@ -423,8 +469,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
-                    'high': max(brick_high, brick_open),
-                    'low': min(brick_low, brick_close),
+                    'high': calc_down_brick_high(brick_high, brick_open),
+                    'low': brick_close,  # Down bar: low = close (no lower wick)
                     'close': brick_close,
                     'direction': -1,
                     'is_reversal': 1,
@@ -434,6 +480,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 last_brick_close = brick_close
                 brick_high = price
                 brick_low = price
+                pending_high = high_prices[i]
+                pending_low = low_prices[i]
                 tick_idx_open = i
 
         else:  # direction == -1
@@ -444,8 +492,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
-                    'high': max(brick_high, brick_open),
-                    'low': min(brick_low, brick_close),
+                    'high': calc_down_brick_high(brick_high, brick_open),
+                    'low': brick_close,  # Down bar: low = close (no lower wick)
                     'close': brick_close,
                     'direction': -1,
                     'is_reversal': 0,
@@ -455,6 +503,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 last_brick_close = brick_close
                 brick_high = price
                 brick_low = price
+                pending_high = high_prices[i]
+                pending_low = low_prices[i]
                 tick_idx_open = i
 
             # Check for reversal (need to rise by reversal_size)
@@ -465,8 +515,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
-                    'high': max(brick_high, brick_close),
-                    'low': min(brick_low, brick_open),
+                    'high': brick_close,  # Up bar: high = close (no upper wick)
+                    'low': calc_up_brick_low(brick_low, brick_open),
                     'close': brick_close,
                     'direction': 1,
                     'is_reversal': 1,
@@ -476,14 +526,59 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 last_brick_close = brick_close
                 brick_high = price
                 brick_low = price
+                pending_high = high_prices[i]
+                pending_low = low_prices[i]
                 tick_idx_open = i
 
+    # Build pending brick (the forming brick that hasn't completed yet)
+    pending_brick = None
+    if direction != 0 and len(close_prices) > 0:
+        last_idx = len(close_prices) - 1
+        current_price = close_prices[last_idx]
+        brick_open = last_brick_close
+        if direction == 1:
+            # Pending up brick: high = close (no upper wick), low based on wick_mode
+            if wick_mode == "none":
+                pending_low_val = brick_open
+            elif wick_mode == "big":
+                retracement = brick_open - pending_low
+                pending_low_val = min(pending_low, brick_open) if retracement > brick_size else brick_open
+            else:  # "all"
+                pending_low_val = min(pending_low, brick_open)
+            pending_brick = {
+                'open': brick_open,
+                'high': current_price,  # Up bar: high = close
+                'low': pending_low_val,
+                'close': current_price,
+                'direction': direction,
+                'tick_index_open': tick_idx_open,
+                'tick_index_close': last_idx
+            }
+        else:
+            # Pending down brick: low = close (no lower wick), high based on wick_mode
+            if wick_mode == "none":
+                pending_high_val = brick_open
+            elif wick_mode == "big":
+                retracement = pending_high - brick_open
+                pending_high_val = max(pending_high, brick_open) if retracement > brick_size else brick_open
+            else:  # "all"
+                pending_high_val = max(pending_high, brick_open)
+            pending_brick = {
+                'open': brick_open,
+                'high': pending_high_val,
+                'low': current_price,  # Down bar: low = close
+                'close': current_price,
+                'direction': direction,
+                'tick_index_open': tick_idx_open,
+                'tick_index_close': last_idx
+            }
+
     if not bricks:
-        return pd.DataFrame()
+        return pd.DataFrame(), pending_brick
 
     result_df = pd.DataFrame(bricks)
     result_df = result_df.set_index('datetime')
-    return result_df
+    return result_df, pending_brick
 
 
 @app.post("/renko/{instrument}")
@@ -508,9 +603,9 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     # Ensure data is sorted by datetime
     df = df.sort_index()
 
-    # Debug: check data quality
-    print(f"DEBUG: Data range - min close: {df['close'].min()}, max close: {df['close'].max()}")
-    print(f"DEBUG: Index type: {type(df.index)}, first: {df.index[0]}, last: {df.index[-1]}")
+    # Apply limit if specified (use last N bars to match M1 chart display)
+    if request.limit and len(df) > request.limit:
+        df = df.tail(request.limit)
 
     # Calculate brick size based on method
     if request.brick_method == "ticks":
@@ -529,10 +624,6 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         reversal_size = atr_value * request.reversal_size
     else:
         raise HTTPException(status_code=400, detail=f"Invalid brick_method: {request.brick_method}")
-
-    # Debug logging
-    print(f"DEBUG: brick_method={request.brick_method}, request.brick_size={request.brick_size}, calculated brick_size={brick_size}")
-    print(f"DEBUG: df shape={df.shape}, columns={list(df.columns)}")
 
     # Validate brick size (check for NaN and <= 0)
     if brick_size is None or np.isnan(brick_size) or brick_size <= 0:
@@ -555,23 +646,9 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         brick_size = float(brick_size)
         reversal_size = float(reversal_size)
 
-        print(f"DEBUG: brick_size={brick_size}, reversal_size={reversal_size}")
-
-        # Use renkodf for standard 2x reversal, custom implementation otherwise
-        # Check if reversal_size is approximately 2x brick_size
-        is_standard_reversal = abs(reversal_size - (brick_size * 2)) < (brick_size * 0.01)
-
-        if is_standard_reversal:
-            print(f"DEBUG: Using renkodf (standard 2x reversal)")
-            renko = Renko(df, brick_size)
-            renko_df = renko.renko_df('wicks')
-        else:
-            # Custom reversal size - use our implementation
-            reversal_mult = reversal_size / brick_size
-            print(f"DEBUG: Using custom Renko (reversal_size={reversal_size}, multiplier={reversal_mult:.2f}x)")
-            renko_df = generate_renko_custom(df, brick_size, reversal_mult)
-
-        print(f"DEBUG: Renko generated, shape={renko_df.shape}")
+        # Always use custom implementation to get tick_index_open/close for overlay mode
+        reversal_mult = reversal_size / brick_size
+        renko_df, pending_brick = generate_renko_custom(df, brick_size, reversal_mult, request.wick_mode)
 
         if renko_df.empty:
             raise HTTPException(
@@ -582,10 +659,6 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        print(f"DEBUG: Renko failed with brick_size={brick_size}")
-        print(f"DEBUG: Exception type: {type(e).__name__}")
-        print(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Renko generation failed: {str(e)}")
 
     # Reset index to get datetime as column
@@ -620,7 +693,10 @@ def get_renko_data(instrument: str, request: RenkoRequest):
             "low": renko_df['low'].tolist(),
             "close": renko_df['close'].tolist(),
             "volume": renko_df['volume'].tolist() if 'volume' in renko_df.columns else [1] * len(renko_df),
+            "tick_index_open": renko_df['tick_index_open'].tolist() if 'tick_index_open' in renko_df.columns else None,
+            "tick_index_close": renko_df['tick_index_close'].tolist() if 'tick_index_close' in renko_df.columns else None,
         },
+        "pending_brick": pending_brick,
         "total_bricks": len(renko_df)
     }
 

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import './Sidebar.css'
 
 function Sidebar({
@@ -5,6 +6,8 @@ function Sidebar({
   onToggleCollapse,
   activeTab,
   onTabChange,
+  workingDir,
+  onWorkingDirChange,
   files,
   selectedFiles,
   onFileSelect,
@@ -19,6 +22,8 @@ function Sidebar({
   onDeleteCache,
   onDeleteAllCache
 }) {
+  const [isEditingDir, setIsEditingDir] = useState(false)
+  const [dirInput, setDirInput] = useState(workingDir)
   // Group files by instrument
   const groupedFiles = files.reduce((acc, file) => {
     const instrument = file.instrument || 'Unknown'
@@ -83,10 +88,70 @@ function Sidebar({
           <div className="section">
             <div className="section-header">
               <span className="section-title">Working Directory</span>
+              {!isEditingDir && (
+                <button
+                  className="edit-dir-btn"
+                  onClick={() => {
+                    setDirInput(workingDir)
+                    setIsEditingDir(true)
+                  }}
+                  title="Edit working directory"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                </button>
+              )}
             </div>
-            <div className="working-dir mono">
-              C:\Users\lawfp\OneDrive\Desktop\Data_renko
-            </div>
+            {isEditingDir ? (
+              <div className="working-dir-edit">
+                <input
+                  type="text"
+                  className="working-dir-input mono"
+                  value={dirInput}
+                  onChange={(e) => setDirInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && dirInput.trim()) {
+                      onWorkingDirChange(dirInput.trim())
+                      setIsEditingDir(false)
+                    } else if (e.key === 'Escape') {
+                      setIsEditingDir(false)
+                    }
+                  }}
+                  autoFocus
+                />
+                <div className="working-dir-actions">
+                  <button
+                    className="dir-action-btn save"
+                    onClick={() => {
+                      if (dirInput.trim()) {
+                        onWorkingDirChange(dirInput.trim())
+                        setIsEditingDir(false)
+                      }
+                    }}
+                    title="Save"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M5 12l5 5L20 7" />
+                    </svg>
+                  </button>
+                  <button
+                    className="dir-action-btn cancel"
+                    onClick={() => setIsEditingDir(false)}
+                    title="Cancel"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="working-dir mono" title={workingDir}>
+                {workingDir}
+              </div>
+            )}
           </div>
 
           <div className="section file-section">

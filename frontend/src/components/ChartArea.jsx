@@ -23,10 +23,156 @@ function formatTickMark(isoString) {
   return `${month}-${day}`
 }
 
-function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument, pricePrecision = 5 }) {
+// Custom primitive for drawing Renko brick overlays
+class RenkoBricksPrimitive {
+  constructor() {
+    this._bricks = []
+    this._chart = null
+    this._series = null
+  }
+
+  setBricks(bricks) {
+    this._bricks = bricks || []
+  }
+
+  attached(param) {
+    this._chart = param.chart
+    this._series = param.series
+  }
+
+  detached() {
+    this._chart = null
+    this._series = null
+  }
+
+  updateAllViews() {
+    // Request redraw
+  }
+
+  paneViews() {
+    return [new RenkoBricksPaneView(this)]
+  }
+}
+
+class RenkoBricksPaneView {
+  constructor(source) {
+    this._source = source
+  }
+
+  update() {}
+
+  renderer() {
+    return new RenkoBricksRenderer(this._source)
+  }
+
+  zOrder() {
+    return 'top'
+  }
+}
+
+class RenkoBricksRenderer {
+  constructor(source) {
+    this._source = source
+  }
+
+  draw(target, priceConverter) {
+    const bricks = this._source._bricks
+    const chart = this._source._chart
+    const series = this._source._series
+
+    if (!bricks.length || !chart || !series) return
+
+    const timeScale = chart.timeScale()
+
+    // Precompute brick coordinates
+    const bricksToDraw = []
+    for (const brick of bricks) {
+      const { tickOpen, tickClose, priceOpen, priceClose, priceHigh, priceLow, isUp, isPending } = brick
+
+      const x1 = timeScale.logicalToCoordinate(tickOpen)
+      const x2 = timeScale.logicalToCoordinate(tickClose)
+
+      if (x1 === null || x2 === null) continue
+
+      // Body coordinates (open/close)
+      const bodyTop = series.priceToCoordinate(Math.max(priceOpen, priceClose))
+      const bodyBottom = series.priceToCoordinate(Math.min(priceOpen, priceClose))
+
+      // Wick coordinates (high/low) - use body bounds if no wick data
+      const wickTop = priceHigh ? series.priceToCoordinate(priceHigh) : bodyTop
+      const wickBottom = priceLow ? series.priceToCoordinate(priceLow) : bodyBottom
+
+      if (bodyTop === null || bodyBottom === null) continue
+
+      bricksToDraw.push({ x1, x2, bodyTop, bodyBottom, wickTop, wickBottom, isUp, isPending })
+    }
+
+    if (!bricksToDraw.length) return
+
+    target.useBitmapCoordinateSpace(scope => {
+      const ctx = scope.context
+      const hRatio = scope.horizontalPixelRatio
+      const vRatio = scope.verticalPixelRatio
+
+      for (const { x1, x2, bodyTop, bodyBottom, wickTop, wickBottom, isUp, isPending } of bricksToDraw) {
+        const left = Math.round(Math.min(x1, x2) * hRatio)
+        const right = Math.round(Math.max(x1, x2) * hRatio)
+        const xCenter = Math.round((left + right) / 2)
+
+        const bTop = Math.round(Math.min(bodyTop, bodyBottom) * vRatio)
+        const bBottom = Math.round(Math.max(bodyTop, bodyBottom) * vRatio)
+        const wTop = Math.round(Math.min(wickTop, wickBottom) * vRatio)
+        const wBottom = Math.round(Math.max(wickTop, wickBottom) * vRatio)
+
+        const width = Math.max(right - left, 2)
+        const height = Math.max(bBottom - bTop, 2)
+
+        // Colors
+        const fillAlpha = isPending ? 0.15 : 0.25
+        const fillColor = isUp ? `rgba(16, 185, 129, ${fillAlpha})` : `rgba(244, 63, 94, ${fillAlpha})`
+        const strokeColor = isUp ? '#059669' : '#e11d48'
+
+        // Draw wick lines (only the portions extending beyond the brick body)
+        ctx.strokeStyle = strokeColor
+        ctx.lineWidth = 1 * hRatio
+        ctx.setLineDash(isPending ? [4 * hRatio, 4 * hRatio] : [])
+
+        // Upper wick (from body top to wick top)
+        if (wTop < bTop) {
+          ctx.beginPath()
+          ctx.moveTo(xCenter, wTop)
+          ctx.lineTo(xCenter, bTop)
+          ctx.stroke()
+        }
+
+        // Lower wick (from body bottom to wick bottom)
+        if (wBottom > bBottom) {
+          ctx.beginPath()
+          ctx.moveTo(xCenter, bBottom)
+          ctx.lineTo(xCenter, wBottom)
+          ctx.stroke()
+        }
+
+        // Draw brick body (filled rectangle)
+        ctx.fillStyle = fillColor
+        ctx.fillRect(left, bTop, width, height)
+
+        // Draw brick border
+        ctx.strokeStyle = strokeColor
+        ctx.lineWidth = 1.5 * hRatio
+        ctx.setLineDash(isPending ? [4 * hRatio, 4 * hRatio] : [])
+        ctx.strokeRect(left, bTop, width, height)
+      }
+      ctx.setLineDash([])
+    })
+  }
+}
+
+function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, activeInstrument, pricePrecision = 5 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
+  const primitiveRef = useRef(null)
   const datetimesRef = useRef([])
 
   // Create chart on mount or when chartType changes
@@ -69,18 +215,24 @@ function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument, p
       },
       timeScale: {
         borderColor: '#27272a',
-        timeVisible: false,
-        // Custom formatter to show timestamps
-        tickMarkFormatter: (index) => {
-          const dt = datetimesRef.current[index]
-          return dt ? formatTickMark(dt) : String(index)
-        },
+        timeVisible: chartType === 'm1',  // Enable native time for M1
+        secondsVisible: false,
+        // Only use custom formatter for non-M1 modes (Renko uses index-based time)
+        ...(chartType !== 'm1' && {
+          tickMarkFormatter: (index) => {
+            const dt = datetimesRef.current[index]
+            return dt ? formatTickMark(dt) : String(index)
+          },
+        }),
       },
       localization: {
-        timeFormatter: (index) => {
-          const dt = datetimesRef.current[index]
-          return dt ? formatTimestamp(dt) : `${label} ${index}`
-        },
+        // Only use custom time formatter for non-M1 modes (M1 uses native timestamp display)
+        ...(chartType !== 'm1' && {
+          timeFormatter: (index) => {
+            const dt = datetimesRef.current[index]
+            return dt ? formatTimestamp(dt) : `${label} ${index}`
+          },
+        }),
       },
       handleScroll: {
         mouseWheel: true,
@@ -98,16 +250,25 @@ function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument, p
     chartRef.current = chart
 
     // Add candlestick series
+    // For overlay mode, use semi-transparent colors
+    const isOverlay = chartType === 'overlay'
     const candleSeries = chart.addCandlestickSeries({
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderUpColor: '#22c55e',
-      borderDownColor: '#ef4444',
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
+      upColor: isOverlay ? 'rgba(34, 197, 94, 0.35)' : '#22c55e',
+      downColor: isOverlay ? 'rgba(239, 68, 68, 0.35)' : '#ef4444',
+      borderUpColor: isOverlay ? 'rgba(34, 197, 94, 0.5)' : '#22c55e',
+      borderDownColor: isOverlay ? 'rgba(239, 68, 68, 0.5)' : '#ef4444',
+      wickUpColor: isOverlay ? 'rgba(34, 197, 94, 0.5)' : '#22c55e',
+      wickDownColor: isOverlay ? 'rgba(239, 68, 68, 0.5)' : '#ef4444',
     })
 
     seriesRef.current = candleSeries
+
+    // Create Renko primitive for overlay mode
+    if (isOverlay) {
+      const primitive = new RenkoBricksPrimitive()
+      candleSeries.attachPrimitive(primitive)
+      primitiveRef.current = primitive
+    }
 
     // Handle resize
     const handleResize = () => {
@@ -125,6 +286,7 @@ function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument, p
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
+      primitiveRef.current = null
     }
   }, [chartType])
 
@@ -146,26 +308,77 @@ function ChartArea({ chartData, chartType = 'm1', isLoading, activeInstrument, p
       },
     })
 
-    // Transform data using sequential index as "time"
-    const data = open.map((_, i) => ({
-      time: i,
-      open: open[i],
-      high: high[i],
-      low: low[i],
-      close: close[i],
-    }))
+    // For M1, use actual timestamps; for Renko/overlay, use sequential indices
+    const data = open.map((_, i) => {
+      if (chartType === 'm1' && datetime[i]) {
+        // Convert to Unix timestamp (seconds) for lightweight-charts
+        const timestamp = Math.floor(new Date(datetime[i]).getTime() / 1000)
+        return { time: timestamp, open: open[i], high: high[i], low: low[i], close: close[i] }
+      }
+      return { time: i, open: open[i], high: high[i], low: low[i], close: close[i] }
+    })
 
     seriesRef.current.setData(data)
 
     // Fit content and show last 200 bars/bricks
     if (chartRef.current && data.length > 0) {
       const visibleBars = Math.min(200, data.length)
+      const fromIndex = data.length - visibleBars
+      const toIndex = data.length - 1
+      // Use actual time values from data (timestamps for M1, indices for Renko/overlay)
       chartRef.current.timeScale().setVisibleRange({
-        from: data.length - visibleBars,
-        to: data.length - 1,
+        from: data[fromIndex].time,
+        to: data[toIndex].time,
       })
     }
   }, [chartData, chartType, pricePrecision])
+
+  // Update Renko overlay when renkoData changes
+  useEffect(() => {
+    if (!primitiveRef.current || !renkoData?.data || chartType !== 'overlay') return
+
+    const { tick_index_open, tick_index_close, open, high, low, close } = renkoData.data
+    const pendingBrick = renkoData.pending_brick
+
+    // If tick indices are not available, we can't draw spanning bricks
+    if (!tick_index_open || !tick_index_close) {
+      primitiveRef.current.setBricks([])
+      return
+    }
+
+    // Build brick data for the primitive
+    // tick indices now directly correspond to chart indices (backend calculates on same limited data)
+    const bricks = open.map((_, i) => ({
+      tickOpen: tick_index_open[i],
+      tickClose: tick_index_close[i],
+      priceOpen: open[i],
+      priceHigh: high[i],
+      priceLow: low[i],
+      priceClose: close[i],
+      isUp: close[i] > open[i],
+    }))
+
+    // Add the pending brick if it exists
+    if (pendingBrick) {
+      bricks.push({
+        tickOpen: pendingBrick.tick_index_open,
+        tickClose: pendingBrick.tick_index_close,
+        priceOpen: pendingBrick.open,
+        priceClose: pendingBrick.close,
+        priceHigh: pendingBrick.high,
+        priceLow: pendingBrick.low,
+        isUp: pendingBrick.close > pendingBrick.open,
+        isPending: true,
+      })
+    }
+
+    primitiveRef.current.setBricks(bricks)
+
+    // Force redraw
+    if (chartRef.current) {
+      chartRef.current.timeScale().applyOptions({})
+    }
+  }, [renkoData, chartType])
 
   if (!chartData && !isLoading) {
     return (
