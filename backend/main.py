@@ -64,8 +64,8 @@ class ChartDataRequest(BaseModel):
 
 
 class RenkoRequest(BaseModel):
-    brick_method: str = "ticks"  # "ticks" | "percentage" | "atr"
-    brick_size: float = 0.0010  # raw price value for ticks, percentage for percentage, multiplier for atr
+    brick_method: str = "price"  # "price" | "atr"
+    brick_size: float = 0.0010  # raw price value for price method, multiplier for atr
     reversal_size: float = 0.0020  # raw price value for reversal threshold
     atr_period: int = 14  # only used for ATR method
     wick_mode: str = "all"  # "all" | "big" | "none"
@@ -188,6 +188,63 @@ def delete_cache_all(working_dir: Optional[str] = None):
     return {"status": "ok", "deleted": deleted}
 
 
+def detect_csv_format(filepath: str) -> dict:
+    """Auto-detect CSV format by reading first few lines."""
+    with open(filepath, 'r') as f:
+        first_line = f.readline().strip()
+
+    # Check for header (J4X format has "Time" in header)
+    has_header = 'Time' in first_line or 'Open' in first_line
+
+    # Check delimiter
+    if ';' in first_line:
+        delimiter = ';'
+    else:
+        delimiter = ','
+
+    return {'has_header': has_header, 'delimiter': delimiter}
+
+
+def parse_csv_file(filepath: str) -> pd.DataFrame:
+    """Parse CSV file with auto-format detection."""
+    fmt = detect_csv_format(filepath)
+
+    if fmt['has_header']:
+        # J4X format: "Time (EET),Open,High,Low,Close,Volume" with YYYY.MM.DD HH:MM:SS
+        df = pd.read_csv(filepath, delimiter=fmt['delimiter'])
+        # Rename columns to standard names
+        df.columns = ['datetime', 'open', 'high', 'low', 'close', 'volume']
+        # Parse datetime: "2026.01.02 00:00:00"
+        df['datetime'] = pd.to_datetime(df['datetime'], format='%Y.%m.%d %H:%M:%S')
+    else:
+        # MT4 format: semicolon or comma delimited, no header
+        df = pd.read_csv(
+            filepath,
+            sep=fmt['delimiter'],
+            header=None,
+            names=['datetime', 'open', 'high', 'low', 'close', 'volume'],
+        )
+        # Try to detect datetime format from first value
+        sample_dt = str(df['datetime'].iloc[0])
+        if ' ' in sample_dt and '.' not in sample_dt.split(' ')[0]:
+            # Format: "20220102 170300" (YYYYMMDD HHMMSS)
+            df['datetime'] = pd.to_datetime(df['datetime'], format='%Y%m%d %H%M%S')
+        elif '.' in sample_dt:
+            # Format: "2012.02.01,00:00" (YYYY.MM.DD with separate time column)
+            # In this case, datetime column has date, next column has time
+            # Re-read with different handling
+            df = pd.read_csv(
+                filepath,
+                sep=fmt['delimiter'],
+                header=None,
+                names=['date', 'time', 'open', 'high', 'low', 'close', 'volume'],
+            )
+            df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'], format='%Y.%m.%d %H:%M')
+            df = df.drop(columns=['date', 'time'])
+
+    return df
+
+
 @app.post("/process")
 def process_files(request: ProcessRequest):
     """Process selected files into parquet format, stitching by instrument."""
@@ -216,15 +273,7 @@ def process_files(request: ProcessRequest):
         dfs = []
         for fp in filepaths:
             try:
-                # Read CSV - handle NinjaTrader format (semicolon-delimited, YYYYMMDD HHMMSS)
-                df = pd.read_csv(
-                    fp,
-                    sep=';',
-                    header=None,
-                    names=['datetime', 'open', 'high', 'low', 'close', 'volume'],
-                )
-                # Parse custom datetime format: "20220102 170300" -> proper datetime
-                df['datetime'] = pd.to_datetime(df['datetime'], format='%Y%m%d %H%M%S')
+                df = parse_csv_file(fp)
                 dfs.append(df)
             except Exception as e:
                 results.append({
@@ -608,15 +657,10 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         df = df.tail(request.limit)
 
     # Calculate brick size based on method
-    if request.brick_method == "ticks":
+    if request.brick_method == "price":
         # Direct raw price value
         brick_size = request.brick_size
         reversal_size = request.reversal_size
-    elif request.brick_method == "percentage":
-        # Use percentage of current price
-        current_price = df['close'].iloc[-1]
-        brick_size = current_price * (request.brick_size / 100)
-        reversal_size = current_price * (request.reversal_size / 100)
     elif request.brick_method == "atr":
         # Use ATR-based calculation
         atr_value = calculate_atr(df.reset_index(), request.atr_period)

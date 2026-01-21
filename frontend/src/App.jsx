@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import Sidebar from './components/Sidebar'
 import ChartArea from './components/ChartArea'
 import RenkoControls from './components/RenkoControls'
+import MAControls from './components/MAControls'
 import './styles/App.css'
 
 const API_BASE = 'http://localhost:8000'
@@ -49,9 +50,9 @@ function App() {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}renkoSettings`)
     if (saved) {
       const parsed = JSON.parse(saved)
-      // Migrate old settings format
-      if (parsed.brickMethod === 'fixed_pip') {
-        parsed.brickMethod = 'ticks'
+      // Migrate old settings format to 'price'
+      if (parsed.brickMethod === 'fixed_pip' || parsed.brickMethod === 'ticks' || parsed.brickMethod === 'percentage') {
+        parsed.brickMethod = 'price'
       }
       // Validate brickSize - must be a valid price value
       if (!parsed.brickSize || parsed.brickSize <= 0) {
@@ -72,7 +73,7 @@ function App() {
       return parsed
     }
     return {
-      brickMethod: 'ticks',
+      brickMethod: 'price',
       brickSize: 0.0010,
       reversalSize: 0.0020,
       atrPeriod: 14,
@@ -80,6 +81,15 @@ function App() {
     }
   })
   const [renkoData, setRenkoData] = useState(null)
+  const [maSettings, setMASettings] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}maSettings`)
+    if (saved) return JSON.parse(saved)
+    return {
+      ma1: { enabled: false, type: 'sma', period: 20, color: '#f59e0b', lineWidth: 2, lineStyle: 0 },
+      ma2: { enabled: false, type: 'sma', period: 50, color: '#3b82f6', lineWidth: 2, lineStyle: 0 },
+      ma3: { enabled: false, type: 'sma', period: 200, color: '#a855f7', lineWidth: 2, lineStyle: 0 }
+    }
+  })
 
   // Persist UI settings to localStorage
   useEffect(() => {
@@ -97,6 +107,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}chartType`, chartType)
   }, [chartType])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}maSettings`, JSON.stringify(maSettings))
+  }, [maSettings])
 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}workingDir`, workingDir)
@@ -402,6 +416,9 @@ function App() {
               ))}
             </select>
           )}
+          {activeInstrument && (
+            <MAControls settings={maSettings} onChange={setMASettings} />
+          )}
         </div>
       </header>
 
@@ -445,6 +462,7 @@ function App() {
             isLoading={isLoading}
             activeInstrument={activeInstrument}
             pricePrecision={pricePrecision}
+            maSettings={maSettings}
           />
         </main>
       </div>

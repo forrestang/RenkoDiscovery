@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 
 const BRICK_METHODS = [
-  { value: 'ticks', label: 'Ticks' },
-  { value: 'percentage', label: 'Percentage' },
+  { value: 'price', label: 'Price' },
   { value: 'atr', label: 'ATR' },
 ]
 
@@ -84,10 +83,8 @@ function RenkoControls({ settings, onChange }) {
 
   const getBrickSizeLabel = () => {
     switch (localSettings.brickMethod) {
-      case 'ticks':
+      case 'price':
         return 'Brick'
-      case 'percentage':
-        return '%'
       case 'atr':
         return 'ATR x'
       default:
@@ -97,10 +94,8 @@ function RenkoControls({ settings, onChange }) {
 
   const getReversalLabel = () => {
     switch (localSettings.brickMethod) {
-      case 'ticks':
+      case 'price':
         return 'Rev'
-      case 'percentage':
-        return '% Rev'
       case 'atr':
         return 'ATR Rev'
       default:

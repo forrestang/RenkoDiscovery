@@ -168,12 +168,55 @@ class RenkoBricksRenderer {
   }
 }
 
-function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, activeInstrument, pricePrecision = 5 }) {
+function calculateSMA(data, period) {
+  const result = []
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) {
+      result.push(null)
+    } else {
+      let sum = 0
+      for (let j = 0; j < period; j++) {
+        sum += data[i - j]
+      }
+      result.push(sum / period)
+    }
+  }
+  return result
+}
+
+function calculateEMA(data, period) {
+  const result = []
+  const multiplier = 2 / (period + 1)
+  let ema = null
+
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) {
+      result.push(null)
+    } else if (i === period - 1) {
+      // First EMA is SMA
+      let sum = 0
+      for (let j = 0; j < period; j++) {
+        sum += data[i - j]
+      }
+      ema = sum / period
+      result.push(ema)
+    } else {
+      ema = (data[i] - ema) * multiplier + ema
+      result.push(ema)
+    }
+  }
+  return result
+}
+
+function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, activeInstrument, pricePrecision = 5, maSettings = null }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
   const primitiveRef = useRef(null)
   const datetimesRef = useRef([])
+  const ma1SeriesRef = useRef(null)
+  const ma2SeriesRef = useRef(null)
+  const ma3SeriesRef = useRef(null)
 
   // Create chart on mount or when chartType changes
   useEffect(() => {
@@ -215,10 +258,10 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
       },
       timeScale: {
         borderColor: '#27272a',
-        timeVisible: chartType === 'm1',  // Enable native time for M1
+        timeVisible: chartType !== 'renko',  // Enable native time for M1 and overlay
         secondsVisible: false,
-        // Only use custom formatter for non-M1 modes (Renko uses index-based time)
-        ...(chartType !== 'm1' && {
+        // Only use custom formatter for Renko mode (uses index-based time)
+        ...(chartType === 'renko' && {
           tickMarkFormatter: (index) => {
             const dt = datetimesRef.current[index]
             return dt ? formatTickMark(dt) : String(index)
@@ -226,8 +269,8 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
         }),
       },
       localization: {
-        // Only use custom time formatter for non-M1 modes (M1 uses native timestamp display)
-        ...(chartType !== 'm1' && {
+        // Only use custom time formatter for Renko mode
+        ...(chartType === 'renko' && {
           timeFormatter: (index) => {
             const dt = datetimesRef.current[index]
             return dt ? formatTimestamp(dt) : `${label} ${index}`
@@ -287,6 +330,9 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
       chartRef.current = null
       seriesRef.current = null
       primitiveRef.current = null
+      ma1SeriesRef.current = null
+      ma2SeriesRef.current = null
+      ma3SeriesRef.current = null
     }
   }, [chartType])
 
@@ -308,9 +354,9 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
       },
     })
 
-    // For M1, use actual timestamps; for Renko/overlay, use sequential indices
+    // For M1 and overlay, use actual timestamps; for Renko, use sequential indices
     const data = open.map((_, i) => {
-      if (chartType === 'm1' && datetime[i]) {
+      if (chartType !== 'renko' && datetime[i]) {
         // Convert to Unix timestamp (seconds) for lightweight-charts
         const timestamp = Math.floor(new Date(datetime[i]).getTime() / 1000)
         return { time: timestamp, open: open[i], high: high[i], low: low[i], close: close[i] }
@@ -325,7 +371,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
       const visibleBars = Math.min(200, data.length)
       const fromIndex = data.length - visibleBars
       const toIndex = data.length - 1
-      // Use actual time values from data (timestamps for M1, indices for Renko/overlay)
+      // Use actual time values from data (timestamps for M1/overlay, indices for Renko)
       chartRef.current.timeScale().setVisibleRange({
         from: data[fromIndex].time,
         to: data[toIndex].time,
@@ -379,6 +425,105 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
       chartRef.current.timeScale().applyOptions({})
     }
   }, [renkoData, chartType])
+
+  // Update MA series when data or settings change
+  useEffect(() => {
+    if (!chartRef.current || !seriesRef.current) return
+
+    const chart = chartRef.current
+
+    // Get the appropriate data source based on chart type
+    // - M1 mode: chartData contains M1 data
+    // - Renko mode: chartData contains renko data (passed as chartData prop)
+    // - Overlay mode: use renkoData for MAs (based on renko bars, not M1)
+    const dataSource = chartType === 'overlay' ? renkoData : chartData
+    if (!dataSource?.data?.close) return
+
+    // For overlay mode, we also need chartData for timestamp mapping
+    if (chartType === 'overlay' && !chartData?.data?.datetime) return
+
+    const { close } = dataSource.data
+
+    // Helper to create/update MA series
+    const updateMASeries = (maSeriesRef, maConfig) => {
+      // Remove existing series if disabled
+      if (!maConfig.enabled) {
+        if (maSeriesRef.current) {
+          chart.removeSeries(maSeriesRef.current)
+          maSeriesRef.current = null
+        }
+        return
+      }
+
+      // Calculate MA values
+      const maValues = maConfig.type === 'ema'
+        ? calculateEMA(close, maConfig.period)
+        : calculateSMA(close, maConfig.period)
+
+      // Create series if it doesn't exist
+      if (!maSeriesRef.current) {
+        maSeriesRef.current = chart.addLineSeries({
+          color: maConfig.color,
+          lineWidth: maConfig.lineWidth,
+          lineStyle: maConfig.lineStyle,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        })
+      } else {
+        maSeriesRef.current.applyOptions({
+          color: maConfig.color,
+          lineWidth: maConfig.lineWidth,
+          lineStyle: maConfig.lineStyle,
+        })
+      }
+
+      // Build MA data with proper time values
+      let maData = maValues
+        .map((value, i) => {
+          if (value === null) return null
+
+          if (chartType === 'm1') {
+            // M1 mode: use timestamps from M1 data
+            const dt = dataSource.data.datetime[i]
+            if (dt) {
+              return { time: Math.floor(new Date(dt).getTime() / 1000), value }
+            }
+            return null
+          } else if (chartType === 'overlay') {
+            // Overlay mode: MA is based on renko bars, map to M1 timestamps via tick_index_close
+            const m1Index = dataSource.data.tick_index_close[i]
+            const m1Datetime = chartData.data.datetime[m1Index]
+            if (m1Datetime) {
+              return { time: Math.floor(new Date(m1Datetime).getTime() / 1000), value }
+            }
+            return null
+          } else {
+            // Renko mode: use sequential index
+            return { time: i, value }
+          }
+        })
+        .filter(d => d !== null)
+
+      // Deduplicate timestamps (multiple renko bricks can close on same M1 bar)
+      // Keep only the last value for each timestamp
+      if (chartType === 'overlay' || chartType === 'm1') {
+        const seenTimes = new Map()
+        for (const d of maData) {
+          seenTimes.set(d.time, d.value)
+        }
+        maData = Array.from(seenTimes, ([time, value]) => ({ time, value }))
+          .sort((a, b) => a.time - b.time)
+      }
+
+      maSeriesRef.current.setData(maData)
+    }
+
+    if (maSettings) {
+      updateMASeries(ma1SeriesRef, maSettings.ma1)
+      updateMASeries(ma2SeriesRef, maSettings.ma2)
+      updateMASeries(ma3SeriesRef, maSettings.ma3)
+    }
+  }, [chartData, renkoData, chartType, maSettings])
 
   if (!chartData && !isLoading) {
     return (
