@@ -134,18 +134,18 @@ def list_files(working_dir: Optional[str] = None):
 
 @app.get("/cache")
 def list_cache(working_dir: Optional[str] = None):
-    """List all cached parquet files."""
+    """List all cached feather files."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache"
+    cache_dir = base_dir / "cache_performant"
 
     if not cache_dir.exists():
         return []
 
-    parquets = []
+    feathers = []
     for filepath in cache_dir.iterdir():
-        if filepath.is_file() and filepath.suffix.lower() == '.parquet':
+        if filepath.is_file() and filepath.suffix.lower() == '.feather':
             stat = filepath.stat()
-            parquets.append({
+            feathers.append({
                 "filename": filepath.name,
                 "filepath": str(filepath),
                 "instrument": filepath.stem,
@@ -153,35 +153,35 @@ def list_cache(working_dir: Optional[str] = None):
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
             })
 
-    return parquets
+    return feathers
 
 
 @app.delete("/cache/{instrument}")
 def delete_cache_instrument(instrument: str, working_dir: Optional[str] = None):
-    """Delete a specific cached parquet file."""
+    """Delete a specific cached feather file."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache"
-    parquet_path = cache_dir / f"{instrument}.parquet"
+    cache_dir = base_dir / "cache_performant"
+    feather_path = cache_dir / f"{instrument}.feather"
 
-    if not parquet_path.exists():
+    if not feather_path.exists():
         raise HTTPException(status_code=404, detail=f"No cached data for {instrument}")
 
-    parquet_path.unlink()
+    feather_path.unlink()
     return {"status": "deleted", "instrument": instrument}
 
 
 @app.delete("/cache")
 def delete_cache_all(working_dir: Optional[str] = None):
-    """Delete all cached parquet files."""
+    """Delete all cached feather files."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache"
+    cache_dir = base_dir / "cache_performant"
 
     if not cache_dir.exists():
         return {"status": "ok", "deleted": 0}
 
     deleted = 0
     for filepath in cache_dir.iterdir():
-        if filepath.is_file() and filepath.suffix.lower() == '.parquet':
+        if filepath.is_file() and filepath.suffix.lower() == '.feather':
             filepath.unlink()
             deleted += 1
 
@@ -216,6 +216,7 @@ def parse_csv_file(filepath: str) -> pd.DataFrame:
         df.columns = ['datetime', 'open', 'high', 'low', 'close', 'volume']
         # Parse datetime: "2026.01.02 00:00:00"
         df['datetime'] = pd.to_datetime(df['datetime'], format='%Y.%m.%d %H:%M:%S')
+        df['datetime'] = df['datetime'].dt.tz_localize('UTC')
     else:
         # MT4 format: semicolon or comma delimited, no header
         df = pd.read_csv(
@@ -229,6 +230,7 @@ def parse_csv_file(filepath: str) -> pd.DataFrame:
         if ' ' in sample_dt and '.' not in sample_dt.split(' ')[0]:
             # Format: "20220102 170300" (YYYYMMDD HHMMSS)
             df['datetime'] = pd.to_datetime(df['datetime'], format='%Y%m%d %H%M%S')
+            df['datetime'] = df['datetime'].dt.tz_localize('UTC')
         elif '.' in sample_dt:
             # Format: "2012.02.01,00:00" (YYYY.MM.DD with separate time column)
             # In this case, datetime column has date, next column has time
@@ -240,6 +242,7 @@ def parse_csv_file(filepath: str) -> pd.DataFrame:
                 names=['date', 'time', 'open', 'high', 'low', 'close', 'volume'],
             )
             df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'], format='%Y.%m.%d %H:%M')
+            df['datetime'] = df['datetime'].dt.tz_localize('UTC')
             df = df.drop(columns=['date', 'time'])
 
     return df
@@ -249,7 +252,7 @@ def parse_csv_file(filepath: str) -> pd.DataFrame:
 def process_files(request: ProcessRequest):
     """Process selected files into parquet format, stitching by instrument."""
     base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache"
+    cache_dir = base_dir / "cache_performant"
     cache_dir.mkdir(exist_ok=True)
 
     # Group files by instrument
@@ -297,9 +300,9 @@ def process_files(request: ProcessRequest):
             combined['close'] = pd.to_numeric(combined['close'], errors='coerce')
             combined['volume'] = pd.to_numeric(combined['volume'], errors='coerce').fillna(0).astype(int)
 
-            # Save as parquet
-            output_path = cache_dir / f"{instrument}.parquet"
-            combined.to_parquet(output_path, engine='pyarrow', index=False)
+            # Save as feather
+            output_path = cache_dir / f"{instrument}.feather"
+            combined.to_feather(output_path)
 
             results.append({
                 "instrument": instrument,
@@ -319,13 +322,13 @@ def process_files(request: ProcessRequest):
 def get_chart_data(instrument: str, working_dir: Optional[str] = None, limit: Optional[int] = None):
     """Get OHLC data for charting."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache"
-    parquet_path = cache_dir / f"{instrument}.parquet"
+    cache_dir = base_dir / "cache_performant"
+    feather_path = cache_dir / f"{instrument}.feather"
 
-    if not parquet_path.exists():
+    if not feather_path.exists():
         raise HTTPException(status_code=404, detail=f"No cached data for {instrument}")
 
-    df = pd.read_parquet(parquet_path)
+    df = pd.read_feather(feather_path)
     total_rows = len(df)
 
     # Apply limit if specified (return last N rows)
@@ -452,7 +455,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'datetime': timestamps[tick_idx_open],
                     'open': ref_price,
                     'high': brick_close,  # Up bar: high = close (no upper wick)
-                    'low': calc_up_brick_low(brick_low, ref_price),
+                    'low': calc_up_brick_low(pending_low, ref_price),
                     'close': brick_close,
                     'direction': 1,
                     'is_reversal': 0,
@@ -472,7 +475,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': ref_price,
-                    'high': calc_down_brick_high(brick_high, ref_price),
+                    'high': calc_down_brick_high(pending_high, ref_price),
                     'low': brick_close,  # Down bar: low = close (no lower wick)
                     'close': brick_close,
                     'direction': -1,
@@ -489,6 +492,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
         elif direction == 1:
             # Check for continuation bricks (up)
+            bricks_created = False
             while price >= last_brick_close + brick_size:
                 brick_open = last_brick_close
                 brick_close = brick_open + brick_size
@@ -496,7 +500,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
                     'high': brick_close,  # Up bar: high = close (no upper wick)
-                    'low': calc_up_brick_low(brick_low, brick_open),
+                    'low': calc_up_brick_low(pending_low, brick_open),
                     'close': brick_close,
                     'direction': 1,
                     'is_reversal': 0,
@@ -504,6 +508,9 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'tick_index_close': i
                 })
                 last_brick_close = brick_close
+                bricks_created = True
+
+            if bricks_created:
                 brick_high = price
                 brick_low = price
                 pending_high = high_prices[i]
@@ -518,7 +525,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
-                    'high': calc_down_brick_high(brick_high, brick_open),
+                    'high': calc_down_brick_high(pending_high, brick_open),
                     'low': brick_close,  # Down bar: low = close (no lower wick)
                     'close': brick_close,
                     'direction': -1,
@@ -535,13 +542,14 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
         else:  # direction == -1
             # Check for continuation bricks (down)
+            bricks_created = False
             while price <= last_brick_close - brick_size:
                 brick_open = last_brick_close
                 brick_close = brick_open - brick_size
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
-                    'high': calc_down_brick_high(brick_high, brick_open),
+                    'high': calc_down_brick_high(pending_high, brick_open),
                     'low': brick_close,  # Down bar: low = close (no lower wick)
                     'close': brick_close,
                     'direction': -1,
@@ -550,6 +558,9 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'tick_index_close': i
                 })
                 last_brick_close = brick_close
+                bricks_created = True
+
+            if bricks_created:
                 brick_high = price
                 brick_low = price
                 pending_high = high_prices[i]
@@ -565,7 +576,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
                     'high': brick_close,  # Up bar: high = close (no upper wick)
-                    'low': calc_up_brick_low(brick_low, brick_open),
+                    'low': calc_up_brick_low(pending_low, brick_open),
                     'close': brick_close,
                     'direction': 1,
                     'is_reversal': 1,
@@ -634,14 +645,14 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 def get_renko_data(instrument: str, request: RenkoRequest):
     """Generate Renko chart data with wicks."""
     base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache"
-    parquet_path = cache_dir / f"{instrument}.parquet"
+    cache_dir = base_dir / "cache_performant"
+    feather_path = cache_dir / f"{instrument}.feather"
 
-    if not parquet_path.exists():
+    if not feather_path.exists():
         raise HTTPException(status_code=404, detail=f"No cached data for {instrument}")
 
     # Read source data
-    df = pd.read_parquet(parquet_path)
+    df = pd.read_feather(feather_path)
 
     # Ensure datetime index for renkodf
     df = df.set_index('datetime')
@@ -747,4 +758,4 @@ def get_renko_data(instrument: str, request: RenkoRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
