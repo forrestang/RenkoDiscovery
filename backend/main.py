@@ -377,7 +377,7 @@ def get_pip_value(instrument: str) -> float:
 
 def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0, wick_mode: str = "all") -> tuple[pd.DataFrame, dict]:
     """
-    Generate Renko bricks with configurable reversal multiplier.
+    Generate Renko bricks with configurable reversal multiplier using threshold-based logic.
 
     Standard Renko uses reversal_multiplier=2 (need 2x brick size to reverse).
     This implementation allows custom reversal thresholds.
@@ -390,30 +390,31 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
     Returns:
         tuple: (completed_bricks_df, pending_brick_dict)
     """
-    def calc_up_brick_low(brick_low_val, brick_open):
-        """Calculate low for up bar based on wick mode."""
-        if wick_mode == "none":
+    def calc_up_brick_low(pending_low_val, brick_open, apply_wick=True):
+        """Calculate low for up brick based on wick mode."""
+        if not apply_wick or wick_mode == "none":
             return brick_open
         elif wick_mode == "big":
-            retracement = brick_open - brick_low_val
+            retracement = brick_open - pending_low_val
             if retracement > brick_size:
-                return min(brick_low_val, brick_open)
+                return pending_low_val
             return brick_open
         else:  # "all"
-            return min(brick_low_val, brick_open)
+            return min(pending_low_val, brick_open)
 
-    def calc_down_brick_high(brick_high_val, brick_open):
-        """Calculate high for down bar based on wick mode."""
-        if wick_mode == "none":
+    def calc_down_brick_high(pending_high_val, brick_open, apply_wick=True):
+        """Calculate high for down brick based on wick mode."""
+        if not apply_wick or wick_mode == "none":
             return brick_open
         elif wick_mode == "big":
-            retracement = brick_high_val - brick_open
+            retracement = pending_high_val - brick_open
             if retracement > brick_size:
-                return max(brick_high_val, brick_open)
+                return pending_high_val
             return brick_open
         else:  # "all"
-            return max(brick_high_val, brick_open)
+            return max(pending_high_val, brick_open)
 
+    open_prices = df['open'].values
     close_prices = df['close'].values
     high_prices = df['high'].values
     low_prices = df['low'].values
@@ -425,37 +426,35 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
     reversal_size = brick_size * reversal_multiplier
     bricks = []
 
-    # Find starting reference price (round to brick boundary)
-    first_price = close_prices[0]
-    ref_price = np.floor(first_price / brick_size) * brick_size
+    # Initialize with first M1 bar's OPEN rounded to brick boundary
+    ref_price = np.floor(open_prices[0] / brick_size) * brick_size
 
-    # Track state
-    direction = 0  # 0 = undetermined, 1 = up, -1 = down
-    brick_high = first_price
-    brick_low = first_price
-    tick_idx_open = 0
+    # State variables
     last_brick_close = ref_price
-    # Track pending brick high/low using actual M1 high/low values
+    direction = 0  # 0 = undetermined, 1 = up, -1 = down
+    up_threshold = ref_price + brick_size
+    down_threshold = ref_price - brick_size
     pending_high = high_prices[0]
     pending_low = low_prices[0]
+    tick_idx_open = 0
 
-    for i, price in enumerate(close_prices):
-        brick_high = max(brick_high, price)
-        brick_low = min(brick_low, price)
+    for i in range(len(close_prices)):
+        # Update pending high/low with current bar's high/low
         pending_high = max(pending_high, high_prices[i])
         pending_low = min(pending_low, low_prices[i])
+        price = close_prices[i]
 
         if direction == 0:
-            # Determine initial direction
-            if price >= ref_price + brick_size:
-                # First brick is up
-                direction = 1
-                brick_close = ref_price + brick_size
+            # Undetermined direction - check which threshold is crossed first
+            if price >= up_threshold:
+                # Create UP brick
+                brick_open = last_brick_close
+                brick_close = brick_open + brick_size
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
-                    'open': ref_price,
-                    'high': brick_close,  # Up bar: high = close (no upper wick)
-                    'low': calc_up_brick_low(pending_low, ref_price),
+                    'open': brick_open,
+                    'high': brick_close,
+                    'low': calc_up_brick_low(pending_low, brick_open),
                     'close': brick_close,
                     'direction': 1,
                     'is_reversal': 0,
@@ -463,20 +462,24 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'tick_index_close': i
                 })
                 last_brick_close = brick_close
-                brick_high = price
-                brick_low = price
+                direction = 1
+                # Update thresholds after UP brick
+                up_threshold = brick_close + brick_size
+                down_threshold = brick_close - reversal_size
+                # Reset pending values
                 pending_high = high_prices[i]
                 pending_low = low_prices[i]
                 tick_idx_open = i
-            elif price <= ref_price - brick_size:
-                # First brick is down
-                direction = -1
-                brick_close = ref_price - brick_size
+
+            elif price <= down_threshold:
+                # Create DOWN brick
+                brick_open = last_brick_close
+                brick_close = brick_open - brick_size
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
-                    'open': ref_price,
-                    'high': calc_down_brick_high(pending_high, ref_price),
-                    'low': brick_close,  # Down bar: low = close (no lower wick)
+                    'open': brick_open,
+                    'high': calc_down_brick_high(pending_high, brick_open),
+                    'low': brick_close,
                     'close': brick_close,
                     'direction': -1,
                     'is_reversal': 0,
@@ -484,108 +487,129 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'tick_index_close': i
                 })
                 last_brick_close = brick_close
-                brick_high = price
-                brick_low = price
+                direction = -1
+                # Update thresholds after DOWN brick
+                down_threshold = brick_close - brick_size
+                up_threshold = brick_close + reversal_size
+                # Reset pending values
                 pending_high = high_prices[i]
                 pending_low = low_prices[i]
                 tick_idx_open = i
 
         elif direction == 1:
-            # Check for continuation bricks (up)
-            bricks_created = False
-            while price >= last_brick_close + brick_size:
-                brick_open = last_brick_close
-                brick_close = brick_open + brick_size
-                bricks.append({
-                    'datetime': timestamps[tick_idx_open],
-                    'open': brick_open,
-                    'high': brick_close,  # Up bar: high = close (no upper wick)
-                    'low': calc_up_brick_low(pending_low, brick_open),
-                    'close': brick_close,
-                    'direction': 1,
-                    'is_reversal': 0,
-                    'tick_index_open': tick_idx_open,
-                    'tick_index_close': i
-                })
-                last_brick_close = brick_close
-                bricks_created = True
+            # Uptrend - check for continuation or reversal
+            if price >= up_threshold:
+                # Create UP brick(s) - continuation
+                first_brick = True
+                while price >= up_threshold:
+                    brick_open = last_brick_close
+                    brick_close = brick_open + brick_size
+                    bricks.append({
+                        'datetime': timestamps[tick_idx_open],
+                        'open': brick_open,
+                        'high': brick_close,
+                        'low': calc_up_brick_low(pending_low, brick_open, apply_wick=first_brick),
+                        'close': brick_close,
+                        'direction': 1,
+                        'is_reversal': 0,
+                        'tick_index_open': tick_idx_open,
+                        'tick_index_close': i
+                    })
+                    last_brick_close = brick_close
+                    # Update thresholds after UP brick
+                    up_threshold = brick_close + brick_size
+                    down_threshold = brick_close - reversal_size
+                    first_brick = False
 
-            if bricks_created:
-                brick_high = price
-                brick_low = price
+                # Reset pending values after all bricks created
                 pending_high = high_prices[i]
                 pending_low = low_prices[i]
                 tick_idx_open = i
 
-            # Check for reversal (need to drop by reversal_size)
-            if price <= last_brick_close - reversal_size:
-                direction = -1
-                brick_open = last_brick_close
-                brick_close = brick_open - brick_size
-                bricks.append({
-                    'datetime': timestamps[tick_idx_open],
-                    'open': brick_open,
-                    'high': calc_down_brick_high(pending_high, brick_open),
-                    'low': brick_close,  # Down bar: low = close (no lower wick)
-                    'close': brick_close,
-                    'direction': -1,
-                    'is_reversal': 1,
-                    'tick_index_open': tick_idx_open,
-                    'tick_index_close': i
-                })
-                last_brick_close = brick_close
-                brick_high = price
-                brick_low = price
+            elif price <= down_threshold:
+                # Reversal to DOWN
+                first_brick = True
+                while price <= down_threshold:
+                    brick_open = last_brick_close
+                    brick_close = brick_open - brick_size
+                    bricks.append({
+                        'datetime': timestamps[tick_idx_open],
+                        'open': brick_open,
+                        'high': calc_down_brick_high(pending_high, brick_open, apply_wick=first_brick),
+                        'low': brick_close,
+                        'close': brick_close,
+                        'direction': -1,
+                        'is_reversal': 1 if first_brick else 0,
+                        'tick_index_open': tick_idx_open,
+                        'tick_index_close': i
+                    })
+                    last_brick_close = brick_close
+                    direction = -1
+                    # Update thresholds after DOWN brick
+                    down_threshold = brick_close - brick_size
+                    up_threshold = brick_close + reversal_size
+                    first_brick = False
+
+                # Reset pending values after all bricks created
                 pending_high = high_prices[i]
                 pending_low = low_prices[i]
                 tick_idx_open = i
 
         else:  # direction == -1
-            # Check for continuation bricks (down)
-            bricks_created = False
-            while price <= last_brick_close - brick_size:
-                brick_open = last_brick_close
-                brick_close = brick_open - brick_size
-                bricks.append({
-                    'datetime': timestamps[tick_idx_open],
-                    'open': brick_open,
-                    'high': calc_down_brick_high(pending_high, brick_open),
-                    'low': brick_close,  # Down bar: low = close (no lower wick)
-                    'close': brick_close,
-                    'direction': -1,
-                    'is_reversal': 0,
-                    'tick_index_open': tick_idx_open,
-                    'tick_index_close': i
-                })
-                last_brick_close = brick_close
-                bricks_created = True
+            # Downtrend - check for continuation or reversal
+            if price <= down_threshold:
+                # Create DOWN brick(s) - continuation
+                first_brick = True
+                while price <= down_threshold:
+                    brick_open = last_brick_close
+                    brick_close = brick_open - brick_size
+                    bricks.append({
+                        'datetime': timestamps[tick_idx_open],
+                        'open': brick_open,
+                        'high': calc_down_brick_high(pending_high, brick_open, apply_wick=first_brick),
+                        'low': brick_close,
+                        'close': brick_close,
+                        'direction': -1,
+                        'is_reversal': 0,
+                        'tick_index_open': tick_idx_open,
+                        'tick_index_close': i
+                    })
+                    last_brick_close = brick_close
+                    # Update thresholds after DOWN brick
+                    down_threshold = brick_close - brick_size
+                    up_threshold = brick_close + reversal_size
+                    first_brick = False
 
-            if bricks_created:
-                brick_high = price
-                brick_low = price
+                # Reset pending values after all bricks created
                 pending_high = high_prices[i]
                 pending_low = low_prices[i]
                 tick_idx_open = i
 
-            # Check for reversal (need to rise by reversal_size)
-            if price >= last_brick_close + reversal_size:
-                direction = 1
-                brick_open = last_brick_close
-                brick_close = brick_open + brick_size
-                bricks.append({
-                    'datetime': timestamps[tick_idx_open],
-                    'open': brick_open,
-                    'high': brick_close,  # Up bar: high = close (no upper wick)
-                    'low': calc_up_brick_low(pending_low, brick_open),
-                    'close': brick_close,
-                    'direction': 1,
-                    'is_reversal': 1,
-                    'tick_index_open': tick_idx_open,
-                    'tick_index_close': i
-                })
-                last_brick_close = brick_close
-                brick_high = price
-                brick_low = price
+            elif price >= up_threshold:
+                # Reversal to UP
+                first_brick = True
+                while price >= up_threshold:
+                    brick_open = last_brick_close
+                    brick_close = brick_open + brick_size
+                    bricks.append({
+                        'datetime': timestamps[tick_idx_open],
+                        'open': brick_open,
+                        'high': brick_close,
+                        'low': calc_up_brick_low(pending_low, brick_open, apply_wick=first_brick),
+                        'close': brick_close,
+                        'direction': 1,
+                        'is_reversal': 1 if first_brick else 0,
+                        'tick_index_open': tick_idx_open,
+                        'tick_index_close': i
+                    })
+                    last_brick_close = brick_close
+                    direction = 1
+                    # Update thresholds after UP brick
+                    up_threshold = brick_close + brick_size
+                    down_threshold = brick_close - reversal_size
+                    first_brick = False
+
+                # Reset pending values after all bricks created
                 pending_high = high_prices[i]
                 pending_low = low_prices[i]
                 tick_idx_open = i
@@ -596,37 +620,24 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
         last_idx = len(close_prices) - 1
         current_price = close_prices[last_idx]
         brick_open = last_brick_close
+
         if direction == 1:
-            # Pending up brick: high = close (no upper wick), low based on wick_mode
-            if wick_mode == "none":
-                pending_low_val = brick_open
-            elif wick_mode == "big":
-                retracement = brick_open - pending_low
-                pending_low_val = min(pending_low, brick_open) if retracement > brick_size else brick_open
-            else:  # "all"
-                pending_low_val = min(pending_low, brick_open)
+            # Pending up brick
             pending_brick = {
                 'open': brick_open,
-                'high': current_price,  # Up bar: high = close
-                'low': pending_low_val,
+                'high': max(current_price, brick_open),
+                'low': calc_up_brick_low(pending_low, brick_open),
                 'close': current_price,
                 'direction': direction,
                 'tick_index_open': tick_idx_open,
                 'tick_index_close': last_idx
             }
         else:
-            # Pending down brick: low = close (no lower wick), high based on wick_mode
-            if wick_mode == "none":
-                pending_high_val = brick_open
-            elif wick_mode == "big":
-                retracement = pending_high - brick_open
-                pending_high_val = max(pending_high, brick_open) if retracement > brick_size else brick_open
-            else:  # "all"
-                pending_high_val = max(pending_high, brick_open)
+            # Pending down brick
             pending_brick = {
                 'open': brick_open,
-                'high': pending_high_val,
-                'low': current_price,  # Down bar: low = close
+                'high': calc_down_brick_high(pending_high, brick_open),
+                'low': min(current_price, brick_open),
                 'close': current_price,
                 'direction': direction,
                 'tick_index_open': tick_idx_open,
