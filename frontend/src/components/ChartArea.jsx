@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react'
 import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts'
+import DataWindow from './DataWindow'
 import './ChartArea.css'
 
 // Format timestamp for crosshair label (includes year)
@@ -202,7 +203,7 @@ function calculateEMA(data, period) {
   return result
 }
 
-function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, activeInstrument, pricePrecision = 5, maSettings = null }) {
+function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, renkoSettings = null }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
@@ -211,6 +212,19 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
   const ma1SeriesRef = useRef(null)
   const ma2SeriesRef = useRef(null)
   const ma3SeriesRef = useRef(null)
+  const renkoDataRef = useRef(null)
+  const [hoveredBarIndex, setHoveredBarIndex] = useState(null)
+
+  // Keep renkoDataRef in sync with renkoData prop
+  useEffect(() => {
+    renkoDataRef.current = renkoData
+  }, [renkoData])
+
+  // Keep chartData ref for overlay mode timestamp mapping
+  const chartDataRef = useRef(null)
+  useEffect(() => {
+    chartDataRef.current = chartData
+  }, [chartData])
 
   // Create chart on mount or when chartType changes
   useEffect(() => {
@@ -317,6 +331,68 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
 
     const resizeObserver = new ResizeObserver(handleResize)
     resizeObserver.observe(containerRef.current)
+
+    // Subscribe to crosshair move to track which renko bar is hovered
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.point) {
+        setHoveredBarIndex(null)
+        return
+      }
+
+      // Get logical index from x coordinate
+      const logicalIndex = chart.timeScale().coordinateToLogical(param.point.x)
+      if (logicalIndex === null) {
+        setHoveredBarIndex(null)
+        return
+      }
+
+      // For renko mode, the index directly maps to bar index
+      if (chartType === 'renko') {
+        const roundedIndex = Math.round(logicalIndex)
+        setHoveredBarIndex(roundedIndex >= 0 ? roundedIndex : null)
+        return
+      }
+
+      // For overlay mode, find which brick contains this M1 bar
+      if (chartType === 'overlay' && renkoDataRef.current?.data && chartDataRef.current?.data) {
+        const tickOpens = renkoDataRef.current.data.tick_index_open
+        const tickCloses = renkoDataRef.current.data.tick_index_close
+        const m1Datetimes = chartDataRef.current.data.datetime
+
+        if (tickOpens && tickCloses && m1Datetimes) {
+          // param.time is the timestamp at the crosshair
+          const hoverTime = param.time
+          if (hoverTime) {
+            // Find the M1 bar index that matches this timestamp
+            let m1Index = -1
+            for (let i = 0; i < m1Datetimes.length; i++) {
+              const barTimestamp = Math.floor(new Date(m1Datetimes[i]).getTime() / 1000)
+              if (barTimestamp === hoverTime) {
+                m1Index = i
+                break
+              }
+              // If we've passed the hover time, use the previous bar
+              if (barTimestamp > hoverTime && i > 0) {
+                m1Index = i - 1
+                break
+              }
+            }
+
+            if (m1Index >= 0) {
+              // Find brick where m1Index falls between tick_open and tick_close
+              for (let i = tickOpens.length - 1; i >= 0; i--) {
+                if (m1Index >= tickOpens[i] && m1Index <= tickCloses[i]) {
+                  setHoveredBarIndex(i)
+                  return
+                }
+              }
+            }
+          }
+        }
+      }
+
+      setHoveredBarIndex(null)
+    })
 
     return () => {
       resizeObserver.disconnect()
@@ -570,7 +646,25 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
     )
   }
 
-  return <div ref={containerRef} className="chart-container" />
+  // Get the renko data source for DataWindow (either passed directly or when chartData is renko)
+  const renkoDataForWindow = renkoData || (chartType === 'renko' ? chartData : null)
+  const showDataWindow = (chartType === 'renko' || chartType === 'overlay') &&
+    renkoSettings?.brickMethod === 'adr' &&
+    renkoDataForWindow?.adr_info
+
+  return (
+    <div ref={containerRef} className="chart-container">
+      {showDataWindow && (
+        <DataWindow
+          renkoData={renkoDataForWindow}
+          hoveredBarIndex={hoveredBarIndex}
+          renkoSettings={renkoSettings}
+          pricePrecision={pricePrecision}
+          visible={true}
+        />
+      )}
+    </div>
+  )
 }
 
 export default ChartArea

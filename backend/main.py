@@ -64,10 +64,10 @@ class ChartDataRequest(BaseModel):
 
 
 class RenkoRequest(BaseModel):
-    brick_method: str = "price"  # "price" | "atr"
-    brick_size: float = 0.0010  # raw price value for price method, multiplier for atr
-    reversal_size: float = 0.0020  # raw price value for reversal threshold
-    atr_period: int = 14  # only used for ATR method
+    brick_method: str = "price"  # "price" | "adr"
+    brick_size: float = 0.0010  # raw price (price) or percentage (adr, e.g. 50 = 50%)
+    reversal_size: float = 0.0020  # raw price (price) or percentage (adr)
+    adr_lookback: int = 5  # sessions to look back for ADR calculation
     wick_mode: str = "all"  # "all" | "big" | "none"
     limit: Optional[int] = None  # limit M1 data to last N bars (for overlay mode alignment)
     working_dir: Optional[str] = None
@@ -350,21 +350,92 @@ def get_chart_data(instrument: str, working_dir: Optional[str] = None, limit: Op
     }
 
 
-def calculate_atr(df: pd.DataFrame, period: int = 14) -> float:
-    """Calculate Average True Range."""
-    high = df['high']
-    low = df['low']
-    close = df['close']
+def calculate_adr(df: pd.DataFrame, lookback_sessions: int = 5) -> dict:
+    """
+    Calculate Average Daily Range for the last N UTC sessions.
 
-    # True Range components
-    tr1 = high - low
-    tr2 = abs(high - close.shift(1))
-    tr3 = abs(low - close.shift(1))
+    Returns dict with:
+      - 'adr': float - the average daily range
+      - 'session_ranges': list - daily ranges for each session
+      - 'session_dates': list - UTC dates for each session
+    """
+    # Ensure we have a DataFrame with proper columns
+    if 'datetime' in df.columns:
+        df = df.set_index('datetime')
 
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(window=period).mean()
+    # Work with a copy and ensure UTC
+    df_utc = df.copy()
+    if df_utc.index.tz is None:
+        df_utc.index = pd.to_datetime(df_utc.index).tz_localize('UTC')
+    else:
+        df_utc.index = pd.to_datetime(df_utc.index).tz_convert('UTC')
+    df_utc['session_date'] = df_utc.index.date
 
-    return float(atr.iloc[-1])
+    # Group by session date and get high-low range
+    session_stats = df_utc.groupby('session_date').agg({'high': 'max', 'low': 'min'})
+    session_stats['range'] = session_stats['high'] - session_stats['low']
+
+    # Get last N complete sessions (exclude current partial session)
+    complete_sessions = session_stats.iloc[:-1].tail(lookback_sessions)
+
+    if len(complete_sessions) == 0:
+        # Fallback: use all sessions if no complete sessions
+        complete_sessions = session_stats.tail(lookback_sessions)
+
+    adr = complete_sessions['range'].mean()
+
+    return {
+        'adr': float(adr),
+        'session_ranges': complete_sessions['range'].tolist(),
+        'session_dates': [str(d) for d in complete_sessions.index.tolist()]
+    }
+
+
+def calculate_daily_ranges(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate daily high-low ranges for each UTC session.
+    Returns a DataFrame indexed by session date with 'range' column.
+    """
+    # Ensure we have a DataFrame with proper columns
+    if 'datetime' in df.columns:
+        df = df.set_index('datetime')
+
+    df_utc = df.copy()
+    if df_utc.index.tz is None:
+        df_utc.index = pd.to_datetime(df_utc.index).tz_localize('UTC')
+    else:
+        df_utc.index = pd.to_datetime(df_utc.index).tz_convert('UTC')
+    df_utc['session_date'] = df_utc.index.date
+
+    # Group by session date and get high-low range
+    daily_ranges = df_utc.groupby('session_date').agg({'high': 'max', 'low': 'min'})
+    daily_ranges['range'] = daily_ranges['high'] - daily_ranges['low']
+
+    return daily_ranges
+
+
+def calculate_session_brick_sizes(daily_ranges: pd.DataFrame, brick_percentage: float, lookback: int) -> dict:
+    """
+    Calculate the brick size that applies to each session date.
+    For each session, brick_size = ADR(last N sessions) * percentage/100
+
+    Returns: dict mapping session_date -> brick_size
+    """
+    session_brick_sizes = {}
+    session_dates = sorted(daily_ranges.index.tolist())
+
+    for i, session_date in enumerate(session_dates):
+        # Get ADR from previous N sessions (not including current)
+        past_sessions = daily_ranges.loc[daily_ranges.index < session_date].tail(lookback)
+        if len(past_sessions) >= 1:
+            adr = past_sessions['range'].mean()
+        else:
+            # Fallback for early sessions: use first available sessions
+            adr = daily_ranges.iloc[:i+1]['range'].mean() if i > 0 else daily_ranges.iloc[0]['range']
+
+        session_brick_sizes[session_date] = float(adr * (brick_percentage / 100.0))
+
+    return session_brick_sizes
 
 
 def get_pip_value(instrument: str) -> float:
@@ -375,7 +446,8 @@ def get_pip_value(instrument: str) -> float:
     return 0.0001
 
 
-def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0, wick_mode: str = "all") -> tuple[pd.DataFrame, dict]:
+def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0, wick_mode: str = "all",
+                          session_brick_sizes: dict = None) -> tuple[pd.DataFrame, dict]:
     """
     Generate Renko bricks with configurable reversal multiplier using threshold-based logic.
 
@@ -386,6 +458,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
         - "all": Show all wicks (any retracement)
         - "big": Only show wicks when retracement > brick_size
         - "none": No wicks at all
+
+    session_brick_sizes: Optional dict mapping session_date -> brick_size for dynamic ADR sizing
 
     Returns:
         tuple: (completed_bricks_df, pending_brick_dict)
@@ -453,6 +527,13 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
     if len(close_prices) < 2:
         return pd.DataFrame(), None
 
+    # Session tracking for dynamic brick sizing
+    current_session = None
+    session_dates = None
+    if session_brick_sizes is not None:
+        # Extract session dates from timestamps
+        session_dates = [ts.date() if hasattr(ts, 'date') else pd.to_datetime(ts).date() for ts in timestamps]
+
     reversal_size = brick_size * reversal_multiplier
     bricks = []
 
@@ -469,6 +550,14 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
     tick_idx_open = 0
 
     for i in range(len(close_prices)):
+        # Dynamic brick sizing: check for session change
+        if session_brick_sizes is not None:
+            bar_session = session_dates[i]
+            if bar_session != current_session and bar_session in session_brick_sizes:
+                current_session = bar_session
+                brick_size = session_brick_sizes[bar_session]
+                reversal_size = brick_size * reversal_multiplier
+
         # Update pending high/low with current bar's high/low
         pending_high = max(pending_high, high_prices[i])
         pending_low = min(pending_low, low_prices[i])
@@ -489,7 +578,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'direction': 1,
                     'is_reversal': 0,
                     'tick_index_open': tick_idx_open,
-                    'tick_index_close': i
+                    'tick_index_close': i,
+                    'brick_size': brick_size
                 })
                 last_brick_close = brick_close
                 direction = 1
@@ -514,7 +604,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     'direction': -1,
                     'is_reversal': 0,
                     'tick_index_open': tick_idx_open,
-                    'tick_index_close': i
+                    'tick_index_close': i,
+                    'brick_size': brick_size
                 })
                 last_brick_close = brick_close
                 direction = -1
@@ -546,7 +637,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                         'direction': 1,
                         'is_reversal': 0,
                         'tick_index_open': cross_open,
-                        'tick_index_close': cross_close
+                        'tick_index_close': cross_close,
+                        'brick_size': brick_size
                     })
                     last_brick_close = brick_close
 
@@ -579,7 +671,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                         'direction': -1,
                         'is_reversal': 1 if first_brick else 0,
                         'tick_index_open': cross_open,
-                        'tick_index_close': cross_close
+                        'tick_index_close': cross_close,
+                        'brick_size': brick_size
                     })
                     last_brick_close = brick_close
 
@@ -613,7 +706,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                         'direction': -1,
                         'is_reversal': 0,
                         'tick_index_open': cross_open,
-                        'tick_index_close': cross_close
+                        'tick_index_close': cross_close,
+                        'brick_size': brick_size
                     })
                     last_brick_close = brick_close
 
@@ -646,7 +740,8 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                         'direction': 1,
                         'is_reversal': 1 if first_brick else 0,
                         'tick_index_open': cross_open,
-                        'tick_index_close': cross_close
+                        'tick_index_close': cross_close,
+                        'brick_size': brick_size
                     })
                     last_brick_close = brick_close
 
@@ -725,15 +820,41 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         df = df.tail(request.limit)
 
     # Calculate brick size based on method
+    adr_info = None
+    daily_ranges = None
+
     if request.brick_method == "price":
         # Direct raw price value
         brick_size = request.brick_size
         reversal_size = request.reversal_size
-    elif request.brick_method == "atr":
-        # Use ATR-based calculation
-        atr_value = calculate_atr(df.reset_index(), request.atr_period)
-        brick_size = atr_value * request.brick_size
-        reversal_size = atr_value * request.reversal_size
+    elif request.brick_method == "adr":
+        # Calculate daily ranges
+        daily_ranges = calculate_daily_ranges(df.reset_index())
+
+        # Calculate overall ADR for response info
+        adr_result = calculate_adr(df.reset_index(), request.adr_lookback)
+        adr_value = adr_result['adr']
+
+        # Calculate per-session brick sizes for dynamic sizing
+        session_brick_sizes = calculate_session_brick_sizes(
+            daily_ranges,
+            request.brick_size,  # percentage
+            request.adr_lookback
+        )
+
+        # Use the most recent session's brick size as the "current" brick size
+        latest_session = max(session_brick_sizes.keys())
+        brick_size = session_brick_sizes[latest_session]
+        reversal_size = brick_size * (request.reversal_size / request.brick_size)
+
+        adr_info = {
+            'adr_value': adr_value,
+            'adr_lookback': request.adr_lookback,
+            'brick_percentage': request.brick_size,
+            'reversal_percentage': request.reversal_size,
+            'session_ranges': adr_result['session_ranges'],
+            'session_dates': adr_result['session_dates']
+        }
     else:
         raise HTTPException(status_code=400, detail=f"Invalid brick_method: {request.brick_method}")
 
@@ -760,7 +881,16 @@ def get_renko_data(instrument: str, request: RenkoRequest):
 
         # Always use custom implementation to get tick_index_open/close for overlay mode
         reversal_mult = reversal_size / brick_size
-        renko_df, pending_brick = generate_renko_custom(df, brick_size, reversal_mult, request.wick_mode)
+
+        if request.brick_method == "adr":
+            renko_df, pending_brick = generate_renko_custom(
+                df, brick_size, reversal_mult, request.wick_mode,
+                session_brick_sizes=session_brick_sizes
+            )
+        else:
+            renko_df, pending_brick = generate_renko_custom(
+                df, brick_size, reversal_mult, request.wick_mode
+            )
 
         if renko_df.empty:
             raise HTTPException(
@@ -793,11 +923,35 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     else:
         datetime_list = [f"Brick {i}" for i in range(len(renko_df))]
 
+    # Calculate per-bar ADR values for cursor tracking (only for ADR method)
+    bar_adr = None
+    bar_brick_size = None
+    if request.brick_method == "adr" and daily_ranges is not None and datetime_col is not None:
+        bar_adr_values = []
+        bar_brick_sizes = []
+        for _, row in renko_df.iterrows():
+            bar_dt = row[datetime_col]
+            if hasattr(bar_dt, 'date'):
+                bar_date = bar_dt.date()
+            else:
+                bar_date = pd.to_datetime(bar_dt).date()
+            # Get ADR from sessions before this bar's date
+            past_sessions = daily_ranges.loc[daily_ranges.index < bar_date].tail(request.adr_lookback)
+            if len(past_sessions) >= 1:
+                bar_adr_val = float(past_sessions['range'].mean())
+            else:
+                bar_adr_val = float(adr_info['adr_value'])  # fallback
+            bar_adr_values.append(bar_adr_val)
+            bar_brick_sizes.append(bar_adr_val * (request.brick_size / 100.0))
+        bar_adr = bar_adr_values
+        bar_brick_size = bar_brick_sizes
+
     return {
         "instrument": instrument,
         "brick_method": request.brick_method,
         "brick_size": brick_size,
         "reversal_size": reversal_size,
+        "adr_info": adr_info,
         "data": {
             "datetime": datetime_list,
             "open": renko_df['open'].tolist(),
@@ -807,6 +961,9 @@ def get_renko_data(instrument: str, request: RenkoRequest):
             "volume": renko_df['volume'].tolist() if 'volume' in renko_df.columns else [1] * len(renko_df),
             "tick_index_open": renko_df['tick_index_open'].tolist() if 'tick_index_open' in renko_df.columns else None,
             "tick_index_close": renko_df['tick_index_close'].tolist() if 'tick_index_close' in renko_df.columns else None,
+            "bar_adr": bar_adr,
+            "bar_brick_size": bar_brick_size,
+            "brick_size_actual": renko_df['brick_size'].tolist() if 'brick_size' in renko_df.columns else None,
         },
         "pending_brick": pending_brick,
         "total_bricks": len(renko_df)

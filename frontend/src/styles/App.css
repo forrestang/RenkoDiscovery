@@ -214,6 +214,36 @@
   white-space: nowrap;
 }
 
+/* Data Window - ADR overlay */
+.data-window {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  z-index: 100;
+  min-width: 120px;
+  pointer-events: none;
+}
+
+.data-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.data-label {
+  color: var(--text-muted);
+}
+
+.data-value {
+  color: var(--text-primary);
+}
+
 /* Body layout */
 .app-body {
   display: flex;

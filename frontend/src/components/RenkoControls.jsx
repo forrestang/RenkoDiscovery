@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 
 const BRICK_METHODS = [
   { value: 'price', label: 'Price' },
-  { value: 'atr', label: 'ATR' },
+  { value: 'adr', label: 'ADR' },
 ]
 
 const WICK_MODES = [
@@ -19,7 +19,20 @@ function RenkoControls({ settings, onChange }) {
   }, [settings])
 
   const handleMethodChange = (e) => {
-    const newSettings = { ...localSettings, brickMethod: e.target.value }
+    const newMethod = e.target.value
+    let newSettings = { ...localSettings, brickMethod: newMethod }
+
+    // Set sensible defaults when switching methods
+    if (newMethod === 'adr' && localSettings.brickMethod === 'price') {
+      // Switching to ADR: use percentage defaults
+      newSettings.brickSize = 50   // 50% of ADR
+      newSettings.reversalSize = 100  // 100% of ADR
+    } else if (newMethod === 'price' && localSettings.brickMethod === 'adr') {
+      // Switching to Price: use typical forex pip values
+      newSettings.brickSize = 0.0010
+      newSettings.reversalSize = 0.0020
+    }
+
     setLocalSettings(newSettings)
     onChange(newSettings)
   }
@@ -64,19 +77,19 @@ function RenkoControls({ settings, onChange }) {
     }
   }
 
-  const handleAtrPeriodChange = (e) => {
-    const value = parseInt(e.target.value, 10) || 14
-    setLocalSettings(prev => ({ ...prev, atrPeriod: value }))
+  const handleAdrLookbackChange = (e) => {
+    const value = parseInt(e.target.value, 10) || 5
+    setLocalSettings(prev => ({ ...prev, adrLookback: value }))
   }
 
-  const handleAtrPeriodBlur = () => {
-    if (localSettings.atrPeriod > 0) {
+  const handleAdrLookbackBlur = () => {
+    if (localSettings.adrLookback > 0) {
       onChange(localSettings)
     }
   }
 
-  const handleAtrPeriodKeyDown = (e) => {
-    if (e.key === 'Enter' && localSettings.atrPeriod > 0) {
+  const handleAdrLookbackKeyDown = (e) => {
+    if (e.key === 'Enter' && localSettings.adrLookback > 0) {
       onChange(localSettings)
     }
   }
@@ -85,8 +98,8 @@ function RenkoControls({ settings, onChange }) {
     switch (localSettings.brickMethod) {
       case 'price':
         return 'Brick'
-      case 'atr':
-        return 'ATR x'
+      case 'adr':
+        return '%'
       default:
         return 'Size'
     }
@@ -96,8 +109,8 @@ function RenkoControls({ settings, onChange }) {
     switch (localSettings.brickMethod) {
       case 'price':
         return 'Rev'
-      case 'atr':
-        return 'ATR Rev'
+      case 'adr':
+        return 'Rev %'
       default:
         return 'Rev'
     }
@@ -142,19 +155,19 @@ function RenkoControls({ settings, onChange }) {
         />
         <span className="input-suffix">{getReversalLabel()}</span>
       </div>
-      {localSettings.brickMethod === 'atr' && (
+      {localSettings.brickMethod === 'adr' && (
         <div className="renko-atr-input">
           <input
             type="number"
             className="mono"
-            value={localSettings.atrPeriod}
-            onChange={handleAtrPeriodChange}
-            onBlur={handleAtrPeriodBlur}
-            onKeyDown={handleAtrPeriodKeyDown}
+            value={localSettings.adrLookback}
+            onChange={handleAdrLookbackChange}
+            onBlur={handleAdrLookbackBlur}
+            onKeyDown={handleAdrLookbackKeyDown}
             min="1"
             step="1"
           />
-          <span className="input-suffix">Period</span>
+          <span className="input-suffix">Sessions</span>
         </div>
       )}
       <select
