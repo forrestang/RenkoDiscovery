@@ -22,7 +22,14 @@ function Sidebar({
   onLoadChart,
   // Cache management
   onDeleteCache,
-  onDeleteAllCache
+  onDeleteAllCache,
+  // Data import settings
+  dataFormat,
+  onDataFormatChange,
+  intervalType,
+  onIntervalTypeChange,
+  customName,
+  onCustomNameChange
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -47,6 +54,11 @@ function Sidebar({
 
   const selectedCount = selectedFiles.length
   const instruments = Object.keys(groupedFiles).sort()
+
+  // Get detected instrument from selected files
+  const detectedInstrument = selectedFiles.length > 0
+    ? files.find(f => selectedFiles.includes(f.filepath))?.instrument || 'Unknown'
+    : ''
 
   if (collapsed) {
     return (
@@ -251,26 +263,90 @@ function Sidebar({
           </div>
 
           {selectedCount > 0 && (
-            <div className="process-bar">
-              <button
-                className="process-btn"
-                onClick={onProcess}
-                disabled={isProcessing}
-              >
-                {isProcessing ? (
-                  <>
-                    <span className="spinner" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-                    </svg>
-                    Process {selectedCount} file{selectedCount > 1 ? 's' : ''}
-                  </>
+            <div className="import-settings-section">
+              <div className="section-header">
+                <span className="section-title">Import Settings</span>
+              </div>
+
+              {/* Format and Interval Selection */}
+              <div className="import-options">
+                <div className="option-group">
+                  <label className="option-label">Format</label>
+                  <div className="toggle-group">
+                    <button
+                      className={`toggle-option ${dataFormat === 'MT4' ? 'active' : ''}`}
+                      onClick={() => onDataFormatChange('MT4')}
+                    >
+                      MT4
+                    </button>
+                    <button
+                      className={`toggle-option ${dataFormat === 'J4X' ? 'active' : ''}`}
+                      onClick={() => onDataFormatChange('J4X')}
+                    >
+                      J4X
+                    </button>
+                  </div>
+                </div>
+
+                <div className="option-group">
+                  <label className="option-label">Interval</label>
+                  <div className="toggle-group">
+                    <button
+                      className={`toggle-option ${intervalType === 'M' ? 'active' : ''}`}
+                      onClick={() => onIntervalTypeChange('M')}
+                      disabled={dataFormat === 'MT4'}
+                      title={dataFormat === 'MT4' ? 'MT4 only supports minute data' : 'Minute data (M1)'}
+                    >
+                      Minute
+                    </button>
+                    <button
+                      className={`toggle-option ${intervalType === 'T' ? 'active' : ''}`}
+                      onClick={() => onIntervalTypeChange('T')}
+                      disabled={dataFormat === 'MT4'}
+                      title={dataFormat === 'MT4' ? 'MT4 only supports minute data' : 'Tick data'}
+                    >
+                      Tick
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Custom Name Input */}
+              <div className="custom-name-group">
+                <label className="option-label">Output Name</label>
+                <input
+                  type="text"
+                  className="custom-name-input mono"
+                  value={customName}
+                  onChange={(e) => onCustomNameChange(e.target.value)}
+                  placeholder={detectedInstrument || 'Auto-detect'}
+                />
+                {detectedInstrument && !customName && (
+                  <span className="detected-hint">Detected: {detectedInstrument}</span>
                 )}
-              </button>
+              </div>
+
+              <div className="process-bar">
+                <button
+                  className="process-btn"
+                  onClick={onProcess}
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? (
+                    <>
+                      <span className="spinner" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                      </svg>
+                      Process {selectedCount} file{selectedCount > 1 ? 's' : ''}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           )}
 
@@ -333,11 +409,31 @@ function Sidebar({
                       <button
                         className="cache-item-main"
                         onClick={() => onLoadChart(item.instrument)}
+                        title={item.date_range ? `${item.date_range.start?.split('T')[0]} to ${item.date_range.end?.split('T')[0]}` : ''}
                       >
-                        <span className="cache-instrument mono">{item.instrument}</span>
-                        <span className="cache-size mono">
-                          {(item.size_bytes / 1024 / 1024).toFixed(1)}MB
-                        </span>
+                        <div className="cache-item-info">
+                          <span className="cache-instrument mono">{item.instrument}</span>
+                          <div className="cache-tags">
+                            {item.data_format && (
+                              <span className={`cache-tag format-tag ${item.data_format.toLowerCase()}`}>
+                                {item.data_format}
+                              </span>
+                            )}
+                            {item.interval_type && (
+                              <span className={`cache-tag interval-tag ${item.interval_type.toLowerCase()}`}>
+                                {item.interval_type === 'M' ? 'Min' : 'Tick'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="cache-meta">
+                          {item.rows && (
+                            <span className="cache-rows mono">{item.rows.toLocaleString()} rows</span>
+                          )}
+                          <span className="cache-size mono">
+                            {(item.size_bytes / 1024 / 1024).toFixed(1)}MB
+                          </span>
+                        </div>
                       </button>
                       <button
                         className="cache-delete-btn"

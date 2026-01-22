@@ -50,6 +50,10 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingResults, setProcessingResults] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
+  // Data import settings
+  const [dataFormat, setDataFormat] = useState('MT4')  // 'MT4' or 'J4X'
+  const [intervalType, setIntervalType] = useState('M')  // 'M' for minute, 'T' for tick
+  const [customName, setCustomName] = useState('')
   const [pricePrecision, setPricePrecision] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}pricePrecision`)
     return saved ? parseInt(saved, 10) : 5
@@ -221,13 +225,20 @@ function App() {
       const res = await fetch(`${API_BASE}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: selectedFiles, working_dir: workingDir })
+        body: JSON.stringify({
+          files: selectedFiles,
+          working_dir: workingDir,
+          data_format: dataFormat,
+          interval_type: intervalType,
+          custom_name: customName || null
+        })
       })
 
       if (res.ok) {
         const data = await res.json()
         setProcessingResults(data.results)
         setSelectedFiles([])
+        setCustomName('')  // Clear custom name after processing
         fetchCache()
       }
     } catch (err) {
@@ -494,6 +505,13 @@ function App() {
             // Cache management
             onDeleteCache={deleteCache}
             onDeleteAllCache={deleteAllCache}
+            // Data import settings
+            dataFormat={dataFormat}
+            onDataFormatChange={setDataFormat}
+            intervalType={intervalType}
+            onIntervalTypeChange={setIntervalType}
+            customName={customName}
+            onCustomNameChange={setCustomName}
           />
 
           {!sidebarCollapsed && (

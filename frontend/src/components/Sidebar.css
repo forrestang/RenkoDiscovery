@@ -857,3 +857,195 @@
   font-size: 10px;
   color: var(--text-muted);
 }
+
+/* Import Settings Section */
+.import-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.import-settings-section .section-header {
+  margin-bottom: var(--space-1);
+}
+
+.import-options {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.option-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+}
+
+.option-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.toggle-group {
+  display: flex;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.toggle-option {
+  flex: 1;
+  padding: var(--space-2) var(--space-2);
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.toggle-option:not(:last-child) {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.toggle-option:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.toggle-option.active {
+  background: var(--accent-subtle);
+  color: var(--accent-primary);
+}
+
+.toggle-option:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: var(--bg-tertiary);
+}
+
+.toggle-option:disabled.active {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+/* Ensure enabled buttons have pointer cursor */
+.toggle-option:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Custom Name Input */
+.custom-name-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.custom-name-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 11px;
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+.custom-name-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.custom-name-input::placeholder {
+  color: var(--text-muted);
+}
+
+.detected-hint {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+/* Nested process bar in import settings */
+.import-settings-section .process-bar {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border-top: none;
+}
+
+/* Cache Tags */
+.cache-item-main {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.cache-item-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.cache-tags {
+  display: flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.cache-tag {
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cache-tag.format-tag.mt4 {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+
+.cache-tag.format-tag.j4x {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+}
+
+.cache-tag.interval-tag.m {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.cache-tag.interval-tag.t {
+  background: rgba(251, 146, 60, 0.15);
+  color: #fb923c;
+}
+
+.cache-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.cache-rows {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.cache-size {
+  margin-left: auto;
+}

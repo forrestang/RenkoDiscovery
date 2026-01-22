@@ -206,7 +206,8 @@ function calculateEMA(data, period) {
 function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, renkoSettings = null, compressionFactor = 1.0 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
-  const seriesRef = useRef(null)
+  const seriesRef = useRef(null)  // Candlestick series for OHLC data
+  const tickLineSeriesRef = useRef(null)  // Line series for tick data
   const primitiveRef = useRef(null)
   const datetimesRef = useRef([])
   const ma1SeriesRef = useRef(null)
@@ -312,9 +313,22 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       borderDownColor: isOverlay ? 'rgba(239, 68, 68, 0.5)' : '#ef4444',
       wickUpColor: isOverlay ? 'rgba(34, 197, 94, 0.5)' : '#22c55e',
       wickDownColor: isOverlay ? 'rgba(239, 68, 68, 0.5)' : '#ef4444',
+      visible: true,  // Will be hidden for tick data
     })
 
     seriesRef.current = candleSeries
+
+    // Add line series for tick data (white line)
+    const tickLineSeries = chart.addSeries(LineSeries, {
+      color: '#ffffff',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      crosshairMarkerVisible: true,
+      visible: false,  // Will be shown for tick data
+    })
+
+    tickLineSeriesRef.current = tickLineSeries
 
     // Create Renko primitive for overlay mode
     if (isOverlay) {
@@ -401,6 +415,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
+      tickLineSeriesRef.current = null
       primitiveRef.current = null
       ma1SeriesRef.current = null
       ma2SeriesRef.current = null
@@ -425,37 +440,100 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     // Store datetime array for formatter access
     datetimesRef.current = datetime || []
 
+    // Check if this is tick data (has sub-second timestamps or is_tick_data flag)
+    const isTickData = chartData.is_tick_data || (datetime[0] && datetime[0].includes('.'))
+
     // Apply price precision from user setting
-    seriesRef.current.applyOptions({
+    const priceFormatOptions = {
       priceFormat: {
         type: 'price',
         precision: pricePrecision,
         minMove: Math.pow(10, -pricePrecision),
       },
-    })
+    }
+    seriesRef.current.applyOptions(priceFormatOptions)
+    if (tickLineSeriesRef.current) {
+      tickLineSeriesRef.current.applyOptions(priceFormatOptions)
+    }
 
-    // For M1 and overlay, use actual timestamps; for Renko, use sequential indices
-    const data = open.map((_, i) => {
-      if (chartType !== 'renko' && datetime[i]) {
-        // Convert to Unix timestamp (seconds) for lightweight-charts
-        const timestamp = Math.floor(new Date(datetime[i]).getTime() / 1000)
-        return { time: timestamp, open: open[i], high: high[i], low: low[i], close: close[i] }
+    // Update timeScale for tick data (use index-based axis like renko mode)
+    if (chartRef.current) {
+      chartRef.current.timeScale().applyOptions({
+        timeVisible: !isTickData && chartType !== 'renko',
+      })
+    }
+
+    // Toggle visibility based on tick data
+    if (isTickData) {
+      // Hide candlestick, show line for tick data
+      seriesRef.current.applyOptions({ visible: false })
+      if (tickLineSeriesRef.current) {
+        tickLineSeriesRef.current.applyOptions({ visible: true })
       }
-      return { time: i, open: open[i], high: high[i], low: low[i], close: close[i] }
-    })
+    } else {
+      // Show candlestick, hide line for OHLC data
+      seriesRef.current.applyOptions({ visible: true })
+      if (tickLineSeriesRef.current) {
+        tickLineSeriesRef.current.applyOptions({ visible: false })
+      }
+    }
 
-    seriesRef.current.setData(data)
+    // Build data arrays
+    if (isTickData) {
+      // For tick data, use line series with mid price (close)
+      const lineData = close.map((price, i) => ({ time: i, value: price }))
+      if (tickLineSeriesRef.current) {
+        tickLineSeriesRef.current.setData(lineData)
+      }
+      // For overlay mode, keep candlestick data (hidden) for primitive price scaling
+      if (chartType === 'overlay') {
+        const candleData = open.map((_, i) => ({
+          time: i,
+          open: open[i],
+          high: high[i],
+          low: low[i],
+          close: close[i]
+        }))
+        seriesRef.current.setData(candleData)
+      } else {
+        seriesRef.current.setData([])
+      }
+    } else {
+      // For OHLC data, use candlestick series
+      const candleData = open.map((_, i) => {
+        if (chartType !== 'renko' && datetime[i]) {
+          // Convert to Unix timestamp (seconds) for lightweight-charts
+          const timestamp = Math.floor(new Date(datetime[i]).getTime() / 1000)
+          return { time: timestamp, open: open[i], high: high[i], low: low[i], close: close[i] }
+        }
+        // Use sequential indices for Renko mode
+        return { time: i, open: open[i], high: high[i], low: low[i], close: close[i] }
+      })
+      seriesRef.current.setData(candleData)
+      // Clear line series
+      if (tickLineSeriesRef.current) {
+        tickLineSeriesRef.current.setData([])
+      }
+    }
 
     // Fit content and show last 200 bars/bricks
-    if (chartRef.current && data.length > 0) {
-      const visibleBars = Math.min(200, data.length)
-      const fromIndex = data.length - visibleBars
-      const toIndex = data.length - 1
-      // Use actual time values from data (timestamps for M1/overlay, indices for Renko)
-      chartRef.current.timeScale().setVisibleRange({
-        from: data[fromIndex].time,
-        to: data[toIndex].time,
-      })
+    if (chartRef.current && close.length > 0) {
+      const visibleBars = Math.min(200, close.length)
+      const fromIndex = close.length - visibleBars
+      const toIndex = close.length - 1
+
+      // For tick data, use indices; for OHLC with timestamps, calculate time range
+      if (isTickData || chartType === 'renko') {
+        chartRef.current.timeScale().setVisibleRange({
+          from: fromIndex,
+          to: toIndex,
+        })
+      } else if (datetime[fromIndex] && datetime[toIndex]) {
+        chartRef.current.timeScale().setVisibleRange({
+          from: Math.floor(new Date(datetime[fromIndex]).getTime() / 1000),
+          to: Math.floor(new Date(datetime[toIndex]).getTime() / 1000),
+        })
+      }
     }
   }, [chartData, chartType, pricePrecision])
 
@@ -558,12 +636,20 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         })
       }
 
+      // Check if this is tick data
+      const isTickData = chartData?.is_tick_data ||
+        (chartData?.data?.datetime?.[0] && chartData.data.datetime[0].includes('.'))
+
       // Build MA data with proper time values
       let maData = maValues
         .map((value, i) => {
           if (value === null) return null
 
           if (chartType === 'raw') {
+            if (isTickData) {
+              // Tick data uses sequential indices
+              return { time: i, value }
+            }
             // M1 mode: use timestamps from M1 data
             const dt = dataSource.data.datetime[i]
             if (dt) {
@@ -571,9 +657,16 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
             }
             return null
           } else if (chartType === 'overlay') {
-            // Overlay mode: MA is based on renko bars, map to M1 timestamps via tick_index_close
-            const m1Index = dataSource.data.tick_index_close[i]
-            const m1Datetime = chartData.data.datetime[m1Index]
+            // Overlay mode: MA is based on renko bars, map to data indices via tick_index_close
+            const dataIndex = dataSource.data.tick_index_close[i]
+            if (dataIndex === undefined || dataIndex === null) return null
+
+            if (isTickData) {
+              // Tick data uses sequential indices
+              return { time: dataIndex, value }
+            }
+            // M1 data uses timestamps
+            const m1Datetime = chartData.data.datetime[dataIndex]
             if (m1Datetime) {
               return { time: Math.floor(new Date(m1Datetime).getTime() / 1000), value }
             }
@@ -585,9 +678,9 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         })
         .filter(d => d !== null)
 
-      // Deduplicate timestamps (multiple renko bricks can close on same M1 bar)
-      // Keep only the last value for each timestamp
-      if (chartType === 'overlay' || chartType === 'raw') {
+      // Deduplicate time values (multiple renko bricks can close on same bar/tick)
+      // Keep only the last value for each time
+      if (chartType === 'overlay' || (chartType === 'raw' && !isTickData)) {
         const seenTimes = new Map()
         for (const d of maData) {
           seenTimes.set(d.time, d.value)

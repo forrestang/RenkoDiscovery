@@ -3,9 +3,11 @@ RenkoDiscovery Backend - Financial Data Processing API
 """
 import os
 import re
+import json
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+import pytz
 
 import numpy as np
 import pandas as pd
@@ -25,6 +27,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Timezone for J4X data
+EET = pytz.timezone('EET')
 
 # Default working directory
 WORKING_DIR = Path(r"C:\Users\lawfp\Desktop\Data_renko")
@@ -55,6 +60,9 @@ class FileInfo(BaseModel):
 class ProcessRequest(BaseModel):
     files: list[str]
     working_dir: Optional[str] = None
+    data_format: str = "MT4"  # "MT4" or "J4X"
+    interval_type: str = "M"  # "M" for minute, "T" for tick
+    custom_name: Optional[str] = None  # User-specified output filename
 
 
 class ChartDataRequest(BaseModel):
@@ -99,19 +107,45 @@ def extract_timeframe(filename: str) -> Optional[str]:
     return None
 
 
-def get_unique_cache_path(cache_dir: Path, base_name: str) -> Path:
-    """Get a unique cache file path, appending _2, _3, etc. if file exists."""
-    output_path = cache_dir / f"{base_name}.feather"
+def get_unique_cache_path(cache_dir: Path, base_name: str, data_format: str = "MT4", interval_type: str = "M") -> Path:
+    """
+    Get a unique cache file path with format and interval tags.
+
+    Naming convention: {instrument}_{format}_{interval}.feather
+    Example: EURUSD_J4X_T.feather, EURUSD_MT4_M.feather
+
+    If file exists, appends _2, _3, etc.
+    """
+    # Build the full name with tags
+    full_name = f"{base_name}_{data_format}_{interval_type}"
+
+    output_path = cache_dir / f"{full_name}.feather"
     if not output_path.exists():
         return output_path
 
     # File exists, find next available number
     counter = 2
     while True:
-        output_path = cache_dir / f"{base_name}_{counter}.feather"
+        output_path = cache_dir / f"{full_name}_{counter}.feather"
         if not output_path.exists():
             return output_path
         counter += 1
+
+
+def save_cache_metadata(cache_path: Path, metadata: dict):
+    """Save metadata alongside the cache file."""
+    meta_path = cache_path.with_suffix('.meta.json')
+    with open(meta_path, 'w') as f:
+        json.dump(metadata, f, indent=2, default=str)
+
+
+def load_cache_metadata(cache_path: Path) -> Optional[dict]:
+    """Load metadata for a cache file."""
+    meta_path = cache_path.with_suffix('.meta.json')
+    if meta_path.exists():
+        with open(meta_path, 'r') as f:
+            return json.load(f)
+    return None
 
 
 @app.get("/")
@@ -149,7 +183,7 @@ def list_files(working_dir: Optional[str] = None):
 
 @app.get("/cache")
 def list_cache(working_dir: Optional[str] = None):
-    """List all cached feather files."""
+    """List all cached feather files with metadata."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
     cache_dir = base_dir / "cache_performant"
 
@@ -160,20 +194,43 @@ def list_cache(working_dir: Optional[str] = None):
     for filepath in cache_dir.iterdir():
         if filepath.is_file() and filepath.suffix.lower() == '.feather':
             stat = filepath.stat()
-            feathers.append({
+            cache_info = {
                 "filename": filepath.name,
                 "filepath": str(filepath),
                 "instrument": filepath.stem,
                 "size_bytes": stat.st_size,
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
-            })
+            }
+
+            # Try to load metadata
+            metadata = load_cache_metadata(filepath)
+            if metadata:
+                cache_info["data_format"] = metadata.get("data_format", "MT4")
+                cache_info["interval_type"] = metadata.get("interval_type", "M")
+                cache_info["rows"] = metadata.get("rows")
+                cache_info["date_range"] = metadata.get("date_range")
+                cache_info["raw_tick_count"] = metadata.get("raw_tick_count")
+            else:
+                # Parse from filename if no metadata (legacy files)
+                # Format: {instrument}_{format}_{interval}.feather
+                parts = filepath.stem.split('_')
+                if len(parts) >= 3:
+                    # Check if last two parts are format and interval
+                    potential_format = parts[-2] if len(parts) >= 2 else None
+                    potential_interval = parts[-1] if len(parts) >= 1 else None
+                    if potential_format in ['MT4', 'J4X']:
+                        cache_info["data_format"] = potential_format
+                    if potential_interval in ['M', 'T']:
+                        cache_info["interval_type"] = potential_interval
+
+            feathers.append(cache_info)
 
     return feathers
 
 
 @app.delete("/cache/{instrument}")
 def delete_cache_instrument(instrument: str, working_dir: Optional[str] = None):
-    """Delete a specific cached feather file."""
+    """Delete a specific cached feather file and its metadata."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
     cache_dir = base_dir / "cache_performant"
     feather_path = cache_dir / f"{instrument}.feather"
@@ -182,12 +239,18 @@ def delete_cache_instrument(instrument: str, working_dir: Optional[str] = None):
         raise HTTPException(status_code=404, detail=f"No cached data for {instrument}")
 
     feather_path.unlink()
+
+    # Also delete metadata file if it exists
+    meta_path = feather_path.with_suffix('.meta.json')
+    if meta_path.exists():
+        meta_path.unlink()
+
     return {"status": "deleted", "instrument": instrument}
 
 
 @app.delete("/cache")
 def delete_cache_all(working_dir: Optional[str] = None):
-    """Delete all cached feather files."""
+    """Delete all cached feather and metadata files."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
     cache_dir = base_dir / "cache_performant"
 
@@ -196,9 +259,10 @@ def delete_cache_all(working_dir: Optional[str] = None):
 
     deleted = 0
     for filepath in cache_dir.iterdir():
-        if filepath.is_file() and filepath.suffix.lower() == '.feather':
+        if filepath.is_file() and filepath.suffix.lower() in ['.feather', '.json']:
             filepath.unlink()
-            deleted += 1
+            if filepath.suffix.lower() == '.feather':
+                deleted += 1
 
     return {"status": "ok", "deleted": deleted}
 
@@ -211,29 +275,86 @@ def detect_csv_format(filepath: str) -> dict:
     # Check for header (J4X format has "Time" in header)
     has_header = 'Time' in first_line or 'Open' in first_line
 
+    # Check if it's tick data (has Ask,Bid columns)
+    is_tick_data = 'Ask' in first_line and 'Bid' in first_line
+
     # Check delimiter
     if ';' in first_line:
         delimiter = ';'
     else:
         delimiter = ','
 
-    return {'has_header': has_header, 'delimiter': delimiter}
+    return {'has_header': has_header, 'delimiter': delimiter, 'is_tick_data': is_tick_data}
 
 
-def parse_csv_file(filepath: str) -> pd.DataFrame:
-    """Parse CSV file with auto-format detection."""
+def parse_csv_file(filepath: str, data_format: str = "MT4", interval_type: str = "M") -> pd.DataFrame:
+    """
+    Parse CSV file with format and interval type specification.
+
+    Args:
+        filepath: Path to CSV file
+        data_format: "MT4" or "J4X"
+        interval_type: "M" for minute data, "T" for tick data
+
+    Returns:
+        DataFrame with columns: datetime, open, high, low, close, volume
+        For tick data, also includes: tick_ask, tick_bid for overlay high/low calculation
+    """
     fmt = detect_csv_format(filepath)
 
-    if fmt['has_header']:
-        # J4X format: "Time (EET),Open,High,Low,Close,Volume" with YYYY.MM.DD HH:MM:SS
-        df = pd.read_csv(filepath, delimiter=fmt['delimiter'])
-        # Rename columns to standard names
-        df.columns = ['datetime', 'open', 'high', 'low', 'close', 'volume']
-        # Parse datetime: "2026.01.02 00:00:00"
-        df['datetime'] = pd.to_datetime(df['datetime'], format='%Y.%m.%d %H:%M:%S')
-        df['datetime'] = df['datetime'].dt.tz_localize('UTC')
+    if data_format == "J4X":
+        if interval_type == "T":
+            # J4X Tick format: "Time (EET),Ask,Bid,AskVolume,BidVolume"
+            # Skip header row and use explicit column names to avoid issues with trailing spaces
+            df = pd.read_csv(
+                filepath,
+                delimiter=fmt['delimiter'],
+                skiprows=1,
+                names=['datetime', 'ask', 'bid', 'ask_volume', 'bid_volume'],
+                usecols=[0, 1, 2, 3, 4]  # Only use first 5 columns
+            )
+
+            # Parse datetime with milliseconds: "2026.01.02 00:04:01.135"
+            df['datetime'] = pd.to_datetime(df['datetime'], format='%Y.%m.%d %H:%M:%S.%f')
+
+            # Convert EET to UTC
+            df['datetime'] = df['datetime'].dt.tz_localize(EET).dt.tz_convert('UTC')
+
+            # Calculate mid price (average of bid and ask)
+            df['price'] = (df['ask'] + df['bid']) / 2
+
+            # For tick data, we store the raw tick info for OHLC building
+            # open = first price, high = max ask, low = min bid, close = last price
+            df['open'] = df['price']
+            df['high'] = df['ask']  # Use ask for high
+            df['low'] = df['bid']   # Use bid for low
+            df['close'] = df['price']
+            df['volume'] = df['ask_volume'] + df['bid_volume']
+
+            # Keep tick_ask and tick_bid for overlay mode high/low calculation
+            df['tick_ask'] = df['ask']
+            df['tick_bid'] = df['bid']
+
+            df = df[['datetime', 'open', 'high', 'low', 'close', 'volume', 'tick_ask', 'tick_bid']]
+
+        else:
+            # J4X M1 format: "Time (EET),Open,High,Low,Close,Volume"
+            # Skip header row and use explicit column names to avoid issues with trailing spaces
+            df = pd.read_csv(
+                filepath,
+                delimiter=fmt['delimiter'],
+                skiprows=1,
+                names=['datetime', 'open', 'high', 'low', 'close', 'volume'],
+                usecols=[0, 1, 2, 3, 4, 5]  # Only use first 6 columns
+            )
+
+            # Parse datetime: "2026.01.02 00:00:00"
+            df['datetime'] = pd.to_datetime(df['datetime'], format='%Y.%m.%d %H:%M:%S')
+
+            # Convert EET to UTC
+            df['datetime'] = df['datetime'].dt.tz_localize(EET).dt.tz_convert('UTC')
     else:
-        # MT4 format: semicolon or comma delimited, no header
+        # MT4 format: semicolon or comma delimited, no header (always minute data)
         df = pd.read_csv(
             filepath,
             sep=fmt['delimiter'],
@@ -248,8 +369,6 @@ def parse_csv_file(filepath: str) -> pd.DataFrame:
             df['datetime'] = df['datetime'].dt.tz_localize('UTC')
         elif '.' in sample_dt:
             # Format: "2012.02.01,00:00" (YYYY.MM.DD with separate time column)
-            # In this case, datetime column has date, next column has time
-            # Re-read with different handling
             df = pd.read_csv(
                 filepath,
                 sep=fmt['delimiter'],
@@ -263,17 +382,85 @@ def parse_csv_file(filepath: str) -> pd.DataFrame:
     return df
 
 
+def aggregate_ticks_to_ohlc(df: pd.DataFrame, freq: str = '1min') -> pd.DataFrame:
+    """
+    Aggregate tick data into OHLC bars.
+
+    For tick data, we use:
+    - open: first mid price
+    - high: max ask price (to capture full range)
+    - low: min bid price (to capture full range)
+    - close: last mid price
+
+    This gives us the true high/low range that includes the spread.
+    """
+    df = df.set_index('datetime')
+
+    # Calculate mid price for open/close
+    if 'tick_ask' in df.columns and 'tick_bid' in df.columns:
+        df['mid'] = (df['tick_ask'] + df['tick_bid']) / 2
+
+        # Aggregate separately to avoid MultiIndex issues
+        ohlc_open = df['mid'].resample(freq).first()
+        ohlc_close = df['mid'].resample(freq).last()
+        ohlc_high = df['tick_ask'].resample(freq).max()
+        ohlc_low = df['tick_bid'].resample(freq).min()
+        ohlc_volume = df['volume'].resample(freq).sum()
+
+        ohlc = pd.DataFrame({
+            'open': ohlc_open,
+            'high': ohlc_high,
+            'low': ohlc_low,
+            'close': ohlc_close,
+            'volume': ohlc_volume
+        })
+    else:
+        ohlc = df.resample(freq).agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        })
+
+    # Remove rows with NaN (empty periods)
+    ohlc = ohlc.dropna()
+    ohlc = ohlc.reset_index()
+
+    return ohlc
+
+
 @app.post("/process")
 def process_files(request: ProcessRequest):
-    """Process selected files into parquet format, stitching by instrument."""
+    """
+    Process selected files into feather format, stitching by instrument.
+
+    Supports:
+    - MT4 format (minute data only)
+    - J4X format (minute or tick data)
+
+    For tick data, aggregates to 1-minute OHLC bars using:
+    - open/close: mid price (average of bid/ask)
+    - high: max ask price
+    - low: min bid price
+    """
     base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
     cache_dir = base_dir / "cache_performant"
     cache_dir.mkdir(exist_ok=True)
 
-    # Group files by instrument
+    data_format = request.data_format
+    interval_type = request.interval_type
+    custom_name = request.custom_name
+
+    # Group files by instrument (or use custom name for all)
     instrument_files: dict[str, list[str]] = {}
     for filepath in request.files:
-        instrument = extract_instrument(filepath)
+        if custom_name:
+            # Use custom name for all files
+            instrument = custom_name
+        else:
+            instrument = extract_instrument(filepath)
+
         if instrument:
             if instrument not in instrument_files:
                 instrument_files[instrument] = []
@@ -291,7 +478,7 @@ def process_files(request: ProcessRequest):
         dfs = []
         for fp in filepaths:
             try:
-                df = parse_csv_file(fp)
+                df = parse_csv_file(fp, data_format=data_format, interval_type=interval_type)
                 dfs.append(df)
             except Exception as e:
                 results.append({
@@ -308,6 +495,16 @@ def process_files(request: ProcessRequest):
             combined = combined.drop_duplicates(subset=['datetime'], keep='first')
             combined = combined.sort_values('datetime').reset_index(drop=True)
 
+            # For tick data, keep raw ticks (don't aggregate)
+            is_tick_data = interval_type == "T"
+            if is_tick_data and 'tick_ask' in combined.columns:
+                # Keep tick_ask and tick_bid for Renko high/low calculation
+                # The 'open', 'high', 'low', 'close' columns are already set in parse_csv_file:
+                # - open/close = mid price (avg of bid/ask)
+                # - high = ask price
+                # - low = bid price
+                pass  # Don't aggregate - keep raw ticks for granular Renko building
+
             # Ensure proper dtypes
             combined['open'] = pd.to_numeric(combined['open'], errors='coerce')
             combined['high'] = pd.to_numeric(combined['high'], errors='coerce')
@@ -315,23 +512,42 @@ def process_files(request: ProcessRequest):
             combined['close'] = pd.to_numeric(combined['close'], errors='coerce')
             combined['volume'] = pd.to_numeric(combined['volume'], errors='coerce').fillna(0).astype(int)
 
-            # Save as feather - get unique path if file already exists
-            output_path = get_unique_cache_path(cache_dir, instrument)
+            # Save as feather - get unique path with format/interval tags
+            output_path = get_unique_cache_path(cache_dir, instrument, data_format, interval_type)
             combined.to_feather(output_path)
 
-            # Use the actual filename (without extension) as the instrument name
-            cache_name = output_path.stem
-
-            results.append({
-                "instrument": cache_name,
-                "status": "success",
-                "output": str(output_path),
+            # Save metadata
+            metadata = {
+                "instrument": instrument,
+                "data_format": data_format,
+                "interval_type": interval_type,
+                "source_files": filepaths,
                 "rows": len(combined),
                 "date_range": {
                     "start": combined['datetime'].min().isoformat(),
                     "end": combined['datetime'].max().isoformat()
+                },
+                "processed_at": datetime.now().isoformat()
+            }
+            save_cache_metadata(output_path, metadata)
+
+            # Use the actual filename (without extension) as the cache name
+            cache_name = output_path.stem
+
+            result = {
+                "instrument": cache_name,
+                "status": "success",
+                "output": str(output_path),
+                "rows": len(combined),
+                "data_format": data_format,
+                "interval_type": interval_type,
+                "date_range": {
+                    "start": combined['datetime'].min().isoformat(),
+                    "end": combined['datetime'].max().isoformat()
                 }
-            })
+            }
+
+            results.append(result)
 
     return {"results": results}
 
@@ -349,14 +565,25 @@ def get_chart_data(instrument: str, working_dir: Optional[str] = None, limit: Op
     df = pd.read_feather(feather_path)
     total_rows = len(df)
 
+    # Check if this is tick data (has sub-second timestamps or tick columns)
+    is_tick_data = 'tick_ask' in df.columns or '_T' in instrument
+
     # Apply limit if specified (return last N rows)
     if limit and len(df) > limit:
         df = df.tail(limit)
 
+    # For tick data, use millisecond-precision timestamps to avoid duplicates
+    if is_tick_data:
+        # Format with milliseconds for tick data
+        datetime_list = df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S.%f').tolist()
+    else:
+        datetime_list = df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S').tolist()
+
     return {
         "instrument": instrument,
+        "is_tick_data": is_tick_data,
         "data": {
-            "datetime": df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S').tolist(),
+            "datetime": datetime_list,
             "open": df['open'].tolist(),
             "high": df['high'].tolist(),
             "low": df['low'].tolist(),
