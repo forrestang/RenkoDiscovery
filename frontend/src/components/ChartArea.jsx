@@ -214,6 +214,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   const ma2SeriesRef = useRef(null)
   const ma3SeriesRef = useRef(null)
   const renkoDataRef = useRef(null)
+  const isTickDataRef = useRef(false)
   const [hoveredBarIndex, setHoveredBarIndex] = useState(null)
 
   // Keep renkoDataRef in sync with renkoData prop
@@ -271,22 +272,24 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         secondsVisible: false,
         barSpacing: 6 * compressionFactor,
         minBarSpacing: Math.min(0.5, 6 * compressionFactor),  // Dynamic: lower only when compression requires it
-        // Only use custom formatter for Renko mode (uses index-based time)
-        ...(chartType === 'renko' && {
-          tickMarkFormatter: (index) => {
+        // Custom formatter for Renko mode and tick data (both use index-based time)
+        tickMarkFormatter: (index) => {
+          if (chartType === 'renko' || isTickDataRef.current) {
             const dt = datetimesRef.current[index]
             return dt ? formatTickMark(dt) : String(index)
-          },
-        }),
+          }
+          return undefined  // Let LWC handle timestamp formatting
+        },
       },
       localization: {
-        // Only use custom time formatter for Renko mode
-        ...(chartType === 'renko' && {
-          timeFormatter: (index) => {
+        // Custom time formatter for Renko mode and tick data
+        timeFormatter: (index) => {
+          if (chartType === 'renko' || isTickDataRef.current) {
             const dt = datetimesRef.current[index]
             return dt ? formatTimestamp(dt) : `${label} ${index}`
-          },
-        }),
+          }
+          return undefined  // Let LWC handle timestamp formatting
+        },
       },
       handleScroll: {
         mouseWheel: true,
@@ -444,6 +447,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
 
     // Check if this is tick data (has sub-second timestamps or is_tick_data flag)
     const isTickData = chartData.is_tick_data || (datetime[0] && datetime[0].includes('.'))
+    isTickDataRef.current = isTickData
 
     // Apply price precision from user setting
     const priceFormatOptions = {

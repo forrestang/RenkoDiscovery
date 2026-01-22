@@ -741,27 +741,33 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
     def calc_up_brick_low(pending_low_val, brick_open, apply_wick=True):
         """Calculate low for up brick based on wick mode."""
-        if not apply_wick or wick_mode == "none":
+        if wick_mode == "none":
             return brick_open
+        elif wick_mode == "all":
+            return min(pending_low_val, brick_open)  # Always show wick
         elif wick_mode == "big":
+            if not apply_wick:
+                return brick_open
             retracement = brick_open - pending_low_val
             if retracement > brick_size:
                 return pending_low_val
             return brick_open
-        else:  # "all"
-            return min(pending_low_val, brick_open)
+        return brick_open
 
     def calc_down_brick_high(pending_high_val, brick_open, apply_wick=True):
         """Calculate high for down brick based on wick mode."""
-        if not apply_wick or wick_mode == "none":
+        if wick_mode == "none":
             return brick_open
+        elif wick_mode == "all":
+            return max(pending_high_val, brick_open)  # Always show wick
         elif wick_mode == "big":
+            if not apply_wick:
+                return brick_open
             retracement = pending_high_val - brick_open
             if retracement > brick_size:
                 return pending_high_val
             return brick_open
-        else:  # "all"
-            return max(pending_high_val, brick_open)
+        return brick_open
 
     open_prices = df['open'].values
     close_prices = df['close'].values
@@ -873,11 +879,13 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     brick_open = last_brick_close
                     brick_close = brick_open + brick_size
                     first_brick = (idx == 0)
+                    # For "all" wick mode, calculate per-brick min; otherwise use global pending
+                    brick_pending_low = low_prices[cross_open:cross_close+1].min() if wick_mode == "all" and not first_brick else pending_low
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': brick_close,
-                        'low': calc_up_brick_low(pending_low, brick_open, apply_wick=first_brick),
+                        'low': calc_up_brick_low(brick_pending_low, brick_open, apply_wick=first_brick),
                         'close': brick_close,
                         'direction': 1,
                         'is_reversal': 0,
@@ -907,10 +915,12 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     brick_open = last_brick_close
                     brick_close = brick_open - brick_size
                     first_brick = (idx == 0)
+                    # For "all" wick mode, calculate per-brick max; otherwise use global pending
+                    brick_pending_high = high_prices[cross_open:cross_close+1].max() if wick_mode == "all" and not first_brick else pending_high
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
-                        'high': calc_down_brick_high(pending_high, brick_open, apply_wick=first_brick),
+                        'high': calc_down_brick_high(brick_pending_high, brick_open, apply_wick=first_brick),
                         'low': brick_close,
                         'close': brick_close,
                         'direction': -1,
@@ -942,10 +952,12 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     brick_open = last_brick_close
                     brick_close = brick_open - brick_size
                     first_brick = (idx == 0)
+                    # For "all" wick mode, calculate per-brick max; otherwise use global pending
+                    brick_pending_high = high_prices[cross_open:cross_close+1].max() if wick_mode == "all" and not first_brick else pending_high
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
-                        'high': calc_down_brick_high(pending_high, brick_open, apply_wick=first_brick),
+                        'high': calc_down_brick_high(brick_pending_high, brick_open, apply_wick=first_brick),
                         'low': brick_close,
                         'close': brick_close,
                         'direction': -1,
@@ -976,11 +988,13 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     brick_open = last_brick_close
                     brick_close = brick_open + brick_size
                     first_brick = (idx == 0)
+                    # For "all" wick mode, calculate per-brick min; otherwise use global pending
+                    brick_pending_low = low_prices[cross_open:cross_close+1].min() if wick_mode == "all" and not first_brick else pending_low
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': brick_close,
-                        'low': calc_up_brick_low(pending_low, brick_open, apply_wick=first_brick),
+                        'low': calc_up_brick_low(brick_pending_low, brick_open, apply_wick=first_brick),
                         'close': brick_close,
                         'direction': 1,
                         'is_reversal': 1 if first_brick else 0,
