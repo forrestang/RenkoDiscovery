@@ -17,6 +17,7 @@ const PRICE_PRECISION_OPTIONS = [
 ]
 
 const COMPRESSION_OPTIONS = [
+  { value: 0.001, label: '0.001x' },
   { value: 0.01, label: '0.01x' },
   { value: 0.05, label: '0.05x' },
   { value: 0.1, label: '0.1x' },
