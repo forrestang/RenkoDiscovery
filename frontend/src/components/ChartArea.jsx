@@ -270,7 +270,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         timeVisible: chartType !== 'renko',  // Enable native time for Raw and overlay
         secondsVisible: false,
         barSpacing: 6 * compressionFactor,
-        minBarSpacing: 0.5,
+        minBarSpacing: Math.min(0.5, 6 * compressionFactor),  // Dynamic: lower only when compression requires it
         // Only use custom formatter for Renko mode (uses index-based time)
         ...(chartType === 'renko' && {
           tickMarkFormatter: (index) => {
@@ -426,8 +426,10 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   // Update barSpacing when compressionFactor changes (without recreating chart)
   useEffect(() => {
     if (!chartRef.current) return
+    const calculatedSpacing = 6 * compressionFactor
     chartRef.current.timeScale().applyOptions({
-      barSpacing: 6 * compressionFactor,
+      barSpacing: calculatedSpacing,
+      minBarSpacing: Math.min(0.5, calculatedSpacing),  // Dynamic: lower only when compression requires it
     })
   }, [compressionFactor])
 
