@@ -196,11 +196,6 @@ function App() {
         setProcessingResults(data.results)
         setSelectedFiles([])
         fetchCache()
-
-        // Auto-load first processed instrument
-        if (data.results.length > 0 && data.results[0].status === 'success') {
-          loadChart(data.results[0].instrument)
-        }
       }
     } catch (err) {
       console.error('Processing failed:', err)

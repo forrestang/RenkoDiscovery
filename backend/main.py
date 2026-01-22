@@ -390,6 +390,36 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
     Returns:
         tuple: (completed_bricks_df, pending_brick_dict)
     """
+    def find_threshold_crossings(closes, start_idx, end_idx, start_threshold, brick_size, direction):
+        """
+        Find M1 bar indices where each brick threshold was crossed.
+
+        direction: 1 for UP (prices >= threshold), -1 for DOWN (prices <= threshold)
+
+        Returns list of (tick_open, tick_close) tuples for each brick.
+        """
+        crossings = []
+        current_threshold = start_threshold
+        current_open = start_idx
+
+        for j in range(start_idx, end_idx + 1):
+            price = closes[j]
+            # Check if this bar crosses the current threshold
+            if direction == 1 and price >= current_threshold:
+                # Find all thresholds crossed by this bar
+                while price >= current_threshold:
+                    crossings.append((current_open, j))
+                    current_open = j
+                    current_threshold += brick_size
+            elif direction == -1 and price <= current_threshold:
+                # Find all thresholds crossed by this bar
+                while price <= current_threshold:
+                    crossings.append((current_open, j))
+                    current_open = j
+                    current_threshold -= brick_size
+
+        return crossings
+
     def calc_up_brick_low(pending_low_val, brick_open, apply_wick=True):
         """Calculate low for up brick based on wick mode."""
         if not apply_wick or wick_mode == "none":
@@ -500,26 +530,29 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             # Uptrend - check for continuation or reversal
             if price >= up_threshold:
                 # Create UP brick(s) - continuation
-                first_brick = True
-                while price >= up_threshold:
+                # Find where each threshold was crossed
+                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, up_threshold, brick_size, 1)
+
+                for idx, (cross_open, cross_close) in enumerate(crossings):
                     brick_open = last_brick_close
                     brick_close = brick_open + brick_size
+                    first_brick = (idx == 0)
                     bricks.append({
-                        'datetime': timestamps[tick_idx_open],
+                        'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': brick_close,
                         'low': calc_up_brick_low(pending_low, brick_open, apply_wick=first_brick),
                         'close': brick_close,
                         'direction': 1,
                         'is_reversal': 0,
-                        'tick_index_open': tick_idx_open,
-                        'tick_index_close': i
+                        'tick_index_open': cross_open,
+                        'tick_index_close': cross_close
                     })
                     last_brick_close = brick_close
-                    # Update thresholds after UP brick
-                    up_threshold = brick_close + brick_size
-                    down_threshold = brick_close - reversal_size
-                    first_brick = False
+
+                # Update thresholds after all UP bricks
+                up_threshold = last_brick_close + brick_size
+                down_threshold = last_brick_close - reversal_size
 
                 # Reset pending values after all bricks created
                 pending_high = high_prices[i]
@@ -528,27 +561,32 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
             elif price <= down_threshold:
                 # Reversal to DOWN
-                first_brick = True
-                while price <= down_threshold:
+                # Find where each threshold was crossed
+                # Start from first brick threshold (1 brick away), not reversal threshold (2 bricks away)
+                first_brick_threshold = last_brick_close - brick_size
+                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, first_brick_threshold, brick_size, -1)
+
+                for idx, (cross_open, cross_close) in enumerate(crossings):
                     brick_open = last_brick_close
                     brick_close = brick_open - brick_size
+                    first_brick = (idx == 0)
                     bricks.append({
-                        'datetime': timestamps[tick_idx_open],
+                        'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': calc_down_brick_high(pending_high, brick_open, apply_wick=first_brick),
                         'low': brick_close,
                         'close': brick_close,
                         'direction': -1,
                         'is_reversal': 1 if first_brick else 0,
-                        'tick_index_open': tick_idx_open,
-                        'tick_index_close': i
+                        'tick_index_open': cross_open,
+                        'tick_index_close': cross_close
                     })
                     last_brick_close = brick_close
-                    direction = -1
-                    # Update thresholds after DOWN brick
-                    down_threshold = brick_close - brick_size
-                    up_threshold = brick_close + reversal_size
-                    first_brick = False
+
+                direction = -1
+                # Update thresholds after all DOWN bricks
+                down_threshold = last_brick_close - brick_size
+                up_threshold = last_brick_close + reversal_size
 
                 # Reset pending values after all bricks created
                 pending_high = high_prices[i]
@@ -559,26 +597,29 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             # Downtrend - check for continuation or reversal
             if price <= down_threshold:
                 # Create DOWN brick(s) - continuation
-                first_brick = True
-                while price <= down_threshold:
+                # Find where each threshold was crossed
+                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, down_threshold, brick_size, -1)
+
+                for idx, (cross_open, cross_close) in enumerate(crossings):
                     brick_open = last_brick_close
                     brick_close = brick_open - brick_size
+                    first_brick = (idx == 0)
                     bricks.append({
-                        'datetime': timestamps[tick_idx_open],
+                        'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': calc_down_brick_high(pending_high, brick_open, apply_wick=first_brick),
                         'low': brick_close,
                         'close': brick_close,
                         'direction': -1,
                         'is_reversal': 0,
-                        'tick_index_open': tick_idx_open,
-                        'tick_index_close': i
+                        'tick_index_open': cross_open,
+                        'tick_index_close': cross_close
                     })
                     last_brick_close = brick_close
-                    # Update thresholds after DOWN brick
-                    down_threshold = brick_close - brick_size
-                    up_threshold = brick_close + reversal_size
-                    first_brick = False
+
+                # Update thresholds after all DOWN bricks
+                down_threshold = last_brick_close - brick_size
+                up_threshold = last_brick_close + reversal_size
 
                 # Reset pending values after all bricks created
                 pending_high = high_prices[i]
@@ -587,27 +628,32 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
             elif price >= up_threshold:
                 # Reversal to UP
-                first_brick = True
-                while price >= up_threshold:
+                # Find where each threshold was crossed
+                # Start from first brick threshold (1 brick away), not reversal threshold (2 bricks away)
+                first_brick_threshold = last_brick_close + brick_size
+                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, first_brick_threshold, brick_size, 1)
+
+                for idx, (cross_open, cross_close) in enumerate(crossings):
                     brick_open = last_brick_close
                     brick_close = brick_open + brick_size
+                    first_brick = (idx == 0)
                     bricks.append({
-                        'datetime': timestamps[tick_idx_open],
+                        'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': brick_close,
                         'low': calc_up_brick_low(pending_low, brick_open, apply_wick=first_brick),
                         'close': brick_close,
                         'direction': 1,
                         'is_reversal': 1 if first_brick else 0,
-                        'tick_index_open': tick_idx_open,
-                        'tick_index_close': i
+                        'tick_index_open': cross_open,
+                        'tick_index_close': cross_close
                     })
                     last_brick_close = brick_close
-                    direction = 1
-                    # Update thresholds after UP brick
-                    up_threshold = brick_close + brick_size
-                    down_threshold = brick_close - reversal_size
-                    first_brick = False
+
+                direction = 1
+                # Update thresholds after all UP bricks
+                up_threshold = last_brick_close + brick_size
+                down_threshold = last_brick_close - reversal_size
 
                 # Reset pending values after all bricks created
                 pending_high = high_prices[i]

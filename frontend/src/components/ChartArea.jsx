@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { createChart } from 'lightweight-charts'
+import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts'
 import './ChartArea.css'
 
 // Format timestamp for crosshair label (includes year)
@@ -153,15 +153,9 @@ class RenkoBricksRenderer {
           ctx.stroke()
         }
 
-        // Draw brick body (filled rectangle)
+        // Draw brick body (filled rectangle, no border)
         ctx.fillStyle = fillColor
         ctx.fillRect(left, bTop, width, height)
-
-        // Draw brick border
-        ctx.strokeStyle = strokeColor
-        ctx.lineWidth = 1.5 * hRatio
-        ctx.setLineDash(isPending ? [4 * hRatio, 4 * hRatio] : [])
-        ctx.strokeRect(left, bTop, width, height)
       }
       ctx.setLineDash([])
     })
@@ -292,10 +286,10 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
 
     chartRef.current = chart
 
-    // Add candlestick series
+    // Add candlestick series using v5 API
     // For overlay mode, use semi-transparent colors
     const isOverlay = chartType === 'overlay'
-    const candleSeries = chart.addCandlestickSeries({
+    const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: isOverlay ? 'rgba(34, 197, 94, 0.35)' : '#22c55e',
       downColor: isOverlay ? 'rgba(239, 68, 68, 0.35)' : '#ef4444',
       borderUpColor: isOverlay ? 'rgba(34, 197, 94, 0.5)' : '#22c55e',
@@ -444,7 +438,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
 
     const { close } = dataSource.data
 
-    // Helper to create/update MA series
+    // Helper to create/update MA series using v5 API
     const updateMASeries = (maSeriesRef, maConfig) => {
       // Remove existing series if disabled
       if (!maConfig.enabled) {
@@ -460,14 +454,15 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
         ? calculateEMA(close, maConfig.period)
         : calculateSMA(close, maConfig.period)
 
-      // Create series if it doesn't exist
+      // Create series if it doesn't exist (v5 API)
       if (!maSeriesRef.current) {
-        maSeriesRef.current = chart.addLineSeries({
+        maSeriesRef.current = chart.addSeries(LineSeries, {
           color: maConfig.color,
           lineWidth: maConfig.lineWidth,
           lineStyle: maConfig.lineStyle,
           priceLineVisible: false,
           lastValueVisible: false,
+          crosshairMarkerVisible: false,
         })
       } else {
         maSeriesRef.current.applyOptions({
@@ -545,7 +540,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
               </div>
               <div className="step">
                 <span className="step-num">2</span>
-                <span>Click "Process" to create parquet</span>
+                <span>Click "Process" to create cache</span>
               </div>
               <div className="step">
                 <span className="step-num">3</span>
