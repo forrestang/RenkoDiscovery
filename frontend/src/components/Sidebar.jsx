@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import './Sidebar.css'
 
+const STORAGE_PREFIX = 'RenkoDiscovery_'
+
 function Sidebar({
   collapsed,
   onToggleCollapse,
@@ -24,6 +26,17 @@ function Sidebar({
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
+  const [workingDirCollapsed, setWorkingDirCollapsed] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}workingDirCollapsed`)
+    return saved === 'true'
+  })
+
+  const toggleWorkingDirCollapsed = () => {
+    const newValue = !workingDirCollapsed
+    setWorkingDirCollapsed(newValue)
+    localStorage.setItem(`${STORAGE_PREFIX}workingDirCollapsed`, newValue.toString())
+  }
+
   // Group files by instrument
   const groupedFiles = files.reduce((acc, file) => {
     const instrument = file.instrument || 'Unknown'
@@ -85,13 +98,29 @@ function Sidebar({
 
       {activeTab === 'data' && (
         <div className="tab-content">
-          <div className="section">
-            <div className="section-header">
-              <span className="section-title">Working Directory</span>
-              {!isEditingDir && (
+          {/* Working Directory - Collapsible */}
+          <div className="section collapsible-section">
+            <div
+              className="section-header clickable"
+              onClick={toggleWorkingDirCollapsed}
+            >
+              <div className="section-header-left">
+                <svg
+                  className={`collapse-chevron ${workingDirCollapsed ? 'collapsed' : ''}`}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+                <span className="section-title">Working Directory</span>
+              </div>
+              {!workingDirCollapsed && !isEditingDir && (
                 <button
                   className="edit-dir-btn"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation()
                     setDirInput(workingDir)
                     setIsEditingDir(true)
                   }}
@@ -104,114 +133,120 @@ function Sidebar({
                 </button>
               )}
             </div>
-            {isEditingDir ? (
-              <div className="working-dir-edit">
-                <input
-                  type="text"
-                  className="working-dir-input mono"
-                  value={dirInput}
-                  onChange={(e) => setDirInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && dirInput.trim()) {
-                      onWorkingDirChange(dirInput.trim())
-                      setIsEditingDir(false)
-                    } else if (e.key === 'Escape') {
-                      setIsEditingDir(false)
-                    }
-                  }}
-                  autoFocus
-                />
-                <div className="working-dir-actions">
-                  <button
-                    className="dir-action-btn save"
-                    onClick={() => {
-                      if (dirInput.trim()) {
-                        onWorkingDirChange(dirInput.trim())
-                        setIsEditingDir(false)
-                      }
-                    }}
-                    title="Save"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M5 12l5 5L20 7" />
-                    </svg>
-                  </button>
-                  <button
-                    className="dir-action-btn cancel"
-                    onClick={() => setIsEditingDir(false)}
-                    title="Cancel"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M18 6L6 18M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="working-dir mono" title={workingDir}>
-                {workingDir}
-              </div>
+            {!workingDirCollapsed && (
+              <>
+                {isEditingDir ? (
+                  <div className="working-dir-edit">
+                    <input
+                      type="text"
+                      className="working-dir-input mono"
+                      value={dirInput}
+                      onChange={(e) => setDirInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && dirInput.trim()) {
+                          onWorkingDirChange(dirInput.trim())
+                          setIsEditingDir(false)
+                        } else if (e.key === 'Escape') {
+                          setIsEditingDir(false)
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <div className="working-dir-actions">
+                      <button
+                        className="dir-action-btn save"
+                        onClick={() => {
+                          if (dirInput.trim()) {
+                            onWorkingDirChange(dirInput.trim())
+                            setIsEditingDir(false)
+                          }
+                        }}
+                        title="Save"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M5 12l5 5L20 7" />
+                        </svg>
+                      </button>
+                      <button
+                        className="dir-action-btn cancel"
+                        onClick={() => setIsEditingDir(false)}
+                        title="Cancel"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 6L6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="working-dir mono" title={workingDir}>
+                    {workingDir}
+                  </div>
+                )}
+              </>
             )}
           </div>
 
-          <div className="section file-section">
+          {/* Source Files - Scrollable */}
+          <div className="section scrollable-section">
             <div className="section-header">
               <span className="section-title">Source Files</span>
               <span className="file-count">{files.length} files</span>
             </div>
-            <div className="file-list">
-              {instruments.map(instrument => {
-                const instrumentFiles = groupedFiles[instrument]
-                const allSelected = instrumentFiles.every(f => selectedFiles.includes(f.filepath))
-                const someSelected = instrumentFiles.some(f => selectedFiles.includes(f.filepath))
+            <div className="scrollable-content">
+              <div className="file-list">
+                {instruments.map(instrument => {
+                  const instrumentFiles = groupedFiles[instrument]
+                  const allSelected = instrumentFiles.every(f => selectedFiles.includes(f.filepath))
+                  const someSelected = instrumentFiles.some(f => selectedFiles.includes(f.filepath))
 
-                return (
-                  <div key={instrument} className="instrument-group">
-                    <div
-                      className={`instrument-header ${someSelected ? 'has-selection' : ''}`}
-                      onClick={() => onSelectAll(instrument)}
-                    >
-                      <span className={`checkbox ${allSelected ? 'checked' : someSelected ? 'partial' : ''}`}>
-                        {allSelected ? (
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                            <path d="M5 12l5 5L20 7" />
-                          </svg>
-                        ) : someSelected ? (
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                            <path d="M5 12h14" />
-                          </svg>
-                        ) : null}
-                      </span>
-                      <span className="instrument-name mono">{instrument}</span>
-                      <span className="instrument-count">{instrumentFiles.length}</span>
+                  return (
+                    <div key={instrument} className="instrument-group">
+                      <div
+                        className={`instrument-header ${someSelected ? 'has-selection' : ''}`}
+                        onClick={() => onSelectAll(instrument)}
+                      >
+                        <span className={`checkbox ${allSelected ? 'checked' : someSelected ? 'partial' : ''}`}>
+                          {allSelected ? (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                              <path d="M5 12l5 5L20 7" />
+                            </svg>
+                          ) : someSelected ? (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                              <path d="M5 12h14" />
+                            </svg>
+                          ) : null}
+                        </span>
+                        <span className="instrument-name mono">{instrument}</span>
+                        <span className="instrument-count">{instrumentFiles.length}</span>
+                      </div>
+                      <div className="instrument-files">
+                        {instrumentFiles.map(file => (
+                          <div
+                            key={file.filepath}
+                            className={`file-item ${selectedFiles.includes(file.filepath) ? 'selected' : ''}`}
+                            onClick={() => onFileSelect(file.filepath)}
+                          >
+                            <span className={`checkbox ${selectedFiles.includes(file.filepath) ? 'checked' : ''}`}>
+                              {selectedFiles.includes(file.filepath) && (
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                  <path d="M5 12l5 5L20 7" />
+                                </svg>
+                              )}
+                            </span>
+                            <span className="file-name mono truncate" title={file.filename}>
+                              {file.filename}
+                            </span>
+                            <span className="file-size mono">
+                              {(file.size_bytes / 1024 / 1024).toFixed(1)}MB
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="instrument-files">
-                      {instrumentFiles.map(file => (
-                        <div
-                          key={file.filepath}
-                          className={`file-item ${selectedFiles.includes(file.filepath) ? 'selected' : ''}`}
-                          onClick={() => onFileSelect(file.filepath)}
-                        >
-                          <span className={`checkbox ${selectedFiles.includes(file.filepath) ? 'checked' : ''}`}>
-                            {selectedFiles.includes(file.filepath) && (
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                                <path d="M5 12l5 5L20 7" />
-                              </svg>
-                            )}
-                          </span>
-                          <span className="file-name truncate" title={file.filename}>
-                            {file.year && <span className="file-year">{file.year}</span>}
-                            {file.timeframe && <span className="file-tf">{file.timeframe}</span>}
-                          </span>
-                          <span className="file-size mono">
-                            {(file.size_bytes / 1024 / 1024).toFixed(1)}MB
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
           </div>
 
@@ -272,8 +307,9 @@ function Sidebar({
             </div>
           )}
 
+          {/* Cached Data - Scrollable */}
           {cachedInstruments.length > 0 && (
-            <div className="section cache-section">
+            <div className="section scrollable-section cache-section">
               <div className="section-header">
                 <span className="section-title">Cached Data</span>
                 <button
@@ -287,35 +323,37 @@ function Sidebar({
                   Clear All
                 </button>
               </div>
-              <div className="cache-list">
-                {cachedInstruments.map(item => (
-                  <div
-                    key={item.instrument}
-                    className={`cache-item ${activeInstrument === item.instrument ? 'active' : ''}`}
-                  >
-                    <button
-                      className="cache-item-main"
-                      onClick={() => onLoadChart(item.instrument)}
+              <div className="scrollable-content">
+                <div className="cache-list">
+                  {cachedInstruments.map(item => (
+                    <div
+                      key={item.instrument}
+                      className={`cache-item ${activeInstrument === item.instrument ? 'active' : ''}`}
                     >
-                      <span className="cache-instrument mono">{item.instrument}</span>
-                      <span className="cache-size mono">
-                        {(item.size_bytes / 1024 / 1024).toFixed(1)}MB
-                      </span>
-                    </button>
-                    <button
-                      className="cache-delete-btn"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onDeleteCache(item.instrument)
-                      }}
-                      title={`Delete ${item.instrument}`}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        className="cache-item-main"
+                        onClick={() => onLoadChart(item.instrument)}
+                      >
+                        <span className="cache-instrument mono">{item.instrument}</span>
+                        <span className="cache-size mono">
+                          {(item.size_bytes / 1024 / 1024).toFixed(1)}MB
+                        </span>
+                      </button>
+                      <button
+                        className="cache-delete-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onDeleteCache(item.instrument)
+                        }}
+                        title={`Delete ${item.instrument}`}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 6L6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

@@ -16,6 +16,17 @@ const PRICE_PRECISION_OPTIONS = [
   { value: 6, label: '6 decimals' },
 ]
 
+const COMPRESSION_OPTIONS = [
+  { value: 0.01, label: '0.01x' },
+  { value: 0.05, label: '0.05x' },
+  { value: 0.1, label: '0.1x' },
+  { value: 0.25, label: '0.25x' },
+  { value: 0.5, label: '0.5x' },
+  { value: 1.0, label: '1.0x (Default)' },
+  { value: 2.0, label: '2.0x' },
+  { value: 4.0, label: '4.0x' },
+]
+
 function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}sidebarWidth`)
@@ -44,8 +55,10 @@ function App() {
     return saved ? parseInt(saved, 10) : 5
   })
   const [chartType, setChartType] = useState(() => {
-    return localStorage.getItem(`${STORAGE_PREFIX}chartType`) || 'm1'
-  }) // 'm1' | 'renko' | 'overlay'
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}chartType`)
+    if (saved === 'm1') return 'raw'
+    return saved || 'raw'
+  }) // 'raw' | 'renko' | 'overlay'
   const [renkoSettings, setRenkoSettings] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}renkoSettings`)
     if (saved) {
@@ -102,6 +115,10 @@ function App() {
       ma3: { enabled: false, type: 'sma', period: 200, color: '#a855f7', lineWidth: 2, lineStyle: 0 }
     }
   })
+  const [compressionFactor, setCompressionFactor] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}compressionFactor`)
+    return saved ? parseFloat(saved) : 1.0
+  })
 
   // Persist UI settings to localStorage
   useEffect(() => {
@@ -123,6 +140,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}maSettings`, JSON.stringify(maSettings))
   }, [maSettings])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}compressionFactor`, compressionFactor.toString())
+  }, [compressionFactor])
 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}workingDir`, workingDir)
@@ -247,6 +268,11 @@ function App() {
     localStorage.setItem(`${STORAGE_PREFIX}pricePrecision`, newPrecision.toString())
   }
 
+  const handleCompressionChange = (e) => {
+    const newCompression = parseFloat(e.target.value)
+    setCompressionFactor(newCompression)
+  }
+
   const loadRenko = async (instrument, settings = renkoSettings) => {
     if (!instrument) return
 
@@ -367,10 +393,10 @@ function App() {
           {activeInstrument && (
             <div className="chart-type-toggle">
               <button
-                className={`toggle-btn ${chartType === 'm1' ? 'active' : ''}`}
-                onClick={() => handleChartTypeChange('m1')}
+                className={`toggle-btn ${chartType === 'raw' ? 'active' : ''}`}
+                onClick={() => handleChartTypeChange('raw')}
               >
-                M1
+                Raw
               </button>
               <button
                 className={`toggle-btn ${chartType === 'renko' ? 'active' : ''}`}
@@ -386,7 +412,7 @@ function App() {
               </button>
             </div>
           )}
-          {chartType === 'm1' && chartData && (
+          {chartType === 'raw' && chartData && (
             <span className="data-count mono">
               {(chartData.displayed_rows || chartData.total_rows || 0).toLocaleString()}
               {chartData.displayed_rows !== chartData.total_rows && (
@@ -417,6 +443,20 @@ function App() {
               onChange={handlePricePrecisionChange}
             >
               {PRICE_PRECISION_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          )}
+          {activeInstrument && (
+            <select
+              className="compression-select mono"
+              value={compressionFactor}
+              onChange={handleCompressionChange}
+              title="Horizontal Compression: Default is 1.0x. Lower values compress the time axis (show more bars), higher values expand it (show fewer bars)."
+            >
+              {COMPRESSION_OPTIONS.map(opt => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
@@ -471,6 +511,7 @@ function App() {
             pricePrecision={pricePrecision}
             maSettings={maSettings}
             renkoSettings={renkoSettings}
+            compressionFactor={compressionFactor}
           />
         </main>
       </div>

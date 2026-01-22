@@ -203,7 +203,7 @@ function calculateEMA(data, period) {
   return result
 }
 
-function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, renkoSettings = null }) {
+function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, renkoSettings = null, compressionFactor = 1.0 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
@@ -266,8 +266,10 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
       },
       timeScale: {
         borderColor: '#27272a',
-        timeVisible: chartType !== 'renko',  // Enable native time for M1 and overlay
+        timeVisible: chartType !== 'renko',  // Enable native time for Raw and overlay
         secondsVisible: false,
+        barSpacing: 6 * compressionFactor,
+        minBarSpacing: 0.5,
         // Only use custom formatter for Renko mode (uses index-based time)
         ...(chartType === 'renko' && {
           tickMarkFormatter: (index) => {
@@ -405,6 +407,14 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
       ma3SeriesRef.current = null
     }
   }, [chartType])
+
+  // Update barSpacing when compressionFactor changes (without recreating chart)
+  useEffect(() => {
+    if (!chartRef.current) return
+    chartRef.current.timeScale().applyOptions({
+      barSpacing: 6 * compressionFactor,
+    })
+  }, [compressionFactor])
 
   // Update data when chartData or chartType changes
   useEffect(() => {
@@ -553,7 +563,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
         .map((value, i) => {
           if (value === null) return null
 
-          if (chartType === 'm1') {
+          if (chartType === 'raw') {
             // M1 mode: use timestamps from M1 data
             const dt = dataSource.data.datetime[i]
             if (dt) {
@@ -577,7 +587,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'm1', isLoading, a
 
       // Deduplicate timestamps (multiple renko bricks can close on same M1 bar)
       // Keep only the last value for each timestamp
-      if (chartType === 'overlay' || chartType === 'm1') {
+      if (chartType === 'overlay' || chartType === 'raw') {
         const seenTimes = new Map()
         for (const d of maData) {
           seenTimes.set(d.time, d.value)

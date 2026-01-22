@@ -99,6 +99,21 @@ def extract_timeframe(filename: str) -> Optional[str]:
     return None
 
 
+def get_unique_cache_path(cache_dir: Path, base_name: str) -> Path:
+    """Get a unique cache file path, appending _2, _3, etc. if file exists."""
+    output_path = cache_dir / f"{base_name}.feather"
+    if not output_path.exists():
+        return output_path
+
+    # File exists, find next available number
+    counter = 2
+    while True:
+        output_path = cache_dir / f"{base_name}_{counter}.feather"
+        if not output_path.exists():
+            return output_path
+        counter += 1
+
+
 @app.get("/")
 def root():
     return {"status": "ok", "app": "RenkoDiscovery API"}
@@ -300,12 +315,15 @@ def process_files(request: ProcessRequest):
             combined['close'] = pd.to_numeric(combined['close'], errors='coerce')
             combined['volume'] = pd.to_numeric(combined['volume'], errors='coerce').fillna(0).astype(int)
 
-            # Save as feather
-            output_path = cache_dir / f"{instrument}.feather"
+            # Save as feather - get unique path if file already exists
+            output_path = get_unique_cache_path(cache_dir, instrument)
             combined.to_feather(output_path)
 
+            # Use the actual filename (without extension) as the instrument name
+            cache_name = output_path.stem
+
             results.append({
-                "instrument": instrument,
+                "instrument": cache_name,
                 "status": "success",
                 "output": str(output_path),
                 "rows": len(combined),

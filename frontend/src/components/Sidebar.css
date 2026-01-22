@@ -1,10 +1,11 @@
-/* Sidebar Styles */
+/* Sidebar Styles - Fluid Space-Filling Layout */
 
 .sidebar-content {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  background: linear-gradient(180deg, var(--bg-primary) 0%, rgba(9, 9, 11, 0.98) 100%);
 }
 
 .sidebar-collapsed {
@@ -13,6 +14,7 @@
   align-items: center;
   padding-top: var(--space-2);
   gap: var(--space-2);
+  background: var(--bg-primary);
 }
 
 /* Header with tabs */
@@ -23,6 +25,7 @@
   padding: var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.2);
 }
 
 .tabs {
@@ -122,41 +125,130 @@
   height: 18px;
 }
 
-/* Tab content */
+/* Tab content - This is the key: flex container that fills space */
 .tab-content {
   flex: 1;
-  overflow-y: auto;
-  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  padding: var(--space-3);
+  gap: var(--space-3);
+  overflow: hidden;
+  min-height: 0; /* Critical for nested flex scrolling */
 }
 
-/* Sections */
+/* Sections base */
 .section {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
+/* Collapsible section - fixed height based on content */
+.collapsible-section {
+  flex-shrink: 0;
+}
+
+/* Scrollable sections */
+.scrollable-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 80px;
+  flex: 1; /* Source files takes all remaining space */
+  overflow: hidden;
+}
+
+/* Cache section - content-based height, doesn't expand */
+.scrollable-section.cache-section {
+  flex: 0 0 auto; /* Don't grow, don't shrink, auto height */
+  min-height: 0;
+  max-height: 35%; /* Cap at 35% of sidebar if lots of items */
+}
+
+.scrollable-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.15);
+  min-height: 0; /* Critical for flex scrolling */
+}
+
+/* Custom scrollbar */
+.scrollable-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollable-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb:hover {
+  background: var(--border-default);
+}
+
+.scrollable-content .file-list,
+.scrollable-content .cache-list {
+  padding: var(--space-2);
+}
+
 .section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.section-header.clickable {
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  margin: 0 calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.section-header.clickable:hover {
+  background: var(--bg-hover);
+}
+
+.section-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.collapse-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.collapse-chevron.collapsed {
+  transform: rotate(-90deg);
 }
 
 .section-title {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--text-tertiary);
 }
 
 .file-count {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
   font-family: var(--font-mono);
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 8px;
 }
 
 /* Working directory */
@@ -164,12 +256,13 @@
   font-size: 11px;
   color: var(--text-secondary);
   padding: var(--space-2) var(--space-3);
-  background: var(--bg-tertiary);
+  background: rgba(0, 0, 0, 0.2);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   word-break: break-all;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.4;
 }
 
 .edit-dir-btn {
@@ -259,16 +352,7 @@
 }
 
 /* File list */
-.file-section {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
 .file-list {
-  flex: 1;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -276,10 +360,15 @@
 
 /* Instrument group */
 .instrument-group {
-  background: var(--bg-tertiary);
+  background: rgba(39, 39, 42, 0.5);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+
+.instrument-group:hover {
+  border-color: var(--border-default);
 }
 
 .instrument-header {
@@ -307,10 +396,10 @@
 }
 
 .instrument-count {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
   padding: 2px 6px;
-  background: var(--bg-secondary);
+  background: rgba(0, 0, 0, 0.3);
   border-radius: 10px;
 }
 
@@ -371,33 +460,24 @@
   flex: 1;
   font-size: 11px;
   color: var(--text-secondary);
-  display: flex;
-  gap: var(--space-2);
-}
-
-.file-year {
-  color: var(--text-primary);
-  font-weight: 500;
-  font-family: var(--font-mono);
-}
-
-.file-tf {
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-size {
   font-size: 10px;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
-/* Process bar */
+/* Process bar - Sticky at bottom when visible */
 .process-bar {
+  flex-shrink: 0;
   padding: var(--space-3);
+  margin: var(--space-2) calc(var(--space-3) * -1) calc(var(--space-3) * -1);
+  background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.4) 100%);
   border-top: 1px solid var(--border-subtle);
-  background: var(--bg-tertiary);
-  margin: 0 calc(var(--space-3) * -1);
-  margin-bottom: calc(var(--space-4) * -1);
 }
 
 .process-btn {
@@ -450,6 +530,7 @@
 /* Results */
 .results-section {
   animation: fadeIn 0.3s ease;
+  flex-shrink: 0;
 }
 
 @keyframes fadeIn {
@@ -520,10 +601,6 @@
 }
 
 /* Cache section */
-.cache-section {
-  margin-top: auto;
-}
-
 .cache-section .section-header {
   display: flex;
   align-items: center;
@@ -564,7 +641,7 @@
 .cache-item {
   display: flex;
   align-items: center;
-  background: var(--bg-tertiary);
+  background: rgba(39, 39, 42, 0.5);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   transition: all var(--transition-fast);
