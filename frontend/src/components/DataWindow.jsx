@@ -1,40 +1,142 @@
-function DataWindow({ renkoData, hoveredBarIndex, renkoSettings, pricePrecision = 5, visible }) {
-  if (!visible || !renkoData?.adr_info) return null
+function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM1Index, renkoSettings, pricePrecision = 5 }) {
+  // Need at least chartData to display anything
+  if (!chartData?.data) return null
 
-  const { adr_info, data } = renkoData
-  const barAdr = data.bar_adr
-  const barBrickSize = data.bar_brick_size
-  const brickSizeActual = data.brick_size_actual
+  const { open: m1Open, high: m1High, low: m1Low, close: m1Close, datetime: m1Datetime } = chartData.data
 
-  // Use hovered bar's values, or last bar if not hovering
-  const displayIndex = hoveredBarIndex !== null && hoveredBarIndex >= 0 && barAdr && hoveredBarIndex < barAdr.length
+  // Get M1 bar data (for raw and overlay modes)
+  const m1Index = hoveredM1Index !== null && hoveredM1Index >= 0 && hoveredM1Index < m1Close?.length
+    ? hoveredM1Index
+    : (m1Close?.length - 1) || 0
+
+  const m1Timestamp = m1Datetime?.[m1Index]
+  const m1O = m1Open?.[m1Index]
+  const m1H = m1High?.[m1Index]
+  const m1L = m1Low?.[m1Index]
+  const m1C = m1Close?.[m1Index]
+
+  // Get renko data (for renko and overlay modes)
+  const renkoDataSource = renkoData?.data
+  const renkoIndex = hoveredBarIndex !== null && hoveredBarIndex >= 0 && renkoDataSource?.close && hoveredBarIndex < renkoDataSource.close.length
     ? hoveredBarIndex
-    : (barAdr?.length - 1) || 0
+    : (renkoDataSource?.close?.length - 1) || 0
 
-  const adrValue = barAdr?.[displayIndex] || adr_info.adr_value
-  // Use actual brick size from data if available (reflects dynamic session-based sizing)
-  const actualBrickSize = brickSizeActual?.[displayIndex]
-  const brickSize = actualBrickSize || barBrickSize?.[displayIndex] || renkoData.brick_size
+  const renkoO = renkoDataSource?.open?.[renkoIndex]
+  const renkoH = renkoDataSource?.high?.[renkoIndex]
+  const renkoL = renkoDataSource?.low?.[renkoIndex]
+  const renkoC = renkoDataSource?.close?.[renkoIndex]
+  const renkoDatetime = renkoDataSource?.datetime?.[renkoIndex]
 
-  // Calculate reversal size from brick size and the ratio of percentages
-  const brickPct = renkoSettings?.brickSize || adr_info.brick_percentage
-  const reversalPct = renkoSettings?.reversalSize || adr_info.reversal_percentage
-  const reversalSize = brickSize * (reversalPct / brickPct)
+  // Get ADR info if available
+  const adrInfo = renkoData?.adr_info
+  const barAdr = renkoDataSource?.bar_adr
+  const brickSizeActual = renkoDataSource?.brick_size_actual
+  const barBrickSize = renkoDataSource?.bar_brick_size
+
+  const adrValue = barAdr?.[renkoIndex] || adrInfo?.adr_value
+  const brickSize = brickSizeActual?.[renkoIndex] || barBrickSize?.[renkoIndex] || renkoData?.brick_size
+
+  // Calculate reversal size from brick size and percentages
+  let reversalSize = null
+  if (brickSize && adrInfo) {
+    const brickPct = renkoSettings?.brickSize || adrInfo.brick_percentage
+    const reversalPct = renkoSettings?.reversalSize || adrInfo.reversal_percentage
+    reversalSize = brickSize * (reversalPct / brickPct)
+  }
+
+  // Format timestamp for display
+  const formatTimestamp = (isoString) => {
+    if (!isoString) return '--'
+    const date = new Date(isoString)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day} ${hours}:${minutes}`
+  }
+
+  const formatPrice = (value) => {
+    if (value === undefined || value === null) return '--'
+    return value.toFixed(pricePrecision)
+  }
 
   return (
     <div className="data-window">
+      {/* Timestamp - show M1 time in raw/overlay, renko time in renko mode */}
       <div className="data-row">
-        <span className="data-label">ADR</span>
-        <span className="data-value mono">{adrValue.toFixed(pricePrecision)}</span>
+        <span className="data-label">Time</span>
+        <span className="data-value mono">
+          {chartType === 'renko' ? formatTimestamp(renkoDatetime) : formatTimestamp(m1Timestamp)}
+        </span>
       </div>
-      <div className="data-row">
-        <span className="data-label">Brick</span>
-        <span className="data-value mono">{brickSize.toFixed(pricePrecision)}</span>
-      </div>
-      <div className="data-row">
-        <span className="data-label">Rev</span>
-        <span className="data-value mono">{reversalSize.toFixed(pricePrecision)}</span>
-      </div>
+
+      {/* Raw/M1 bar OHLC - show in raw and overlay modes */}
+      {(chartType === 'raw' || chartType === 'overlay') && (
+        <>
+          <div className="data-section-header">M1 Bar</div>
+          <div className="data-row">
+            <span className="data-label">O</span>
+            <span className="data-value mono">{formatPrice(m1O)}</span>
+          </div>
+          <div className="data-row">
+            <span className="data-label">H</span>
+            <span className="data-value mono">{formatPrice(m1H)}</span>
+          </div>
+          <div className="data-row">
+            <span className="data-label">L</span>
+            <span className="data-value mono">{formatPrice(m1L)}</span>
+          </div>
+          <div className="data-row">
+            <span className="data-label">C</span>
+            <span className="data-value mono">{formatPrice(m1C)}</span>
+          </div>
+        </>
+      )}
+
+      {/* Renko bar OHLC - show in renko and overlay modes */}
+      {(chartType === 'renko' || chartType === 'overlay') && renkoDataSource && (
+        <>
+          <div className="data-section-header">Renko</div>
+          <div className="data-row">
+            <span className="data-label">O</span>
+            <span className="data-value mono">{formatPrice(renkoO)}</span>
+          </div>
+          <div className="data-row">
+            <span className="data-label">H</span>
+            <span className="data-value mono">{formatPrice(renkoH)}</span>
+          </div>
+          <div className="data-row">
+            <span className="data-label">L</span>
+            <span className="data-value mono">{formatPrice(renkoL)}</span>
+          </div>
+          <div className="data-row">
+            <span className="data-label">C</span>
+            <span className="data-value mono">{formatPrice(renkoC)}</span>
+          </div>
+        </>
+      )}
+
+      {/* ADR info - show when available */}
+      {adrInfo && (chartType === 'renko' || chartType === 'overlay') && (
+        <>
+          <div className="data-section-header">ADR</div>
+          <div className="data-row">
+            <span className="data-label">ADR</span>
+            <span className="data-value mono">{formatPrice(adrValue)}</span>
+          </div>
+          <div className="data-row">
+            <span className="data-label">Brick</span>
+            <span className="data-value mono">{formatPrice(brickSize)}</span>
+          </div>
+          {reversalSize !== null && (
+            <div className="data-row">
+              <span className="data-label">Rev</span>
+              <span className="data-value mono">{formatPrice(reversalSize)}</span>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }

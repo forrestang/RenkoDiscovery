@@ -215,7 +215,8 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   const ma3SeriesRef = useRef(null)
   const renkoDataRef = useRef(null)
   const isTickDataRef = useRef(false)
-  const [hoveredBarIndex, setHoveredBarIndex] = useState(null)
+  const [hoveredBarIndex, setHoveredBarIndex] = useState(null)  // Renko bar index
+  const [hoveredM1Index, setHoveredM1Index] = useState(null)    // M1/raw bar index
 
   // Keep renkoDataRef in sync with renkoData prop
   useEffect(() => {
@@ -321,12 +322,12 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     // For overlay mode, use semi-transparent colors
     const isOverlay = chartType === 'overlay'
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: isOverlay ? 'rgba(34, 197, 94, 0.35)' : '#22c55e',
-      downColor: isOverlay ? 'rgba(239, 68, 68, 0.35)' : '#ef4444',
-      borderUpColor: isOverlay ? 'rgba(34, 197, 94, 0.5)' : '#22c55e',
-      borderDownColor: isOverlay ? 'rgba(239, 68, 68, 0.5)' : '#ef4444',
-      wickUpColor: isOverlay ? 'rgba(34, 197, 94, 0.5)' : '#22c55e',
-      wickDownColor: isOverlay ? 'rgba(239, 68, 68, 0.5)' : '#ef4444',
+      upColor: isOverlay ? 'rgba(255, 255, 255, 0.5)' : '#ffffff',
+      downColor: isOverlay ? 'rgba(136, 136, 136, 0.5)' : '#888888',
+      borderUpColor: isOverlay ? 'rgba(255, 255, 255, 0.7)' : '#ffffff',
+      borderDownColor: isOverlay ? 'rgba(136, 136, 136, 0.7)' : '#888888',
+      wickUpColor: isOverlay ? 'rgba(255, 255, 255, 0.7)' : '#ffffff',
+      wickDownColor: isOverlay ? 'rgba(136, 136, 136, 0.7)' : '#888888',
       visible: true,  // Will be hidden for tick data
     })
 
@@ -362,10 +363,11 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     const resizeObserver = new ResizeObserver(handleResize)
     resizeObserver.observe(containerRef.current)
 
-    // Subscribe to crosshair move to track which renko bar is hovered
+    // Subscribe to crosshair move to track hovered bar indices
     chart.subscribeCrosshairMove((param) => {
       if (!param.point) {
         setHoveredBarIndex(null)
+        setHoveredM1Index(null)
         return
       }
 
@@ -373,17 +375,28 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       const logicalIndex = chart.timeScale().coordinateToLogical(param.point.x)
       if (logicalIndex === null) {
         setHoveredBarIndex(null)
+        setHoveredM1Index(null)
         return
       }
 
-      // For renko mode, the index directly maps to bar index
+      // For raw mode, track M1 bar index directly
+      if (chartType === 'raw') {
+        const roundedIndex = Math.round(logicalIndex)
+        const maxIndex = (chartDataRef.current?.data?.close?.length || 1) - 1
+        setHoveredM1Index(roundedIndex >= 0 && roundedIndex <= maxIndex ? roundedIndex : null)
+        setHoveredBarIndex(null)
+        return
+      }
+
+      // For renko mode, the index directly maps to renko bar index
       if (chartType === 'renko') {
         const roundedIndex = Math.round(logicalIndex)
         setHoveredBarIndex(roundedIndex >= 0 ? roundedIndex : null)
+        setHoveredM1Index(null)
         return
       }
 
-      // For overlay mode, find which brick contains this M1 bar
+      // For overlay mode, track both M1 and renko indices
       if (chartType === 'overlay' && renkoDataRef.current?.data && chartDataRef.current?.data) {
         const tickOpens = renkoDataRef.current.data.tick_index_open
         const tickCloses = renkoDataRef.current.data.tick_index_close
@@ -409,6 +422,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
             }
 
             if (m1Index >= 0) {
+              setHoveredM1Index(m1Index)
               // Find brick where m1Index falls between tick_open and tick_close
               for (let i = tickOpens.length - 1; i >= 0; i--) {
                 if (m1Index >= tickOpens[i] && m1Index <= tickCloses[i]) {
@@ -422,6 +436,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       }
 
       setHoveredBarIndex(null)
+      setHoveredM1Index(null)
     })
 
     return () => {
@@ -753,19 +768,20 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
 
   // Get the renko data source for DataWindow (either passed directly or when chartData is renko)
   const renkoDataForWindow = renkoData || (chartType === 'renko' ? chartData : null)
-  const showDataWindow = (chartType === 'renko' || chartType === 'overlay') &&
-    renkoSettings?.brickMethod === 'adr' &&
-    renkoDataForWindow?.adr_info
+  // Show data window in all modes when we have chart data
+  const showDataWindow = chartData?.data
 
   return (
     <div ref={containerRef} className="chart-container">
       {showDataWindow && (
         <DataWindow
+          chartData={chartData}
           renkoData={renkoDataForWindow}
+          chartType={chartType}
           hoveredBarIndex={hoveredBarIndex}
+          hoveredM1Index={hoveredM1Index}
           renkoSettings={renkoSettings}
           pricePrecision={pricePrecision}
-          visible={true}
         />
       )}
     </div>
