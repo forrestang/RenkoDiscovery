@@ -203,7 +203,7 @@ function calculateEMA(data, period) {
   return result
 }
 
-function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, renkoSettings = null, compressionFactor = 1.0 }) {
+function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)  // Candlestick series for OHLC data
@@ -780,7 +780,6 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
           chartType={chartType}
           hoveredBarIndex={hoveredBarIndex}
           hoveredM1Index={hoveredM1Index}
-          renkoSettings={renkoSettings}
           pricePrecision={pricePrecision}
         />
       )}

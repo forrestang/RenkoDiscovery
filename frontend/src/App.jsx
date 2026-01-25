@@ -68,14 +68,6 @@ function App() {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}renkoSettings`)
     if (saved) {
       const parsed = JSON.parse(saved)
-      // Migrate old settings format to 'price'
-      if (parsed.brickMethod === 'fixed_pip' || parsed.brickMethod === 'ticks' || parsed.brickMethod === 'percentage') {
-        parsed.brickMethod = 'price'
-      }
-      // Migrate 'atr' method to 'adr'
-      if (parsed.brickMethod === 'atr') {
-        parsed.brickMethod = 'adr'
-      }
       // Validate brickSize - must be a valid price value
       if (!parsed.brickSize || parsed.brickSize <= 0) {
         parsed.brickSize = 0.0010
@@ -92,21 +84,15 @@ function App() {
       if (!parsed.wickMode) {
         parsed.wickMode = 'all'
       }
-      // Migrate atrPeriod to adrLookback
-      if (parsed.atrPeriod && !parsed.adrLookback) {
-        parsed.adrLookback = 5  // Use default for ADR
-        delete parsed.atrPeriod
+      return {
+        brickSize: parsed.brickSize,
+        reversalSize: parsed.reversalSize,
+        wickMode: parsed.wickMode
       }
-      if (!parsed.adrLookback) {
-        parsed.adrLookback = 5
-      }
-      return parsed
     }
     return {
-      brickMethod: 'price',
       brickSize: 0.0010,
       reversalSize: 0.0020,
-      adrLookback: 5,
       wickMode: 'all'
     }
   })
@@ -294,10 +280,8 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          brick_method: settings.brickMethod,
           brick_size: settings.brickSize,
           reversal_size: settings.reversalSize,
-          adr_lookback: settings.adrLookback,
           wick_mode: settings.wickMode || 'all',
           working_dir: workingDir
         })
@@ -529,7 +513,6 @@ function App() {
             activeInstrument={activeInstrument}
             pricePrecision={pricePrecision}
             maSettings={maSettings}
-            renkoSettings={renkoSettings}
             compressionFactor={compressionFactor}
           />
         </main>

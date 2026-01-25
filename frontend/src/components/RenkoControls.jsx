@@ -1,10 +1,5 @@
 import { useState, useEffect } from 'react'
 
-const BRICK_METHODS = [
-  { value: 'price', label: 'Price' },
-  { value: 'adr', label: 'ADR' },
-]
-
 const WICK_MODES = [
   { value: 'all', label: 'All Wicks' },
   { value: 'big', label: 'Big Wicks' },
@@ -17,25 +12,6 @@ function RenkoControls({ settings, onChange }) {
   useEffect(() => {
     setLocalSettings(settings)
   }, [settings])
-
-  const handleMethodChange = (e) => {
-    const newMethod = e.target.value
-    let newSettings = { ...localSettings, brickMethod: newMethod }
-
-    // Set sensible defaults when switching methods
-    if (newMethod === 'adr' && localSettings.brickMethod === 'price') {
-      // Switching to ADR: use percentage defaults
-      newSettings.brickSize = 50   // 50% of ADR
-      newSettings.reversalSize = 100  // 100% of ADR
-    } else if (newMethod === 'price' && localSettings.brickMethod === 'adr') {
-      // Switching to Price: use typical forex pip values
-      newSettings.brickSize = 0.0010
-      newSettings.reversalSize = 0.0020
-    }
-
-    setLocalSettings(newSettings)
-    onChange(newSettings)
-  }
 
   const handleWickModeChange = (e) => {
     const newSettings = { ...localSettings, wickMode: e.target.value }
@@ -77,58 +53,8 @@ function RenkoControls({ settings, onChange }) {
     }
   }
 
-  const handleAdrLookbackChange = (e) => {
-    const value = parseInt(e.target.value, 10) || 5
-    setLocalSettings(prev => ({ ...prev, adrLookback: value }))
-  }
-
-  const handleAdrLookbackBlur = () => {
-    if (localSettings.adrLookback > 0) {
-      onChange(localSettings)
-    }
-  }
-
-  const handleAdrLookbackKeyDown = (e) => {
-    if (e.key === 'Enter' && localSettings.adrLookback > 0) {
-      onChange(localSettings)
-    }
-  }
-
-  const getBrickSizeLabel = () => {
-    switch (localSettings.brickMethod) {
-      case 'price':
-        return 'Brick'
-      case 'adr':
-        return '%'
-      default:
-        return 'Size'
-    }
-  }
-
-  const getReversalLabel = () => {
-    switch (localSettings.brickMethod) {
-      case 'price':
-        return 'Rev'
-      case 'adr':
-        return 'Rev %'
-      default:
-        return 'Rev'
-    }
-  }
-
   return (
     <div className="renko-controls">
-      <select
-        className="renko-method-select mono"
-        value={localSettings.brickMethod}
-        onChange={handleMethodChange}
-      >
-        {BRICK_METHODS.map(method => (
-          <option key={method.value} value={method.value}>
-            {method.label}
-          </option>
-        ))}
-      </select>
       <div className="renko-size-input">
         <input
           type="number"
@@ -140,7 +66,7 @@ function RenkoControls({ settings, onChange }) {
           min="0.00001"
           step="0.0001"
         />
-        <span className="input-suffix">{getBrickSizeLabel()}</span>
+        <span className="input-suffix">Brick</span>
       </div>
       <div className="renko-reversal-input">
         <input
@@ -153,23 +79,8 @@ function RenkoControls({ settings, onChange }) {
           min="0.00001"
           step="0.0001"
         />
-        <span className="input-suffix">{getReversalLabel()}</span>
+        <span className="input-suffix">Rev</span>
       </div>
-      {localSettings.brickMethod === 'adr' && (
-        <div className="renko-atr-input">
-          <input
-            type="number"
-            className="mono"
-            value={localSettings.adrLookback}
-            onChange={handleAdrLookbackChange}
-            onBlur={handleAdrLookbackBlur}
-            onKeyDown={handleAdrLookbackKeyDown}
-            min="1"
-            step="1"
-          />
-          <span className="input-suffix">Sessions</span>
-        </div>
-      )}
       <select
         className="renko-wick-select mono"
         value={localSettings.wickMode || 'all'}

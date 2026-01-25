@@ -1,4 +1,4 @@
-function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM1Index, renkoSettings, pricePrecision = 5 }) {
+function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM1Index, pricePrecision = 5 }) {
   // Need at least chartData to display anything
   if (!chartData?.data) return null
 
@@ -26,23 +26,6 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
   const renkoL = renkoDataSource?.low?.[renkoIndex]
   const renkoC = renkoDataSource?.close?.[renkoIndex]
   const renkoDatetime = renkoDataSource?.datetime?.[renkoIndex]
-
-  // Get ADR info if available
-  const adrInfo = renkoData?.adr_info
-  const barAdr = renkoDataSource?.bar_adr
-  const brickSizeActual = renkoDataSource?.brick_size_actual
-  const barBrickSize = renkoDataSource?.bar_brick_size
-
-  const adrValue = barAdr?.[renkoIndex] || adrInfo?.adr_value
-  const brickSize = brickSizeActual?.[renkoIndex] || barBrickSize?.[renkoIndex] || renkoData?.brick_size
-
-  // Calculate reversal size from brick size and percentages
-  let reversalSize = null
-  if (brickSize && adrInfo) {
-    const brickPct = renkoSettings?.brickSize || adrInfo.brick_percentage
-    const reversalPct = renkoSettings?.reversalSize || adrInfo.reversal_percentage
-    reversalSize = brickSize * (reversalPct / brickPct)
-  }
 
   // Format timestamp for display
   const formatTimestamp = (isoString) => {
@@ -114,27 +97,6 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
             <span className="data-label">C</span>
             <span className="data-value mono">{formatPrice(renkoC)}</span>
           </div>
-        </>
-      )}
-
-      {/* ADR info - show when available */}
-      {adrInfo && (chartType === 'renko' || chartType === 'overlay') && (
-        <>
-          <div className="data-section-header">ADR</div>
-          <div className="data-row">
-            <span className="data-label">ADR</span>
-            <span className="data-value mono">{formatPrice(adrValue)}</span>
-          </div>
-          <div className="data-row">
-            <span className="data-label">Brick</span>
-            <span className="data-value mono">{formatPrice(brickSize)}</span>
-          </div>
-          {reversalSize !== null && (
-            <div className="data-row">
-              <span className="data-label">Rev</span>
-              <span className="data-value mono">{formatPrice(reversalSize)}</span>
-            </div>
-          )}
         </>
       )}
     </div>
