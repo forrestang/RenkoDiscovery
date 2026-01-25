@@ -579,20 +579,6 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       isUp: close[i] > open[i],
     }))
 
-    // Add the pending brick if it exists
-    if (pendingBrick) {
-      bricks.push({
-        tickOpen: pendingBrick.tick_index_open,
-        tickClose: pendingBrick.tick_index_close,
-        priceOpen: pendingBrick.open,
-        priceClose: pendingBrick.close,
-        priceHigh: pendingBrick.high,
-        priceLow: pendingBrick.low,
-        isUp: pendingBrick.close > pendingBrick.open,
-        isPending: true,
-      })
-    }
-
     primitiveRef.current.setBricks(bricks)
 
     // Force redraw
