@@ -273,22 +273,33 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         barSpacing: 6 * compressionFactor,
         minBarSpacing: Math.min(0.5, 6 * compressionFactor),  // Dynamic: lower only when compression requires it
         // Custom formatter for Renko mode and tick data (both use index-based time)
-        tickMarkFormatter: (index) => {
+        tickMarkFormatter: (time, tickMarkType, locale) => {
           if (chartType === 'renko' || isTickDataRef.current) {
-            const dt = datetimesRef.current[index]
-            return dt ? formatTickMark(dt) : String(index)
+            const dt = datetimesRef.current[time]
+            return dt ? formatTickMark(dt) : String(time)
           }
-          return undefined  // Let LWC handle timestamp formatting
+          // Timestamp-based data: format Unix timestamp
+          const date = new Date(time * 1000)
+          const month = String(date.getMonth() + 1).padStart(2, '0')
+          const day = String(date.getDate()).padStart(2, '0')
+          return `${month}-${day}`
         },
       },
       localization: {
         // Custom time formatter for Renko mode and tick data
-        timeFormatter: (index) => {
+        timeFormatter: (time) => {
           if (chartType === 'renko' || isTickDataRef.current) {
-            const dt = datetimesRef.current[index]
-            return dt ? formatTimestamp(dt) : `${label} ${index}`
+            const dt = datetimesRef.current[time]
+            return dt ? formatTimestamp(dt) : `${label} ${time}`
           }
-          return undefined  // Let LWC handle timestamp formatting
+          // Timestamp-based data: format Unix timestamp
+          const date = new Date(time * 1000)
+          const year = date.getFullYear()
+          const month = String(date.getMonth() + 1).padStart(2, '0')
+          const day = String(date.getDate()).padStart(2, '0')
+          const hours = String(date.getHours()).padStart(2, '0')
+          const minutes = String(date.getMinutes()).padStart(2, '0')
+          return `${year}-${month}-${day} ${hours}:${minutes}`
         },
       },
       handleScroll: {
@@ -446,7 +457,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     datetimesRef.current = datetime || []
 
     // Check if this is tick data (has sub-second timestamps or is_tick_data flag)
-    const isTickData = chartData.is_tick_data || (datetime[0] && datetime[0].includes('.'))
+    const isTickData = chartData.is_tick_data || false
     isTickDataRef.current = isTickData
 
     // Apply price precision from user setting
@@ -643,8 +654,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       }
 
       // Check if this is tick data
-      const isTickData = chartData?.is_tick_data ||
-        (chartData?.data?.datetime?.[0] && chartData.data.datetime[0].includes('.'))
+      const isTickData = chartData?.is_tick_data || false
 
       // Build MA data with proper time values
       let maData = maValues
