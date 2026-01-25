@@ -442,6 +442,22 @@ def aggregate_ticks_to_ohlc(df: pd.DataFrame, freq: str = '1min') -> pd.DataFram
     return ohlc
 
 
+def calculate_ema(values: pd.Series, period: int) -> pd.Series:
+    """Calculate EMA matching frontend implementation."""
+    # Work with numpy arrays for simpler indexing
+    vals = values.values
+    n = len(vals)
+    ema_arr = np.full(n, np.nan)
+
+    if n >= period:
+        multiplier = 2 / (period + 1)
+        ema_arr[period - 1] = np.mean(vals[:period])  # First EMA = SMA
+        for i in range(period, n):
+            ema_arr[i] = (vals[i] - ema_arr[i - 1]) * multiplier + ema_arr[i - 1]
+
+    return pd.Series(ema_arr, index=values.index)
+
+
 @app.post("/process")
 def process_files(request: ProcessRequest):
     """
@@ -1091,6 +1107,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
         'close': renko_data.get('close', []),
     })
 
+
     # Add settings columns
     df['adr_period'] = request.adr_period
     df['brick_size'] = request.brick_size
@@ -1125,8 +1142,17 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['utc_date'] = df['datetime'].dt.date
     df['currentADR'] = df['utc_date'].map(daily_stats['current_adr'])
 
-    # Drop rows where currentADR couldn't be calculated (insufficient history)
-    df = df.dropna(subset=['currentADR'])
+    # Calculate EMA distances for each MA period
+    ma_periods = [request.ma1_period, request.ma2_period, request.ma3_period]
+
+    for period in ma_periods:
+        ema_values = calculate_ema(df['close'], period)
+        df[f'EMA_rawDistance({period})'] = df['close'] - ema_values
+        df[f'EMA_normDistance({period})'] = (df['close'] - ema_values) / df['currentADR']
+
+    # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
+    required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
+    df = df.dropna(subset=required_columns)
 
     # Clean up helper column
     df = df.drop(columns=['utc_date'])
