@@ -33,6 +33,7 @@ function Sidebar({
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
+  const [adrPeriod, setAdrPeriod] = useState(14)
   const [workingDirCollapsed, setWorkingDirCollapsed] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}workingDirCollapsed`)
     return saved === 'true'
@@ -80,6 +81,34 @@ function Sidebar({
               <path d="M12 4v16" />
             </svg>
           </button>
+          <button
+            className={`collapsed-tab ${activeTab === 'stats' ? 'active' : ''}`}
+            onClick={() => { onToggleCollapse(); onTabChange('stats') }}
+            title="Stats"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 20V10" />
+              <path d="M12 20V4" />
+              <path d="M6 20v-6" />
+            </svg>
+          </button>
+          <button
+            className={`collapsed-tab ${activeTab === 'ml' ? 'active' : ''}`}
+            onClick={() => { onToggleCollapse(); onTabChange('ml') }}
+            title="ML"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 2v4" />
+              <path d="M12 18v4" />
+              <path d="M4.93 4.93l2.83 2.83" />
+              <path d="M16.24 16.24l2.83 2.83" />
+              <path d="M2 12h4" />
+              <path d="M18 12h4" />
+              <path d="M4.93 19.07l2.83-2.83" />
+              <path d="M16.24 7.76l2.83-2.83" />
+            </svg>
+          </button>
         </div>
       </div>
     )
@@ -99,6 +128,34 @@ function Sidebar({
               <path d="M12 4v16" />
             </svg>
             Data
+          </button>
+          <button
+            className={`tab ${activeTab === 'stats' ? 'active' : ''}`}
+            onClick={() => onTabChange('stats')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M18 20V10" />
+              <path d="M12 20V4" />
+              <path d="M6 20v-6" />
+            </svg>
+            Stats
+          </button>
+          <button
+            className={`tab ${activeTab === 'ml' ? 'active' : ''}`}
+            onClick={() => onTabChange('ml')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 2v4" />
+              <path d="M12 18v4" />
+              <path d="M4.93 4.93l2.83 2.83" />
+              <path d="M16.24 16.24l2.83 2.83" />
+              <path d="M2 12h4" />
+              <path d="M18 12h4" />
+              <path d="M4.93 19.07l2.83-2.83" />
+              <path d="M16.24 7.76l2.83-2.83" />
+            </svg>
+            ML
           </button>
         </div>
         <button className="collapse-btn" onClick={onToggleCollapse} title="Collapse sidebar">
@@ -453,6 +510,51 @@ function Sidebar({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {activeTab === 'stats' && (
+        <div className="tab-content stats-tab">
+          <div className="section">
+            <div className="section-header">
+              <span className="section-title">ADR Settings</span>
+            </div>
+            <div className="stats-input-group">
+              <label className="option-label">ADR Period</label>
+              <input
+                type="number"
+                className="stats-input mono"
+                value={adrPeriod}
+                onChange={(e) => setAdrPeriod(parseInt(e.target.value) || 1)}
+                min="1"
+                max="100"
+              />
+            </div>
+          </div>
+
+          <div className="stats-spacer" />
+
+          <div className="stats-actions">
+            <button className="run-stats-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              Run Stats
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'ml' && (
+        <div className="tab-content ml-tab">
+          <div className="section">
+            <div className="section-header">
+              <span className="section-title">Machine Learning</span>
+            </div>
+            <div className="ml-placeholder">
+              <span className="placeholder-text">ML features coming soon</span>
+            </div>
+          </div>
         </div>
       )}
     </div>
