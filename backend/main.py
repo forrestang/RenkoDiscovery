@@ -80,6 +80,19 @@ class RenkoRequest(BaseModel):
     working_dir: Optional[str] = None
 
 
+class StatsRequest(BaseModel):
+    filename: str = "stats_output"
+    working_dir: Optional[str] = None
+    adr_period: int = 14
+    brick_size: float = 0.0010
+    reversal_size: float = 0.0020
+    wick_mode: str = "all"
+    ma1_period: int = 20
+    ma2_period: int = 50
+    ma3_period: int = 200
+    renko_data: dict  # Contains datetime, open, high, low, close arrays
+
+
 def extract_instrument(filename: str) -> Optional[str]:
     """Extract instrument symbol from filename."""
     filename_upper = filename.upper()
@@ -1050,6 +1063,82 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         },
         "pending_brick": pending_brick,
         "total_bricks": len(renko_df)
+    }
+
+
+@app.post("/stats/{instrument}")
+async def generate_stats(instrument: str, request: StatsRequest):
+    """Generate a parquet file with chart statistics for ML training."""
+    base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
+    stats_dir = base_dir / "Stats"
+
+    # Create Stats directory if it doesn't exist
+    stats_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build the output filepath
+    filename = request.filename.replace('.parquet', '')  # Remove extension if provided
+    output_path = stats_dir / f"{filename}.parquet"
+
+    # Extract renko data from request
+    renko_data = request.renko_data
+
+    # Create DataFrame from renko data
+    df = pd.DataFrame({
+        'datetime': renko_data.get('datetime', []),
+        'open': renko_data.get('open', []),
+        'high': renko_data.get('high', []),
+        'low': renko_data.get('low', []),
+        'close': renko_data.get('close', []),
+    })
+
+    # Add settings columns
+    df['adr_period'] = request.adr_period
+    df['brick_size'] = request.brick_size
+    df['reversal_size'] = request.reversal_size
+    df['wick_mode'] = request.wick_mode
+    df['ma1_period'] = request.ma1_period
+    df['ma2_period'] = request.ma2_period
+    df['ma3_period'] = request.ma3_period
+
+    # Calculate currentADR (Average Daily Range) from RAW price data
+    # Load raw OHLC data for accurate daily range calculation
+    cache_dir = base_dir / "cache_performant"
+    feather_path = cache_dir / f"{instrument}.feather"
+    raw_df = pd.read_feather(feather_path)
+    raw_df['utc_date'] = raw_df['datetime'].dt.date
+
+    # Calculate daily range from raw data (max high - min low per day)
+    daily_stats = raw_df.groupby('utc_date').agg(
+        day_high=('high', 'max'),
+        day_low=('low', 'min')
+    )
+    daily_stats['daily_range'] = daily_stats['day_high'] - daily_stats['day_low']
+
+    # Calculate rolling ADR (average of previous N days, excluding current)
+    daily_stats['current_adr'] = daily_stats['daily_range'].shift(1).rolling(
+        window=request.adr_period,
+        min_periods=request.adr_period
+    ).mean()
+
+    # Map currentADR back to renko bars based on their UTC date
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    df['utc_date'] = df['datetime'].dt.date
+    df['currentADR'] = df['utc_date'].map(daily_stats['current_adr'])
+
+    # Drop rows where currentADR couldn't be calculated (insufficient history)
+    df = df.dropna(subset=['currentADR'])
+
+    # Clean up helper column
+    df = df.drop(columns=['utc_date'])
+
+    # Write to parquet
+    df.to_parquet(output_path, engine='pyarrow', index=False)
+
+    return {
+        "status": "success",
+        "filepath": str(output_path),
+        "rows": len(df),
+        "instrument": instrument
     }
 
 

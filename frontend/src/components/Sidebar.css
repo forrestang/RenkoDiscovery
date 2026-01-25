@@ -1123,6 +1123,17 @@
   height: 16px;
 }
 
+.run-stats-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.stats-file-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: -4px;
+}
+
 /* ML Tab */
 .ml-tab {
   display: flex;

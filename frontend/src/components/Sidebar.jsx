@@ -29,11 +29,20 @@ function Sidebar({
   intervalType,
   onIntervalTypeChange,
   customName,
-  onCustomNameChange
+  onCustomNameChange,
+  // Stats generation
+  onRunStats,
+  isRunningStats,
+  renkoSettings,
+  maSettings
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
-  const [adrPeriod, setAdrPeriod] = useState(14)
+  const [adrPeriod, setAdrPeriod] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}adrPeriod`)
+    return saved ? parseInt(saved) : 14
+  })
+  const [statsFilename, setStatsFilename] = useState('')
   const [workingDirCollapsed, setWorkingDirCollapsed] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}workingDirCollapsed`)
     return saved === 'true'
@@ -517,7 +526,7 @@ function Sidebar({
         <div className="tab-content stats-tab">
           <div className="section">
             <div className="section-header">
-              <span className="section-title">ADR Settings</span>
+              <span className="section-title">User Settings</span>
             </div>
             <div className="stats-input-group">
               <label className="option-label">ADR Period</label>
@@ -525,7 +534,11 @@ function Sidebar({
                 type="number"
                 className="stats-input mono"
                 value={adrPeriod}
-                onChange={(e) => setAdrPeriod(parseInt(e.target.value) || 1)}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 1
+                  setAdrPeriod(value)
+                  localStorage.setItem(`${STORAGE_PREFIX}adrPeriod`, value.toString())
+                }}
                 min="1"
                 max="100"
               />
@@ -535,11 +548,44 @@ function Sidebar({
           <div className="stats-spacer" />
 
           <div className="stats-actions">
-            <button className="run-stats-btn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-              Run Stats
+            <div className="stats-input-group">
+              <label className="option-label">Output Filename</label>
+              <input
+                type="text"
+                className="stats-input mono"
+                value={statsFilename}
+                onChange={(e) => setStatsFilename(e.target.value)}
+                placeholder="stats_output"
+              />
+              <span className="stats-file-hint">.parquet</span>
+            </div>
+            <button
+              className="run-stats-btn"
+              onClick={() => onRunStats?.({
+                filename: statsFilename || 'stats_output',
+                adrPeriod,
+                brickSize: renkoSettings?.brickSize,
+                reversalSize: renkoSettings?.reversalSize,
+                wickMode: renkoSettings?.wickMode,
+                ma1Period: maSettings?.ma1?.period,
+                ma2Period: maSettings?.ma2?.period,
+                ma3Period: maSettings?.ma3?.period
+              })}
+              disabled={isRunningStats}
+            >
+              {isRunningStats ? (
+                <>
+                  <span className="spinner" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                  Run Stats
+                </>
+              )}
             </button>
           </div>
         </div>

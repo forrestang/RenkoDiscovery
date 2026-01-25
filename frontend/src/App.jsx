@@ -51,6 +51,7 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingResults, setProcessingResults] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isRunningStats, setIsRunningStats] = useState(false)
   // Data import settings
   const [dataFormat, setDataFormat] = useState('MT4')  // 'MT4' or 'J4X'
   const [intervalType, setIntervalType] = useState('M')  // 'M' for minute, 'T' for tick
@@ -232,6 +233,46 @@ function App() {
       console.error('Processing failed:', err)
     } finally {
       setIsProcessing(false)
+    }
+  }
+
+  const handleRunStats = async (statsConfig) => {
+    if (!activeInstrument || !renkoData) {
+      console.error('No chart data loaded')
+      return
+    }
+
+    setIsRunningStats(true)
+
+    try {
+      const res = await fetch(`${API_BASE}/stats/${activeInstrument}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: statsConfig.filename,
+          working_dir: workingDir,
+          adr_period: statsConfig.adrPeriod,
+          brick_size: statsConfig.brickSize,
+          reversal_size: statsConfig.reversalSize,
+          wick_mode: statsConfig.wickMode,
+          ma1_period: statsConfig.ma1Period,
+          ma2_period: statsConfig.ma2Period,
+          ma3_period: statsConfig.ma3Period,
+          renko_data: renkoData.data
+        })
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        console.log('Stats generated:', data.filepath)
+      } else {
+        const error = await res.json()
+        console.error('Stats generation failed:', error.detail)
+      }
+    } catch (err) {
+      console.error('Stats generation failed:', err)
+    } finally {
+      setIsRunningStats(false)
     }
   }
 
@@ -497,6 +538,11 @@ function App() {
             onIntervalTypeChange={setIntervalType}
             customName={customName}
             onCustomNameChange={setCustomName}
+            // Stats generation
+            onRunStats={handleRunStats}
+            isRunningStats={isRunningStats}
+            renkoSettings={renkoSettings}
+            maSettings={maSettings}
           />
 
           {!sidebarCollapsed && (
