@@ -1107,7 +1107,6 @@ async def generate_stats(instrument: str, request: StatsRequest):
         'close': renko_data.get('close', []),
     })
 
-
     # Add settings columns
     df['adr_period'] = request.adr_period
     df['brick_size'] = request.brick_size
@@ -1142,13 +1141,47 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['utc_date'] = df['datetime'].dt.date
     df['currentADR'] = df['utc_date'].map(daily_stats['current_adr'])
 
-    # Calculate EMA distances for each MA period
+    # Calculate EMA values and distances for each MA period
     ma_periods = [request.ma1_period, request.ma2_period, request.ma3_period]
+    ema_columns = {}
 
     for period in ma_periods:
         ema_values = calculate_ema(df['close'], period)
+        ema_columns[period] = ema_values  # Store for State calculation
         df[f'EMA_rawDistance({period})'] = df['close'] - ema_values
         df[f'EMA_normDistance({period})'] = (df['close'] - ema_values) / df['currentADR']
+
+    # Calculate DD (drawdown/wick size in price units)
+    # UP brick (close > open): wick extends below open -> DD = open - low
+    # DOWN brick (close < open): wick extends above open -> DD = high - open
+    df['DD'] = np.where(
+        df['close'] > df['open'],
+        df['open'] - df['low'],
+        df['high'] - df['open']
+    )
+
+    # Normalize DD by currentADR
+    df['DD_norm'] = df['DD'] / df['currentADR']
+
+    # Calculate State based on MA order
+    # Fast=ma1_period, Med=ma2_period, Slow=ma3_period
+    fast_ema = ema_columns[request.ma1_period]
+    med_ema = ema_columns[request.ma2_period]
+    slow_ema = ema_columns[request.ma3_period]
+
+    def get_state(fast, med, slow):
+        if fast > med > slow: return 3
+        if fast > slow > med: return 2
+        if med > fast > slow: return 1
+        if med > slow > fast: return -1
+        if slow > fast > med: return -2
+        if slow > med > fast: return -3
+        return 0  # Edge case: equal values
+
+    df['State'] = [get_state(f, m, s) for f, m, s in zip(fast_ema, med_ema, slow_ema)]
+
+    # Prior state (shifted by 1)
+    df['prState'] = df['State'].shift(1)
 
     # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
     required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
