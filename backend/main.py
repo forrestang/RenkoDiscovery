@@ -1185,6 +1185,72 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Prior state (shifted by 1)
     df['prState'] = df['State'].shift(1)
 
+    # Calculate Type1 and Type2 pullback counters
+    # These accumulate only in +3/-3 states, reset on state change
+    state_arr = df['State'].values
+    prstate_arr = df['prState'].values
+    is_up_arr_t = (df['close'] > df['open']).values
+    open_arr = df['open'].values
+    high_arr = df['high'].values
+    low_arr = df['low'].values
+    ma1_values = ema_columns[request.ma1_period]
+
+    n = len(df)
+    type1_count = np.zeros(n, dtype=int)
+    type2_count = np.zeros(n, dtype=int)
+
+    # Internal counters track cumulative count, display arrays show only when conditions met
+    internal_type1 = 0
+    internal_type2 = 0
+
+    for i in range(n):
+        state = state_arr[i]
+        prstate = prstate_arr[i] if i > 0 else np.nan
+        state_changed = (i == 0 or state != prstate)
+
+        # Reset internal counters on state change
+        if state_changed:
+            internal_type1 = 0
+            internal_type2 = 0
+
+        current_is_up = is_up_arr_t[i]
+        prior_is_up = is_up_arr_t[i - 1] if i > 0 else None
+
+        # Type1 logic (requires prior bar info, so skip i==0)
+        if i > 0 and state == 3:
+            # Check increment condition: UP bar following DOWN bar that touched MA1
+            if current_is_up and not prior_is_up and low_arr[i - 1] <= ma1_values[i - 1]:
+                internal_type1 += 1
+            # Display only on transition bar (UP following DOWN)
+            type1_count[i] = internal_type1 if (current_is_up and not prior_is_up) else 0
+        elif i > 0 and state == -3:
+            # Check increment condition: DOWN bar following UP bar that touched MA1
+            if not current_is_up and prior_is_up and high_arr[i - 1] >= ma1_values[i - 1]:
+                internal_type1 -= 1
+            # Display only on transition bar (DOWN following UP)
+            type1_count[i] = internal_type1 if (not current_is_up and prior_is_up) else 0
+        else:
+            type1_count[i] = 0
+
+        # Type2 logic
+        if state == 3:
+            # Check increment condition: UP bar with lower wick
+            if current_is_up and open_arr[i] > low_arr[i]:
+                internal_type2 += 1
+            # Display only if current bar is UP (flag behavior)
+            type2_count[i] = internal_type2 if current_is_up else 0
+        elif state == -3:
+            # Check increment condition: DOWN bar with upper wick
+            if not current_is_up and high_arr[i] > open_arr[i]:
+                internal_type2 -= 1
+            # Display only if current bar is DOWN (flag behavior)
+            type2_count[i] = internal_type2 if not current_is_up else 0
+        else:
+            type2_count[i] = 0
+
+    df['Type1'] = type1_count
+    df['Type2'] = type2_count
+
     # Calculate consecutive bar counters
     is_up = df['close'] > df['open']
 
