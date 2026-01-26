@@ -84,6 +84,7 @@ class StatsRequest(BaseModel):
     filename: str = "stats_output"
     working_dir: Optional[str] = None
     adr_period: int = 14
+    chop_period: int = 20
     brick_size: float = 0.0010
     reversal_size: float = 0.0020
     wick_mode: str = "all"
@@ -1115,6 +1116,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['ma1_period'] = request.ma1_period
     df['ma2_period'] = request.ma2_period
     df['ma3_period'] = request.ma3_period
+    df['chopPeriod'] = request.chop_period
 
     # Calculate currentADR (Average Daily Range) from RAW price data
     # Load raw OHLC data for accurate daily range calculation
@@ -1233,6 +1235,47 @@ async def generate_stats(instrument: str, request: StatsRequest):
 
     df['Con_UP_bars(state)'] = con_up_state
     df['Con_DN_bars(state)'] = con_dn_state
+
+    # Calculate bar duration (time between consecutive bars) in minutes
+    bar_duration_td = df['datetime'] - df['datetime'].shift(1)
+    df['barDuration'] = (bar_duration_td.dt.total_seconds() / 60).round(2)
+
+    # Calculate stateBarCount and stateDuration
+    state_values = df['State'].tolist()
+    bar_durations = df['barDuration'].tolist()
+    state_bar_count = []
+    state_duration = []
+    bar_count = 0
+    duration_sum = 0.0
+    prev_state_dur = None
+
+    for i, (state, bar_dur) in enumerate(zip(state_values, bar_durations)):
+        # Reset on state change
+        if prev_state_dur is not None and state != prev_state_dur:
+            bar_count = 0
+            duration_sum = 0.0
+
+        bar_count += 1
+        if pd.notna(bar_dur):
+            duration_sum += bar_dur
+
+        state_bar_count.append(bar_count)
+        state_duration.append(round(duration_sum, 2))
+        prev_state_dur = state
+
+    df['stateBarCount'] = state_bar_count
+    df['stateDuration'] = state_duration
+
+    # Calculate reversal bars and rolling chop index
+    # A reversal bar occurs when current direction differs from previous direction
+    # Direction: UP if close > open, DOWN if close < open
+    directions = (df['close'] > df['open']).astype(int)
+    reversals = (directions != directions.shift(1)).astype(int)
+    # First bar cannot be a reversal
+    reversals.iloc[0] = 0
+
+    # Rolling sum of reversals over chop_period, then divide by period
+    df['chop(rolling)'] = (reversals.rolling(window=request.chop_period, min_periods=request.chop_period).sum() / request.chop_period).round(2)
 
     # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
     required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]

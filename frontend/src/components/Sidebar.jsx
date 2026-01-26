@@ -42,6 +42,10 @@ function Sidebar({
     const saved = localStorage.getItem(`${STORAGE_PREFIX}adrPeriod`)
     return saved ? parseInt(saved) : 14
   })
+  const [chopPeriod, setChopPeriod] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}chopPeriod`)
+    return saved ? parseInt(saved) : 20
+  })
   const [statsFilename, setStatsFilename] = useState('')
   const [workingDirCollapsed, setWorkingDirCollapsed] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}workingDirCollapsed`)
@@ -543,6 +547,21 @@ function Sidebar({
                 max="100"
               />
             </div>
+            <div className="stats-input-group">
+              <label className="option-label">Chop Period</label>
+              <input
+                type="number"
+                className="stats-input mono"
+                value={chopPeriod}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 2
+                  setChopPeriod(value)
+                  localStorage.setItem(`${STORAGE_PREFIX}chopPeriod`, value.toString())
+                }}
+                min="2"
+                max="200"
+              />
+            </div>
           </div>
 
           <div className="stats-spacer" />
@@ -564,6 +583,7 @@ function Sidebar({
               onClick={() => onRunStats?.({
                 filename: statsFilename || 'stats_output',
                 adrPeriod,
+                chopPeriod,
                 brickSize: renkoSettings?.brickSize,
                 reversalSize: renkoSettings?.reversalSize,
                 wickMode: renkoSettings?.wickMode,

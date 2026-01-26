@@ -252,6 +252,7 @@ function App() {
           filename: statsConfig.filename,
           working_dir: workingDir,
           adr_period: statsConfig.adrPeriod,
+          chop_period: statsConfig.chopPeriod,
           brick_size: statsConfig.brickSize,
           reversal_size: statsConfig.reversalSize,
           wick_mode: statsConfig.wickMode,
