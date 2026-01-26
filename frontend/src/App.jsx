@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar'
 import ChartArea from './components/ChartArea'
 import RenkoControls from './components/RenkoControls'
 import MAControls from './components/MAControls'
+import StatsPage from './components/StatsPage'
 import './styles/App.css'
 
 const API_BASE = 'http://localhost:8000'
@@ -52,6 +53,11 @@ function App() {
   const [processingResults, setProcessingResults] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isRunningStats, setIsRunningStats] = useState(false)
+  const [statsFiles, setStatsFiles] = useState([])
+  const [selectedStatsFile, setSelectedStatsFile] = useState(null)
+  const [statsData, setStatsData] = useState(null)
+  const [isLoadingStats, setIsLoadingStats] = useState(false)
+  const [statsFilename, setStatsFilename] = useState('')
   // Data import settings
   const [dataFormat, setDataFormat] = useState('MT4')  // 'MT4' or 'J4X'
   const [intervalType, setIntervalType] = useState('M')  // 'M' for minute, 'T' for tick
@@ -145,6 +151,7 @@ function App() {
   useEffect(() => {
     fetchFiles()
     fetchCache()
+    fetchStatsFiles()
     // Clear current data when directory changes
     setActiveInstrument(null)
     setChartData(null)
@@ -175,6 +182,18 @@ function App() {
     }
   }
 
+  const fetchStatsFiles = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/stats-files?working_dir=${encodeURIComponent(workingDir)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setStatsFiles(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch stats files:', err)
+    }
+  }
+
   const handleFileSelect = useCallback((filepath) => {
     setSelectedFiles(prev => {
       if (prev.includes(filepath)) {
@@ -183,6 +202,35 @@ function App() {
       return [...prev, filepath]
     })
   }, [])
+
+  const handleStatsFileSelect = useCallback((filepath) => {
+    setSelectedStatsFile(prev => prev === filepath ? null : filepath)
+  }, [])
+
+  const handleShowStats = async (filepath) => {
+    setIsLoadingStats(true)
+
+    // Extract filename from filepath
+    const filename = filepath.split(/[/\\]/).pop()
+    setStatsFilename(filename)
+
+    try {
+      const res = await fetch(`${API_BASE}/parquet-stats?filepath=${encodeURIComponent(filepath)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setStatsData(data)
+      } else {
+        const error = await res.json()
+        console.error('Failed to load stats:', error.detail)
+        setStatsData(null)
+      }
+    } catch (err) {
+      console.error('Failed to load stats:', err)
+      setStatsData(null)
+    } finally {
+      setIsLoadingStats(false)
+    }
+  }
 
   const handleSelectAll = useCallback((instrument) => {
     const instrumentFiles = files.filter(f => f.instrument === instrument)
@@ -266,6 +314,7 @@ function App() {
       if (res.ok) {
         const data = await res.json()
         console.log('Stats generated:', data.filepath)
+        fetchStatsFiles()  // Refresh the stats files list
       } else {
         const error = await res.json()
         console.error('Stats generation failed:', error.detail)
@@ -544,6 +593,12 @@ function App() {
             isRunningStats={isRunningStats}
             renkoSettings={renkoSettings}
             maSettings={maSettings}
+            // Stats files
+            statsFiles={statsFiles}
+            selectedStatsFile={selectedStatsFile}
+            onStatsFileSelect={handleStatsFileSelect}
+            onShowStats={handleShowStats}
+            isLoadingStats={isLoadingStats}
           />
 
           {!sidebarCollapsed && (
@@ -552,16 +607,24 @@ function App() {
         </aside>
 
         <main className="main-content">
-          <ChartArea
-            chartData={chartType === 'renko' ? renkoData : chartData}
-            renkoData={chartType === 'overlay' ? renkoData : null}
-            chartType={chartType}
-            isLoading={isLoading}
-            activeInstrument={activeInstrument}
-            pricePrecision={pricePrecision}
-            maSettings={maSettings}
-            compressionFactor={compressionFactor}
-          />
+          {activeTab === 'stats' ? (
+            <StatsPage
+              stats={statsData}
+              filename={statsFilename}
+              isLoading={isLoadingStats}
+            />
+          ) : (
+            <ChartArea
+              chartData={chartType === 'renko' ? renkoData : chartData}
+              renkoData={chartType === 'overlay' ? renkoData : null}
+              chartType={chartType}
+              isLoading={isLoading}
+              activeInstrument={activeInstrument}
+              pricePrecision={pricePrecision}
+              maSettings={maSettings}
+              compressionFactor={compressionFactor}
+            />
+          )}
         </main>
       </div>
     </div>

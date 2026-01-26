@@ -34,7 +34,13 @@ function Sidebar({
   onRunStats,
   isRunningStats,
   renkoSettings,
-  maSettings
+  maSettings,
+  // Stats files
+  statsFiles,
+  selectedStatsFile,
+  onStatsFileSelect,
+  onShowStats,
+  isLoadingStats
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -603,12 +609,72 @@ function Sidebar({
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polygon points="5 3 19 12 5 21 5 3" />
                   </svg>
-                  Run Stats
+                  Generate Parquet
                 </>
               )}
             </button>
           </div>
+
+        {/* Stats Files Section */}
+        <div className="section stats-files-section">
+          <div className="section-header">
+            <span className="section-title">Parquet Files</span>
+            <span className="file-count">{statsFiles?.length || 0} files</span>
+          </div>
+          <div className="scrollable-content">
+            <div className="file-list">
+              {statsFiles?.length > 0 ? (
+                statsFiles.map(file => (
+                  <div
+                    key={file.filepath}
+                    className={`file-item ${selectedStatsFile === file.filepath ? 'selected' : ''}`}
+                    onClick={() => onStatsFileSelect(file.filepath)}
+                  >
+                    <span className={`radio ${selectedStatsFile === file.filepath ? 'checked' : ''}`}>
+                      {selectedStatsFile === file.filepath && (
+                        <span className="radio-dot" />
+                      )}
+                    </span>
+                    <span className="file-name mono truncate" title={file.filename}>
+                      {file.filename}
+                    </span>
+                    <span className="file-size mono">
+                      {(file.size_bytes / 1024 / 1024).toFixed(1)}MB
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state">
+                  <span className="empty-text">No parquet files in Stats folder</span>
+                </div>
+              )}
+            </div>
+          </div>
+          {selectedStatsFile && (
+            <button
+              className="show-stats-btn"
+              onClick={() => onShowStats?.(selectedStatsFile)}
+              disabled={isLoadingStats}
+            >
+              {isLoadingStats ? (
+                <>
+                  <span className="spinner" />
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 20V10" />
+                    <path d="M12 20V4" />
+                    <path d="M6 20v-6" />
+                  </svg>
+                  Show Stats
+                </>
+              )}
+            </button>
+          )}
         </div>
+      </div>
       )}
 
       {activeTab === 'ml' && (

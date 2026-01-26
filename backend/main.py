@@ -241,6 +241,31 @@ def list_cache(working_dir: Optional[str] = None):
     return feathers
 
 
+@app.get("/stats-files")
+def list_stats_files(working_dir: Optional[str] = None):
+    """List all parquet files in the Stats folder."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    stats_dir = base_dir / "Stats"
+
+    if not stats_dir.exists():
+        return []
+
+    parquets = []
+    for filepath in stats_dir.iterdir():
+        if filepath.is_file() and filepath.suffix.lower() == '.parquet':
+            stat = filepath.stat()
+            parquets.append({
+                "filename": filepath.name,
+                "filepath": str(filepath),
+                "size_bytes": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
+            })
+
+    # Sort by modified date, newest first
+    parquets.sort(key=lambda f: f["modified"], reverse=True)
+    return parquets
+
+
 @app.delete("/cache/{instrument}")
 def delete_cache_instrument(instrument: str, working_dir: Optional[str] = None):
     """Delete a specific cached feather file and its metadata."""
@@ -1108,6 +1133,10 @@ async def generate_stats(instrument: str, request: StatsRequest):
         'close': renko_data.get('close', []),
     })
 
+    # Round OHLC columns to 5 decimal places
+    for col in ['open', 'high', 'low', 'close']:
+        df[col] = df[col].round(5)
+
     # Add settings columns
     df['adr_period'] = request.adr_period
     df['brick_size'] = request.brick_size
@@ -1141,7 +1170,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Map currentADR back to renko bars based on their UTC date
     df['datetime'] = pd.to_datetime(df['datetime'])
     df['utc_date'] = df['datetime'].dt.date
-    df['currentADR'] = df['utc_date'].map(daily_stats['current_adr'])
+    df['currentADR'] = df['utc_date'].map(daily_stats['current_adr']).round(5)
 
     # Calculate EMA values and distances for each MA period
     ma_periods = [request.ma1_period, request.ma2_period, request.ma3_period]
@@ -1150,8 +1179,8 @@ async def generate_stats(instrument: str, request: StatsRequest):
     for period in ma_periods:
         ema_values = calculate_ema(df['close'], period)
         ema_columns[period] = ema_values  # Store for State calculation
-        df[f'EMA_rawDistance({period})'] = df['close'] - ema_values
-        df[f'EMA_normDistance({period})'] = (df['close'] - ema_values) / df['currentADR']
+        df[f'EMA_rawDistance({period})'] = (df['close'] - ema_values).round(5)
+        df[f'EMA_normDistance({period})'] = ((df['close'] - ema_values) / df['currentADR']).round(5)
 
     # Calculate DD (drawdown/wick size in price units)
     # UP brick (close > open): wick extends below open -> DD = open - low
@@ -1161,9 +1190,10 @@ async def generate_stats(instrument: str, request: StatsRequest):
         df['open'] - df['low'],
         df['high'] - df['open']
     )
+    df['DD'] = df['DD'].round(5)
 
     # Normalize DD by currentADR
-    df['DD_norm'] = df['DD'] / df['currentADR']
+    df['DD_norm'] = (df['DD'] / df['currentADR']).round(5)
 
     # Calculate State based on MA order
     # Fast=ma1_period, Med=ma2_period, Slow=ma3_period
@@ -1372,7 +1402,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
             mfe_clr_price[i] = close_arr[last_match_idx] - close_arr[i]
         # else: remains 0
 
-    df['MFE_clr_price'] = mfe_clr_price
+    df['MFE_clr_price'] = pd.Series(mfe_clr_price).round(5).values
 
     # Calculate MFE_clr_norm (ADR-normalized version)
     df['MFE_clr_norm'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
@@ -1403,7 +1433,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
                             break
             # If no qualifying bar found, remains NaN
 
-        df[f'MFE_MA{idx}_Price'] = mfe_ma_price
+        df[f'MFE_MA{idx}_Price'] = pd.Series(mfe_ma_price).round(5).values
         df[f'MFE_MA{idx}_norm'] = (mfe_ma_price / df['currentADR']).round(2)
 
     # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
@@ -1421,6 +1451,75 @@ async def generate_stats(instrument: str, request: StatsRequest):
         "filepath": str(output_path),
         "rows": len(df),
         "instrument": instrument
+    }
+
+
+@app.get("/parquet-stats")
+def get_parquet_stats(filepath: str):
+    """
+    Calculate MA statistics from a parquet file.
+
+    Returns counts and percentages of bars above/below each MA,
+    and bars above/below ALL MAs.
+    """
+    parquet_path = Path(filepath)
+
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"Parquet file not found: {filepath}")
+
+    try:
+        df = pd.read_parquet(parquet_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read parquet: {str(e)}")
+
+    total_bars = len(df)
+    if total_bars == 0:
+        raise HTTPException(status_code=400, detail="Parquet file contains no data")
+
+    # Get MA periods from the dataframe
+    ma1_period = int(df['ma1_period'].iloc[0]) if 'ma1_period' in df.columns else 20
+    ma2_period = int(df['ma2_period'].iloc[0]) if 'ma2_period' in df.columns else 50
+    ma3_period = int(df['ma3_period'].iloc[0]) if 'ma3_period' in df.columns else 200
+
+    ma_periods = [ma1_period, ma2_period, ma3_period]
+
+    # Calculate stats for each MA using EMA_rawDistance columns
+    # Positive distance = above MA, Negative distance = below MA
+    ma_stats = []
+    above_all_mask = pd.Series([True] * total_bars, index=df.index)
+    below_all_mask = pd.Series([True] * total_bars, index=df.index)
+
+    for period in ma_periods:
+        col_name = f'EMA_rawDistance({period})'
+        if col_name in df.columns:
+            above_count = int((df[col_name] > 0).sum())
+            below_count = int((df[col_name] < 0).sum())
+
+            # Update masks for "all MAs" calculation
+            above_all_mask &= (df[col_name] > 0)
+            below_all_mask &= (df[col_name] < 0)
+        else:
+            # Column not found, default to 0
+            above_count = 0
+            below_count = 0
+
+        ma_stats.append({
+            "period": period,
+            "above": above_count,
+            "below": below_count
+        })
+
+    # Calculate bars above/below ALL MAs
+    above_all = int(above_all_mask.sum())
+    below_all = int(below_all_mask.sum())
+
+    return {
+        "totalBars": total_bars,
+        "maStats": ma_stats,
+        "allMaStats": {
+            "aboveAll": above_all,
+            "belowAll": below_all
+        }
     }
 
 
