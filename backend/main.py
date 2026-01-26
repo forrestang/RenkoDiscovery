@@ -1277,6 +1277,69 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Rolling sum of reversals over chop_period, then divide by period
     df['chop(rolling)'] = (reversals.rolling(window=request.chop_period, min_periods=request.chop_period).sum() / request.chop_period).round(2)
 
+    # Calculate MFE_clr_Bars (forward-looking consecutive same-color bars)
+    # For each bar, count how many subsequent bars match its color
+    is_up_arr = is_up.values
+    n = len(is_up_arr)
+    mfe_clr_bars = np.zeros(n, dtype=int)
+
+    for i in range(n):
+        count = 0
+        current_color = is_up_arr[i]
+        for j in range(i + 1, n):
+            if is_up_arr[j] == current_color:
+                count += 1
+            else:
+                break
+        mfe_clr_bars[i] = count
+
+    df['MFE_clr_Bars'] = mfe_clr_bars
+
+    # Calculate MFE_clr_price (price move during consecutive same-color run)
+    # For each bar, find price difference to the last consecutive same-color bar
+    close_arr = df['close'].values
+    mfe_clr_price = np.zeros(n, dtype=float)
+
+    for i in range(n):
+        if mfe_clr_bars[i] > 0:
+            last_match_idx = i + mfe_clr_bars[i]
+            mfe_clr_price[i] = close_arr[last_match_idx] - close_arr[i]
+        # else: remains 0
+
+    df['MFE_clr_price'] = mfe_clr_price
+
+    # Calculate MFE_clr_norm (ADR-normalized version)
+    df['MFE_clr_norm'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
+
+    # Calculate MFE_MA columns (price move until first opposite-color bar closes beyond MA)
+    for idx, period in enumerate(ma_periods, start=1):
+        # Get EMA values for this period
+        ema_values = calculate_ema(df['close'], period)
+
+        mfe_ma_price = np.full(n, np.nan, dtype=float)
+
+        for i in range(n):
+            current_is_up = is_up_arr[i]
+            current_close = close_arr[i]
+
+            # Look forward for first opposite-color bar closing beyond MA
+            for j in range(i + 1, n):
+                if is_up_arr[j] != current_is_up:  # Opposite color
+                    if current_is_up:
+                        # Current is UP, looking for DOWN bar closing below MA
+                        if close_arr[j] < ema_values[j]:
+                            mfe_ma_price[i] = close_arr[j] - current_close
+                            break
+                    else:
+                        # Current is DOWN, looking for UP bar closing above MA
+                        if close_arr[j] > ema_values[j]:
+                            mfe_ma_price[i] = close_arr[j] - current_close
+                            break
+            # If no qualifying bar found, remains NaN
+
+        df[f'MFE_MA{idx}_Price'] = mfe_ma_price
+        df[f'MFE_MA{idx}_norm'] = (mfe_ma_price / df['currentADR']).round(2)
+
     # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
     required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
     df = df.dropna(subset=required_columns)
