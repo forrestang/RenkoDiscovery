@@ -1489,38 +1489,93 @@ def get_parquet_stats(filepath: str):
     above_all_mask = pd.Series([True] * total_bars, index=df.index)
     below_all_mask = pd.Series([True] * total_bars, index=df.index)
 
+    # Determine bar direction: UP (close > open), DOWN (close < open)
+    is_up_bar = df['close'] > df['open']
+    is_down_bar = df['close'] < df['open']
+
     for period in ma_periods:
         col_name = f'EMA_rawDistance({period})'
         if col_name in df.columns:
-            above_count = int((df[col_name] > 0).sum())
-            below_count = int((df[col_name] < 0).sum())
+            above_mask = df[col_name] > 0
+            below_mask = df[col_name] < 0
+
+            above_count = int(above_mask.sum())
+            below_count = int(below_mask.sum())
+
+            # UP/DOWN breakdown for bars above MA
+            above_up = int((above_mask & is_up_bar).sum())
+            above_down = int((above_mask & is_down_bar).sum())
+
+            # UP/DOWN breakdown for bars below MA
+            below_up = int((below_mask & is_up_bar).sum())
+            below_down = int((below_mask & is_down_bar).sum())
 
             # Update masks for "all MAs" calculation
-            above_all_mask &= (df[col_name] > 0)
-            below_all_mask &= (df[col_name] < 0)
+            above_all_mask &= above_mask
+            below_all_mask &= below_mask
         else:
             # Column not found, default to 0
             above_count = 0
             below_count = 0
+            above_up = 0
+            above_down = 0
+            below_up = 0
+            below_down = 0
 
         ma_stats.append({
             "period": period,
             "above": above_count,
-            "below": below_count
+            "below": below_count,
+            "aboveUp": above_up,
+            "aboveDown": above_down,
+            "belowUp": below_up,
+            "belowDown": below_down
         })
 
     # Calculate bars above/below ALL MAs
     above_all = int(above_all_mask.sum())
     below_all = int(below_all_mask.sum())
 
+    # UP/DOWN breakdown for bars above/below ALL MAs
+    above_all_up = int((above_all_mask & is_up_bar).sum())
+    above_all_down = int((above_all_mask & is_down_bar).sum())
+    below_all_up = int((below_all_mask & is_up_bar).sum())
+    below_all_down = int((below_all_mask & is_down_bar).sum())
+
     return {
         "totalBars": total_bars,
         "maStats": ma_stats,
         "allMaStats": {
             "aboveAll": above_all,
-            "belowAll": below_all
+            "belowAll": below_all,
+            "aboveAllUp": above_all_up,
+            "aboveAllDown": above_all_down,
+            "belowAllUp": below_all_up,
+            "belowAllDown": below_all_down
         }
     }
+
+
+@app.delete("/stats-file")
+def delete_stats_file(filepath: str):
+    """Delete a parquet stats file."""
+    parquet_path = Path(filepath)
+
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filepath}")
+
+    # Security check: only allow deleting .parquet files from Stats directories
+    if not parquet_path.suffix == '.parquet':
+        raise HTTPException(status_code=400, detail="Only parquet files can be deleted")
+
+    if 'Stats' not in parquet_path.parts:
+        raise HTTPException(status_code=400, detail="Can only delete files from Stats directories")
+
+    try:
+        parquet_path.unlink()
+        return {"message": f"Deleted {parquet_path.name}", "filepath": filepath}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
 
 if __name__ == "__main__":

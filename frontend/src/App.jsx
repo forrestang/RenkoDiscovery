@@ -58,6 +58,7 @@ function App() {
   const [statsData, setStatsData] = useState(null)
   const [isLoadingStats, setIsLoadingStats] = useState(false)
   const [statsFilename, setStatsFilename] = useState('')
+  const [statsFilepath, setStatsFilepath] = useState('')
   // Data import settings
   const [dataFormat, setDataFormat] = useState('MT4')  // 'MT4' or 'J4X'
   const [intervalType, setIntervalType] = useState('M')  // 'M' for minute, 'T' for tick
@@ -209,6 +210,7 @@ function App() {
 
   const handleShowStats = async (filepath) => {
     setIsLoadingStats(true)
+    setStatsFilepath(filepath)
 
     // Extract filename from filepath
     const filename = filepath.split(/[/\\]/).pop()
@@ -229,6 +231,30 @@ function App() {
       setStatsData(null)
     } finally {
       setIsLoadingStats(false)
+    }
+  }
+
+  const handleDeleteStatsFile = async (filepath) => {
+    try {
+      const res = await fetch(`${API_BASE}/stats-file?filepath=${encodeURIComponent(filepath)}`, {
+        method: 'DELETE'
+      })
+      if (res.ok) {
+        // Clear current stats if we deleted the displayed file
+        if (statsFilepath === filepath) {
+          setStatsData(null)
+          setStatsFilename('')
+          setStatsFilepath('')
+          setSelectedStatsFile(null)
+        }
+        // Refresh the stats files list
+        fetchStatsFiles()
+      } else {
+        const error = await res.json()
+        console.error('Failed to delete stats file:', error.detail)
+      }
+    } catch (err) {
+      console.error('Failed to delete stats file:', err)
     }
   }
 
@@ -599,6 +625,7 @@ function App() {
             onStatsFileSelect={handleStatsFileSelect}
             onShowStats={handleShowStats}
             isLoadingStats={isLoadingStats}
+            onDeleteStatsFile={handleDeleteStatsFile}
           />
 
           {!sidebarCollapsed && (
@@ -611,7 +638,9 @@ function App() {
             <StatsPage
               stats={statsData}
               filename={statsFilename}
+              filepath={statsFilepath}
               isLoading={isLoadingStats}
+              onDelete={handleDeleteStatsFile}
             />
           ) : (
             <ChartArea

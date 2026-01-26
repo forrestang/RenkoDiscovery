@@ -40,7 +40,8 @@ function Sidebar({
   selectedStatsFile,
   onStatsFileSelect,
   onShowStats,
-  isLoadingStats
+  isLoadingStats,
+  onDeleteStatsFile
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -627,20 +628,38 @@ function Sidebar({
                 statsFiles.map(file => (
                   <div
                     key={file.filepath}
-                    className={`file-item ${selectedStatsFile === file.filepath ? 'selected' : ''}`}
-                    onClick={() => onStatsFileSelect(file.filepath)}
+                    className={`file-item stats-file-item ${selectedStatsFile === file.filepath ? 'selected' : ''}`}
                   >
-                    <span className={`radio ${selectedStatsFile === file.filepath ? 'checked' : ''}`}>
-                      {selectedStatsFile === file.filepath && (
-                        <span className="radio-dot" />
-                      )}
-                    </span>
-                    <span className="file-name mono truncate" title={file.filename}>
-                      {file.filename}
-                    </span>
-                    <span className="file-size mono">
-                      {(file.size_bytes / 1024 / 1024).toFixed(1)}MB
-                    </span>
+                    <div
+                      className="stats-file-main"
+                      onClick={() => onStatsFileSelect(file.filepath)}
+                    >
+                      <span className={`radio ${selectedStatsFile === file.filepath ? 'checked' : ''}`}>
+                        {selectedStatsFile === file.filepath && (
+                          <span className="radio-dot" />
+                        )}
+                      </span>
+                      <span className="file-name mono truncate" title={file.filename}>
+                        {file.filename}
+                      </span>
+                      <span className="file-size mono">
+                        {(file.size_bytes / 1024 / 1024).toFixed(1)}MB
+                      </span>
+                    </div>
+                    <button
+                      className="stats-file-delete-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (window.confirm(`Delete ${file.filename}?`)) {
+                          onDeleteStatsFile?.(file.filepath)
+                        }
+                      }}
+                      title={`Delete ${file.filename}`}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 6L6 18M6 6l12 12" />
+                      </svg>
+                    </button>
                   </div>
                 ))
               ) : (

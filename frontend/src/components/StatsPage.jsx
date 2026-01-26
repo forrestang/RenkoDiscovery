@@ -1,12 +1,12 @@
 import './StatsPage.css'
 
-function StatsPage({ stats, filename, isLoading }) {
+function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   if (isLoading) {
     return (
       <div className="stats-page">
         <div className="stats-loading">
           <div className="stats-loading-spinner" />
-          <span>Loading statistics...</span>
+          <span>Loading...</span>
         </div>
       </div>
     )
@@ -16,11 +16,8 @@ function StatsPage({ stats, filename, isLoading }) {
     return (
       <div className="stats-page">
         <div className="stats-empty">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M3 3v18h18" />
-            <path d="M7 16l4-8 4 4 6-8" />
-          </svg>
-          <span>Select a parquet file and click "Show Stats" to view statistics</span>
+          <span className="stats-empty-icon">[···]</span>
+          <span>Select a parquet file to view statistics</span>
         </div>
       </div>
     )
@@ -28,138 +25,92 @@ function StatsPage({ stats, filename, isLoading }) {
 
   const { totalBars, maStats, allMaStats } = stats
 
-  const formatPercent = (count, total) => {
-    const pct = ((count / total) * 100).toFixed(1)
-    return `${pct}%`
+  const pct = (count, total) => ((count / total) * 100).toFixed(1)
+  const fmt = (n) => (n ?? 0).toLocaleString()
+
+  const handleDelete = async () => {
+    if (!filepath) return
+    if (!window.confirm(`Delete ${filename}?`)) return
+    onDelete?.(filepath)
   }
 
-  const formatCount = (count) => {
-    return count.toLocaleString()
-  }
+  const mixedCount = totalBars - allMaStats.aboveAll - allMaStats.belowAll
 
   return (
     <div className="stats-page">
-      <div className="stats-header">
-        <div className="stats-title-group">
-          <h1 className="stats-title">MA Statistics</h1>
-          <span className="stats-filename mono">{filename}</span>
+      {/* File Header */}
+      <div className="stats-file-header">
+        <div className="stats-file-info">
+          <span className="stats-filename">{filename}</span>
+          <span className="stats-total">{fmt(totalBars)} bars</span>
         </div>
-        <div className="stats-total">
-          <span className="stats-total-label">Total Bars</span>
-          <span className="stats-total-value mono">{formatCount(totalBars)}</span>
-        </div>
+        <button className="stats-delete-btn" onClick={handleDelete} title="Delete file">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" />
+          </svg>
+          <span>Delete</span>
+        </button>
       </div>
 
-      <div className="stats-grid">
-        {/* Individual MA Stats */}
-        {maStats.map((ma, index) => (
-          <div key={ma.period} className="stats-card ma-card">
-            <div className="stats-card-header">
-              <span className={`ma-indicator ma-${index + 1}`}>MA{index + 1}</span>
-              <span className="ma-period mono">{ma.period} Period</span>
-            </div>
-
-            <div className="stats-card-body">
-              <div className="stat-row above">
-                <div className="stat-label">
-                  <span className="stat-icon bullish">▲</span>
-                  <span>Above MA</span>
-                </div>
-                <div className="stat-values">
-                  <span className="stat-count mono">{formatCount(ma.above)}</span>
-                  <span className="stat-percent mono bullish">{formatPercent(ma.above, totalBars)}</span>
-                </div>
-                <div className="stat-bar-container">
-                  <div
-                    className="stat-bar bullish"
-                    style={{ width: `${(ma.above / totalBars) * 100}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="stat-row below">
-                <div className="stat-label">
-                  <span className="stat-icon bearish">▼</span>
-                  <span>Below MA</span>
-                </div>
-                <div className="stat-values">
-                  <span className="stat-count mono">{formatCount(ma.below)}</span>
-                  <span className="stat-percent mono bearish">{formatPercent(ma.below, totalBars)}</span>
-                </div>
-                <div className="stat-bar-container">
-                  <div
-                    className="stat-bar bearish"
-                    style={{ width: `${(ma.below / totalBars) * 100}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-card-footer">
-              <div className="bias-indicator">
-                <span className="bias-label">Bias</span>
-                <span className={`bias-value ${ma.above > ma.below ? 'bullish' : 'bearish'}`}>
-                  {ma.above > ma.below ? 'Bullish' : 'Bearish'}
-                  <span className="bias-delta mono">
-                    ({ma.above > ma.below ? '+' : ''}{formatPercent(ma.above - ma.below, totalBars)})
-                  </span>
-                </span>
-              </div>
-            </div>
-          </div>
-        ))}
-
-        {/* All MAs Combined Stats */}
-        <div className="stats-card all-ma-card">
-          <div className="stats-card-header">
-            <span className="ma-indicator all-ma">ALL MAs</span>
-            <span className="ma-period mono">Combined Analysis</span>
-          </div>
-
-          <div className="stats-card-body all-ma-body">
-            <div className="all-ma-stat above-all">
-              <div className="all-ma-visual">
-                <div className="all-ma-circle bullish">
-                  <span className="all-ma-percent mono">{formatPercent(allMaStats.aboveAll, totalBars)}</span>
-                </div>
-                <div className="all-ma-pulse bullish" />
-              </div>
-              <div className="all-ma-info">
-                <span className="all-ma-label">Above ALL MAs</span>
-                <span className="all-ma-count mono">{formatCount(allMaStats.aboveAll)} bars</span>
-              </div>
-            </div>
-
-            <div className="all-ma-divider">
-              <div className="divider-line" />
-              <span className="divider-text">vs</span>
-              <div className="divider-line" />
-            </div>
-
-            <div className="all-ma-stat below-all">
-              <div className="all-ma-visual">
-                <div className="all-ma-circle bearish">
-                  <span className="all-ma-percent mono">{formatPercent(allMaStats.belowAll, totalBars)}</span>
-                </div>
-                <div className="all-ma-pulse bearish" />
-              </div>
-              <div className="all-ma-info">
-                <span className="all-ma-label">Below ALL MAs</span>
-                <span className="all-ma-count mono">{formatCount(allMaStats.belowAll)} bars</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="stats-card-footer all-ma-footer">
-            <div className="convergence-stat">
-              <span className="convergence-label">Mixed (Between MAs)</span>
-              <span className="convergence-value mono">
-                {formatCount(totalBars - allMaStats.aboveAll - allMaStats.belowAll)} bars
-                <span className="convergence-percent">
-                  ({formatPercent(totalBars - allMaStats.aboveAll - allMaStats.belowAll, totalBars)})
-                </span>
+      {/* Individual MA Sections */}
+      {maStats.map((ma, idx) => (
+        <div key={ma.period} className="stats-section">
+          <div className={`stats-section-header ma-header-${idx + 1}`}>MA({ma.period})</div>
+          <div className="stats-rows">
+            <div className="stats-row">
+              <span className="stats-label label-above">Above</span>
+              <span className="stats-count">
+                {fmt(ma.above)} <span className="stats-pct">({pct(ma.above, totalBars)}%)</span>
+              </span>
+              <span className="stats-breakdown">
+                <span className="stats-up">UP {fmt(ma.aboveUp ?? 0)}</span>
+                <span className="stats-dn">DN {fmt(ma.aboveDown ?? 0)}</span>
               </span>
             </div>
+            <div className="stats-row">
+              <span className="stats-label label-below">Below</span>
+              <span className="stats-count">
+                {fmt(ma.below)} <span className="stats-pct">({pct(ma.below, totalBars)}%)</span>
+              </span>
+              <span className="stats-breakdown">
+                <span className="stats-up">UP {fmt(ma.belowUp ?? 0)}</span>
+                <span className="stats-dn">DN {fmt(ma.belowDown ?? 0)}</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* ALL MAs Section */}
+      <div className="stats-section stats-section-all">
+        <div className="stats-section-header ma-header-all">ALL MAs</div>
+        <div className="stats-rows">
+          <div className="stats-row">
+            <span className="stats-label label-above">Above All</span>
+            <span className="stats-count">
+              {fmt(allMaStats.aboveAll)} <span className="stats-pct">({pct(allMaStats.aboveAll, totalBars)}%)</span>
+            </span>
+            <span className="stats-breakdown">
+              <span className="stats-up">UP {fmt(allMaStats.aboveAllUp ?? 0)}</span>
+              <span className="stats-dn">DN {fmt(allMaStats.aboveAllDown ?? 0)}</span>
+            </span>
+          </div>
+          <div className="stats-row">
+            <span className="stats-label label-below">Below All</span>
+            <span className="stats-count">
+              {fmt(allMaStats.belowAll)} <span className="stats-pct">({pct(allMaStats.belowAll, totalBars)}%)</span>
+            </span>
+            <span className="stats-breakdown">
+              <span className="stats-up">UP {fmt(allMaStats.belowAllUp ?? 0)}</span>
+              <span className="stats-dn">DN {fmt(allMaStats.belowAllDown ?? 0)}</span>
+            </span>
+          </div>
+          <div className="stats-row">
+            <span className="stats-label label-mixed">Mixed</span>
+            <span className="stats-count">
+              {fmt(mixedCount)} <span className="stats-pct">({pct(mixedCount, totalBars)}%)</span>
+            </span>
+            <span className="stats-mixed-note">between MAs</span>
           </div>
         </div>
       </div>

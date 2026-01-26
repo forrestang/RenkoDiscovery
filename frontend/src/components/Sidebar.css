@@ -1243,3 +1243,62 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* Stats File Item with Delete Button */
+.stats-file-item {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  background: rgba(39, 39, 42, 0.5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+  overflow: hidden;
+}
+
+.stats-file-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+}
+
+.stats-file-item.selected {
+  background: var(--accent-subtle);
+  border-color: var(--accent-primary);
+}
+
+.stats-file-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.stats-file-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 100%;
+  min-height: 32px;
+  padding: var(--space-2);
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.stats-file-delete-btn:hover {
+  background: var(--bearish-bg);
+  color: var(--bearish);
+}
+
+.stats-file-delete-btn svg {
+  width: 14px;
+  height: 14px;
+}
