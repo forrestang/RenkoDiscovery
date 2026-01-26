@@ -1404,8 +1404,11 @@ async def generate_stats(instrument: str, request: StatsRequest):
 
     df['MFE_clr_price'] = pd.Series(mfe_clr_price).round(5).values
 
-    # Calculate MFE_clr_norm (ADR-normalized version)
-    df['MFE_clr_norm'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
+    # Calculate MFE_clr_ADR (ADR-normalized version)
+    df['MFE_clr_ADR'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
+
+    # Calculate MFE_clr_RR (Reversal-normalized version)
+    df['MFE_clr_RR'] = (df['MFE_clr_price'] / df['reversal_size']).round(2)
 
     # Calculate MFE_MA columns (price move until first opposite-color bar closes beyond MA)
     for idx, period in enumerate(ma_periods, start=1):
@@ -1434,7 +1437,8 @@ async def generate_stats(instrument: str, request: StatsRequest):
             # If no qualifying bar found, remains NaN
 
         df[f'MFE_MA{idx}_Price'] = pd.Series(mfe_ma_price).round(5).values
-        df[f'MFE_MA{idx}_norm'] = (mfe_ma_price / df['currentADR']).round(2)
+        df[f'MFE_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
+        df[f'MFE_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
 
     # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
     required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
