@@ -1183,6 +1183,57 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Prior state (shifted by 1)
     df['prState'] = df['State'].shift(1)
 
+    # Calculate consecutive bar counters
+    is_up = df['close'] > df['open']
+
+    # Con_UP_bars and Con_DN_bars - reset on direction change only
+    con_up = []
+    con_dn = []
+    up_count = 0
+    dn_count = 0
+
+    for up in is_up:
+        if up:
+            up_count += 1
+            dn_count = 0
+        else:
+            dn_count += 1
+            up_count = 0
+        con_up.append(up_count)
+        con_dn.append(dn_count)
+
+    df['Con_UP_bars'] = con_up
+    df['Con_DN_bars'] = con_dn
+
+    # Con_UP_bars(state) and Con_DN_bars(state) - reset on state change OR direction change
+    state_values = df['State'].tolist()
+    con_up_state = []
+    con_dn_state = []
+    up_count_state = 0
+    dn_count_state = 0
+    prev_state = None
+
+    for i, (up, state) in enumerate(zip(is_up, state_values)):
+        # Reset on state change
+        if prev_state is not None and state != prev_state:
+            up_count_state = 0
+            dn_count_state = 0
+
+        # Then apply direction logic
+        if up:
+            up_count_state += 1
+            dn_count_state = 0
+        else:
+            dn_count_state += 1
+            up_count_state = 0
+
+        con_up_state.append(up_count_state)
+        con_dn_state.append(dn_count_state)
+        prev_state = state
+
+    df['Con_UP_bars(state)'] = con_up_state
+    df['Con_DN_bars(state)'] = con_dn_state
+
     # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
     required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
     df = df.dropna(subset=required_columns)
