@@ -258,6 +258,28 @@ function App() {
     }
   }
 
+  const handleDeleteAllStatsFiles = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/stats-files?working_dir=${encodeURIComponent(workingDir)}`, {
+        method: 'DELETE'
+      })
+      if (res.ok) {
+        // Clear current stats display
+        setStatsData(null)
+        setStatsFilename('')
+        setStatsFilepath('')
+        setSelectedStatsFile(null)
+        // Refresh the stats files list
+        fetchStatsFiles()
+      } else {
+        const error = await res.json()
+        console.error('Failed to delete all stats files:', error.detail)
+      }
+    } catch (err) {
+      console.error('Failed to delete all stats files:', err)
+    }
+  }
+
   const handleSelectAll = useCallback((instrument) => {
     const instrumentFiles = files.filter(f => f.instrument === instrument)
     const allSelected = instrumentFiles.every(f => selectedFiles.includes(f.filepath))
@@ -626,6 +648,7 @@ function App() {
             onShowStats={handleShowStats}
             isLoadingStats={isLoadingStats}
             onDeleteStatsFile={handleDeleteStatsFile}
+            onDeleteAllStatsFiles={handleDeleteAllStatsFiles}
           />
 
           {!sidebarCollapsed && (

@@ -41,7 +41,8 @@ function Sidebar({
   onStatsFileSelect,
   onShowStats,
   isLoadingStats,
-  onDeleteStatsFile
+  onDeleteStatsFile,
+  onDeleteAllStatsFiles
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -621,6 +622,19 @@ function Sidebar({
           <div className="section-header">
             <span className="section-title">Parquet Files</span>
             <span className="file-count">{statsFiles?.length || 0} files</span>
+            {statsFiles?.length > 0 && (
+              <button
+                className="delete-all-btn"
+                onClick={() => {
+                  if (window.confirm(`Delete all ${statsFiles.length} parquet files?`)) {
+                    onDeleteAllStatsFiles?.()
+                  }
+                }}
+                title="Delete all parquet files"
+              >
+                Delete All
+              </button>
+            )}
           </div>
           <div className="scrollable-content">
             <div className="file-list">

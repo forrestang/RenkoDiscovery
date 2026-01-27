@@ -1511,7 +1511,7 @@ def get_parquet_stats(filepath: str):
         reversals = (direction != 0) & (prev_direction != 0) & (direction != prev_direction)
         reversal_count = int(reversals.sum())
         chop_stats["reversalBars"] = reversal_count
-        chop_stats["chopIndex"] = round(reversal_count / (total_bars - 1) * 100, 1)
+        chop_stats["chopIndex"] = round(reversal_count / total_bars * 100, 1)
 
     # Calculate State Distribution
     state_stats = []
@@ -1614,7 +1614,7 @@ def get_parquet_stats(filepath: str):
         run_stats["dnRuns"] = dn_runs
 
         # Calculate decay thresholds
-        thresholds = [1, 2, 3, 5, 10, 20, 50, 100, 200, 500]
+        thresholds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 50, 100, 200, 500]
 
         if up_runs:
             max_up = max(up_runs)
@@ -1721,6 +1721,32 @@ def delete_stats_file(filepath: str):
         return {"message": f"Deleted {parquet_path.name}", "filepath": filepath}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
+
+
+@app.delete("/stats-files")
+def delete_all_stats_files(working_dir: Optional[str] = None):
+    """Delete all parquet files in the Stats folder."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    stats_dir = base_dir / "Stats"
+
+    if not stats_dir.exists():
+        return {"message": "No Stats folder found", "deleted": 0}
+
+    deleted_count = 0
+    errors = []
+
+    for filepath in stats_dir.iterdir():
+        if filepath.is_file() and filepath.suffix.lower() == '.parquet':
+            try:
+                filepath.unlink()
+                deleted_count += 1
+            except Exception as e:
+                errors.append(f"{filepath.name}: {str(e)}")
+
+    if errors:
+        return {"message": f"Deleted {deleted_count} files with {len(errors)} errors", "deleted": deleted_count, "errors": errors}
+
+    return {"message": f"Deleted {deleted_count} parquet files", "deleted": deleted_count}
 
 
 if __name__ == "__main__":
