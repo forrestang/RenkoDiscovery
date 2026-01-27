@@ -1204,9 +1204,9 @@ async def generate_stats(instrument: str, request: StatsRequest):
     def get_state(fast, med, slow):
         if fast > med > slow: return 3
         if fast > slow > med: return 2
-        if med > fast > slow: return 1
-        if med > slow > fast: return -1
-        if slow > fast > med: return -2
+        if slow > fast > med: return 1    # 63% UP - transitional bullish
+        if med > fast > slow: return -1   # 34% UP - transitional bearish
+        if med > slow > fast: return -2   # Fast lowest (deep bearish)
         if slow > med > fast: return -3
         return 0  # Edge case: equal values
 
@@ -1497,6 +1497,41 @@ def get_parquet_stats(filepath: str):
     is_up_bar = df['close'] > df['open']
     is_down_bar = df['close'] < df['open']
 
+    # Calculate Global Chop Index
+    # A reversal is when current bar direction differs from prior bar
+    # Chop Index = Reversal Bars / (Total Bars - 1)
+    chop_stats = {"reversalBars": 0, "chopIndex": 0.0}
+    if total_bars > 1:
+        # Compare each bar's direction to the previous bar
+        # Direction: 1 = up, -1 = down, 0 = doji (treat as continuation)
+        direction = is_up_bar.astype(int) - is_down_bar.astype(int)
+        # A reversal occurs when direction changes (ignoring dojis)
+        prev_direction = direction.shift(1)
+        # Only count as reversal when both bars have clear direction and they differ
+        reversals = (direction != 0) & (prev_direction != 0) & (direction != prev_direction)
+        reversal_count = int(reversals.sum())
+        chop_stats["reversalBars"] = reversal_count
+        chop_stats["chopIndex"] = round(reversal_count / (total_bars - 1) * 100, 1)
+
+    # Calculate State Distribution
+    state_stats = []
+    if 'State' in df.columns:
+        # States from +3 to -3 (excluding 0)
+        for state in [3, 2, 1, -1, -2, -3]:
+            state_mask = df['State'] == state
+            count = int(state_mask.sum())
+            up_count = int((state_mask & is_up_bar).sum())
+            dn_count = int((state_mask & is_down_bar).sum())
+            state_stats.append({
+                "state": state,
+                "count": count,
+                "pct": round(count / total_bars * 100, 1) if total_bars > 0 else 0,
+                "upCount": up_count,
+                "upPct": round(up_count / count * 100, 0) if count > 0 else 0,
+                "dnCount": dn_count,
+                "dnPct": round(dn_count / count * 100, 0) if count > 0 else 0
+            })
+
     for period in ma_periods:
         col_name = f'EMA_rawDistance({period})'
         if col_name in df.columns:
@@ -1546,6 +1581,109 @@ def get_parquet_stats(filepath: str):
     below_all_up = int((below_all_mask & is_up_bar).sum())
     below_all_down = int((below_all_mask & is_down_bar).sum())
 
+    # Calculate run distribution (consecutive bar runs)
+    run_stats = {"upRuns": [], "dnRuns": [], "upDecay": [], "dnDecay": []}
+
+    if 'Con_UP_bars' in df.columns and 'Con_DN_bars' in df.columns:
+        up_runs = []
+        dn_runs = []
+
+        # Extract completed runs by detecting when counter goes from N > 0 to 0
+        for i in range(1, len(df)):
+            prev_up = df['Con_UP_bars'].iloc[i - 1]
+            curr_up = df['Con_UP_bars'].iloc[i]
+            prev_dn = df['Con_DN_bars'].iloc[i - 1]
+            curr_dn = df['Con_DN_bars'].iloc[i]
+
+            # UP run ended
+            if prev_up > 0 and curr_up == 0:
+                up_runs.append(int(prev_up))
+            # DN run ended
+            if prev_dn > 0 and curr_dn == 0:
+                dn_runs.append(int(prev_dn))
+
+        # Capture final run if data ends mid-run
+        last_up = df['Con_UP_bars'].iloc[-1]
+        last_dn = df['Con_DN_bars'].iloc[-1]
+        if last_up > 0:
+            up_runs.append(int(last_up))
+        if last_dn > 0:
+            dn_runs.append(int(last_dn))
+
+        run_stats["upRuns"] = up_runs
+        run_stats["dnRuns"] = dn_runs
+
+        # Calculate decay thresholds
+        thresholds = [1, 2, 3, 5, 10, 20, 50, 100, 200, 500]
+
+        if up_runs:
+            max_up = max(up_runs)
+            active_up_thresholds = [t for t in thresholds if t <= max_up]
+            run_stats["upDecay"] = [
+                {
+                    "threshold": t,
+                    "count": sum(1 for r in up_runs if r >= t),
+                    "pct": round(sum(1 for r in up_runs if r >= t) / len(up_runs) * 100, 1)
+                }
+                for t in active_up_thresholds
+            ]
+
+        if dn_runs:
+            max_dn = max(dn_runs)
+            active_dn_thresholds = [t for t in thresholds if t <= max_dn]
+            run_stats["dnDecay"] = [
+                {
+                    "threshold": t,
+                    "count": sum(1 for r in dn_runs if r >= t),
+                    "pct": round(sum(1 for r in dn_runs if r >= t) / len(dn_runs) * 100, 1)
+                }
+                for t in active_dn_thresholds
+            ]
+
+        # Calculate auto-binned distribution
+        def calc_distribution(runs):
+            if not runs:
+                return []
+
+            from collections import Counter
+            counts = Counter(runs)
+            max_run = max(runs)
+            total = len(runs)
+
+            # Define bin edges: 1-5 individual, then ranges
+            bins = []
+
+            # Individual bins for 1-5
+            for i in range(1, min(6, max_run + 1)):
+                bins.append((i, i, str(i)))
+
+            # Range bins for larger values
+            ranges = [(6, 10), (11, 20), (21, 50), (51, 100), (101, 200), (201, 500), (501, 1000)]
+            for start, end in ranges:
+                if start <= max_run:
+                    actual_end = min(end, max_run)
+                    if start == actual_end:
+                        label = str(start)
+                    else:
+                        label = f"{start}-{actual_end}"
+                    bins.append((start, actual_end, label))
+
+            # Build distribution
+            distribution = []
+            for start, end, label in bins:
+                count = sum(counts.get(i, 0) for i in range(start, end + 1))
+                if count > 0:
+                    distribution.append({
+                        "label": label,
+                        "count": count,
+                        "pct": round(count / total * 100, 1)
+                    })
+
+            return distribution
+
+        run_stats["upDist"] = calc_distribution(up_runs)
+        run_stats["dnDist"] = calc_distribution(dn_runs)
+
     return {
         "totalBars": total_bars,
         "maStats": ma_stats,
@@ -1556,7 +1694,10 @@ def get_parquet_stats(filepath: str):
             "aboveAllDown": above_all_down,
             "belowAllUp": below_all_up,
             "belowAllDown": below_all_down
-        }
+        },
+        "runStats": run_stats,
+        "chopStats": chop_stats,
+        "stateStats": state_stats
     }
 
 

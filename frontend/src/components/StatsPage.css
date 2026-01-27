@@ -143,3 +143,49 @@
   font-weight: 600;
 }
 
+/* Run Distribution Module */
+.run-distribution {
+  margin-top: var(--space-4);
+}
+
+.run-tables-row {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.run-table {
+  flex: 0 0 auto;
+}
+
+.stats-table th.up-title {
+  color: #22c55e;
+}
+
+.stats-table th.dn-title {
+  color: #ef4444;
+}
+
+/* Chop Index */
+.stats-table td.chop-value {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+/* State Distribution */
+.stats-table td.state-up {
+  color: #22c55e;
+  font-weight: 600;
+}
+
+.stats-table td.state-dn {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+/* Highlight for highest value in UP/DN pairs */
+.stats-table td.highlight {
+  text-decoration: underline;
+  text-decoration-color: #eab308;
+  text-underline-offset: 2px;
+}
+
