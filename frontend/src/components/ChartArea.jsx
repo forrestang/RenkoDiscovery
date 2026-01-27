@@ -24,6 +24,26 @@ function formatTickMark(isoString) {
   return `${month}-${day}`
 }
 
+// Find indices where day changes (first bar after 00:00 UTC)
+function findDayBoundaryIndices(datetimes) {
+  const boundaries = []
+  let lastDate = null
+  for (let i = 0; i < datetimes.length; i++) {
+    // Ensure datetime is parsed as UTC (append Z if no timezone indicator)
+    let dtStr = datetimes[i]
+    if (!dtStr.endsWith('Z') && !dtStr.includes('+') && !dtStr.includes('-', 10)) {
+      dtStr = dtStr.replace(' ', 'T') + 'Z'
+    }
+    const dt = new Date(dtStr)
+    const dateStr = dt.toISOString().split('T')[0]  // YYYY-MM-DD in UTC
+    if (lastDate !== null && dateStr !== lastDate) {
+      boundaries.push(i)  // First bar of new day
+    }
+    lastDate = dateStr
+  }
+  return boundaries
+}
+
 // Custom primitive for drawing Renko brick overlays
 class RenkoBricksPrimitive {
   constructor() {
@@ -247,6 +267,169 @@ class TypeMarkersRenderer {
   }
 }
 
+// Custom primitive for drawing vertical grid lines at day boundaries
+class DayBoundaryGridPrimitive {
+  constructor() {
+    this._boundaries = []  // Array of bar indices where day changes
+    this._chart = null
+    this._series = null
+  }
+
+  setBoundaries(boundaries) {
+    this._boundaries = boundaries || []
+  }
+
+  attached(param) {
+    this._chart = param.chart
+    this._series = param.series
+  }
+
+  detached() {
+    this._chart = null
+    this._series = null
+  }
+
+  updateAllViews() {}
+
+  paneViews() {
+    return [new DayBoundaryGridPaneView(this)]
+  }
+}
+
+class DayBoundaryGridPaneView {
+  constructor(source) {
+    this._source = source
+  }
+
+  update() {}
+
+  renderer() {
+    return new DayBoundaryGridRenderer(this._source)
+  }
+
+  zOrder() {
+    return 'bottom'
+  }
+}
+
+class DayBoundaryGridRenderer {
+  constructor(source) {
+    this._source = source
+  }
+
+  draw(target, priceConverter) {
+    const boundaries = this._source._boundaries
+    const chart = this._source._chart
+
+    if (!boundaries.length || !chart) return
+
+    const timeScale = chart.timeScale()
+
+    target.useBitmapCoordinateSpace(scope => {
+      const ctx = scope.context
+      const hRatio = scope.horizontalPixelRatio
+      const vRatio = scope.verticalPixelRatio
+      const height = scope.bitmapSize.height
+
+      ctx.strokeStyle = '#27272a'
+      ctx.lineWidth = 1 * hRatio
+
+      for (const boundaryIndex of boundaries) {
+        const x = timeScale.logicalToCoordinate(boundaryIndex)
+        if (x === null) continue
+
+        const xPx = Math.round(x * hRatio)
+
+        ctx.beginPath()
+        ctx.moveTo(xPx, 0)
+        ctx.lineTo(xPx, height)
+        ctx.stroke()
+      }
+    })
+  }
+}
+
+// Custom primitive for drawing horizontal grid lines at fixed levels in indicator pane
+class IndicatorHorzGridPrimitive {
+  constructor() {
+    this._levels = [-3, -2, -1, 1, 2, 3]  // No 0, only state levels
+    this._chart = null
+    this._series = null
+  }
+
+  setLevels(levels) {
+    this._levels = levels || [-3, -2, -1, 1, 2, 3]
+  }
+
+  attached(param) {
+    this._chart = param.chart
+    this._series = param.series
+  }
+
+  detached() {
+    this._chart = null
+    this._series = null
+  }
+
+  updateAllViews() {}
+
+  paneViews() {
+    return [new IndicatorHorzGridPaneView(this)]
+  }
+}
+
+class IndicatorHorzGridPaneView {
+  constructor(source) {
+    this._source = source
+  }
+
+  update() {}
+
+  renderer() {
+    return new IndicatorHorzGridRenderer(this._source)
+  }
+
+  zOrder() {
+    return 'bottom'
+  }
+}
+
+class IndicatorHorzGridRenderer {
+  constructor(source) {
+    this._source = source
+  }
+
+  draw(target, priceConverter) {
+    const levels = this._source._levels
+    const chart = this._source._chart
+    const series = this._source._series
+
+    if (!levels.length || !chart || !series) return
+
+    target.useBitmapCoordinateSpace(scope => {
+      const ctx = scope.context
+      const hRatio = scope.horizontalPixelRatio
+      const vRatio = scope.verticalPixelRatio
+      const width = scope.bitmapSize.width
+
+      ctx.strokeStyle = '#27272a'
+      ctx.lineWidth = 1 * hRatio
+
+      for (const level of levels) {
+        const y = series.priceToCoordinate(level)
+        if (y === null) continue
+
+        const yPx = Math.round(y * vRatio)
+
+        ctx.beginPath()
+        ctx.moveTo(0, yPx)
+        ctx.lineTo(width, yPx)
+        ctx.stroke()
+      }
+    })
+  }
+}
+
 function calculateSMA(data, period) {
   const result = []
   for (let i = 0; i < data.length; i++) {
@@ -300,6 +483,9 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   const renkoDataRef = useRef(null)
   const indicatorStateSeriesRef = useRef(null)  // Line series for State dots (-3 to +3)
   const typeMarkersPrimitiveRef = useRef(null)  // Custom primitive for Type1/Type2 text markers
+  const dayBoundaryPrimitiveRef = useRef(null)  // Day boundary vertical lines on main chart
+  const indicatorDayBoundaryPrimitiveRef = useRef(null)  // Day boundary vertical lines on indicator pane
+  const indicatorHorzGridPrimitiveRef = useRef(null)  // Horizontal grid lines on indicator pane
   const isTickDataRef = useRef(false)
   const [hoveredBarIndex, setHoveredBarIndex] = useState(null)  // Renko bar index
   const [hoveredM1Index, setHoveredM1Index] = useState(null)    // M1/raw bar index
@@ -328,8 +514,8 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         fontFamily: "'JetBrains Mono', monospace",
       },
       grid: {
-        vertLines: { color: '#27272a' },
-        horzLines: { color: '#27272a' },
+        vertLines: { color: '#27272a', visible: chartType !== 'renko' },  // Disable in Renko mode, use custom day boundaries
+        horzLines: { color: '#27272a', visible: chartType !== 'renko' },  // Disable in Renko mode for indicator pane
       },
       crosshair: {
         mode: 0, // Normal crosshair
@@ -438,6 +624,13 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       primitiveRef.current = primitive
     }
 
+    // Create day boundary primitive for Renko mode (vertical lines at day changes)
+    if (chartType === 'renko') {
+      const dayBoundaryPrimitive = new DayBoundaryGridPrimitive()
+      candleSeries.attachPrimitive(dayBoundaryPrimitive)
+      dayBoundaryPrimitiveRef.current = dayBoundaryPrimitive
+    }
+
     // Handle resize
     const handleResize = () => {
       if (containerRef.current && chartRef.current) {
@@ -537,6 +730,9 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       ma3SeriesRef.current = null
       indicatorStateSeriesRef.current = null
       typeMarkersPrimitiveRef.current = null
+      dayBoundaryPrimitiveRef.current = null
+      indicatorDayBoundaryPrimitiveRef.current = null
+      indicatorHorzGridPrimitiveRef.current = null
     }
   }, [chartType])
 
@@ -654,6 +850,12 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
           to: Math.floor(new Date(datetime[toIndex]).getTime() / 1000),
         })
       }
+    }
+
+    // Update day boundary lines for Renko mode
+    if (chartType === 'renko' && dayBoundaryPrimitiveRef.current && datetime) {
+      const boundaries = findDayBoundaryIndices(datetime)
+      dayBoundaryPrimitiveRef.current.setBoundaries(boundaries)
     }
   }, [chartData, chartType, pricePrecision])
 
@@ -810,12 +1012,14 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
 
     const chart = chartRef.current
 
-    // Helper to remove indicator series and primitive
+    // Helper to remove indicator series and primitives
     const removeIndicatorSeries = () => {
       if (indicatorStateSeriesRef.current) {
         chart.removeSeries(indicatorStateSeriesRef.current)
         indicatorStateSeriesRef.current = null
         typeMarkersPrimitiveRef.current = null
+        indicatorHorzGridPrimitiveRef.current = null
+        indicatorDayBoundaryPrimitiveRef.current = null
       }
     }
 
@@ -934,9 +1138,19 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       }, 1)
 
       // Attach custom primitive for Type markers
-      const primitive = new TypeMarkersPrimitive()
-      indicatorStateSeriesRef.current.attachPrimitive(primitive)
-      typeMarkersPrimitiveRef.current = primitive
+      const typeMarkerPrimitive = new TypeMarkersPrimitive()
+      indicatorStateSeriesRef.current.attachPrimitive(typeMarkerPrimitive)
+      typeMarkersPrimitiveRef.current = typeMarkerPrimitive
+
+      // Attach horizontal grid lines at fixed state levels (-3 to +3)
+      const horzGridPrimitive = new IndicatorHorzGridPrimitive()
+      indicatorStateSeriesRef.current.attachPrimitive(horzGridPrimitive)
+      indicatorHorzGridPrimitiveRef.current = horzGridPrimitive
+
+      // Attach day boundary vertical lines
+      const dayBoundaryPrimitive = new DayBoundaryGridPrimitive()
+      indicatorStateSeriesRef.current.attachPrimitive(dayBoundaryPrimitive)
+      indicatorDayBoundaryPrimitiveRef.current = dayBoundaryPrimitive
 
       // Set pane height after series is created
       const panes = chart.panes()
@@ -951,6 +1165,12 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     // Set Type markers via primitive
     if (typeMarkersPrimitiveRef.current) {
       typeMarkersPrimitiveRef.current.setMarkers(typeMarkers)
+    }
+
+    // Update day boundary lines in indicator pane
+    if (indicatorDayBoundaryPrimitiveRef.current && chartData.data.datetime) {
+      const boundaries = findDayBoundaryIndices(chartData.data.datetime)
+      indicatorDayBoundaryPrimitiveRef.current.setBoundaries(boundaries)
     }
 
     // Force redraw
