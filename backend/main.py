@@ -1193,7 +1193,9 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['DD'] = df['DD'].round(5)
 
     # Normalize DD by currentADR
-    df['DD_norm'] = (df['DD'] / df['currentADR']).round(5)
+    df['DD_ADR'] = (df['DD'] / df['currentADR']).round(5)
+    # Normalize DD by reversal size
+    df['DD_RR'] = (df['DD'] / request.reversal_size).round(5)
 
     # Calculate State based on MA order
     # Fast=ma1_period, Med=ma2_period, Slow=ma3_period

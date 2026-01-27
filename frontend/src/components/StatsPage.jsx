@@ -23,7 +23,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     )
   }
 
-  const { totalBars, maStats, allMaStats, runStats, chopStats, stateStats } = stats
+  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, type1MfeStats } = stats
 
   const pct = (count, total) => total > 0 ? ((count / total) * 100).toFixed(0) : '0'
 
@@ -59,6 +59,29 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         <span className="stats-total">{totalBars.toLocaleString()} bars</span>
       </div>
 
+      {/* General Stats */}
+      <div className="stats-module">
+        <table className="stats-table">
+          <thead>
+            <tr className="module-title-row">
+              <th colSpan="3" className="module-title">GENERAL</th>
+            </tr>
+            <tr>
+              <th>Total Bars</th>
+              <th className="up">UP Bars</th>
+              <th className="dn">DN Bars</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>{totalBars.toLocaleString()}</td>
+              <td className="up">{(upBars ?? 0).toLocaleString()} <span className="pct">({pct(upBars ?? 0, totalBars)}%)</span></td>
+              <td className="dn">{(dnBars ?? 0).toLocaleString()} <span className="pct">({pct(dnBars ?? 0, totalBars)}%)</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       {/* Global Chop Index */}
       {chopStats && (
         <div className="stats-module chop-module">
@@ -69,14 +92,14 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               </tr>
               <tr>
                 <th>Reversal Bars</th>
-                <th>Total - 1</th>
+                <th>Total</th>
                 <th>Chop %</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>{chopStats.reversalBars.toLocaleString()}</td>
-                <td>{(totalBars - 1).toLocaleString()}</td>
+                <td>{totalBars.toLocaleString()}</td>
                 <td className="chop-value">{chopStats.chopIndex}%</td>
               </tr>
             </tbody>
@@ -114,6 +137,66 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Type1 MFE Stats */}
+      {type1MfeStats && (type1MfeStats.upDecay?.length > 0 || type1MfeStats.dnDecay?.length > 0) && (
+        <div className="stats-module run-distribution">
+          <div className="module-title-row standalone-title">
+            <span className="module-title">TYPE1 MFE (Bars)</span>
+          </div>
+          <div className="run-tables-row">
+            {/* UP Type1 Decay Table */}
+            {type1MfeStats.upDecay?.length > 0 && (
+              <table className="stats-table run-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="3" className="module-title up-title">UP TYPE1 ({type1MfeStats.upTotal})</th>
+                  </tr>
+                  <tr>
+                    <th>&gt;= Bars</th>
+                    <th>Count</th>
+                    <th>%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {type1MfeStats.upDecay.map(row => (
+                    <tr key={row.threshold}>
+                      <td>{row.threshold}+</td>
+                      <td>{row.count}</td>
+                      <td className="up">{row.pct}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {/* DN Type1 Decay Table */}
+            {type1MfeStats.dnDecay?.length > 0 && (
+              <table className="stats-table run-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="3" className="module-title dn-title">DN TYPE1 ({type1MfeStats.dnTotal})</th>
+                  </tr>
+                  <tr>
+                    <th>&gt;= Bars</th>
+                    <th>Count</th>
+                    <th>%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {type1MfeStats.dnDecay.map(row => (
+                    <tr key={row.threshold}>
+                      <td>{row.threshold}+</td>
+                      <td>{row.count}</td>
+                      <td className="dn">{row.pct}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
 

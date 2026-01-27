@@ -699,6 +699,8 @@ function App() {
               maSettings={maSettings}
               compressionFactor={compressionFactor}
               showIndicatorPane={showIndicatorPane}
+              brickSize={renkoSettings.brickSize}
+              reversalSize={renkoSettings.reversalSize}
             />
           )}
         </main>
