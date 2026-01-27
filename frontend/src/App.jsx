@@ -118,6 +118,10 @@ function App() {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}compressionFactor`)
     return saved ? parseFloat(saved) : 1.0
   })
+  const [showIndicatorPane, setShowIndicatorPane] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}showIndicatorPane`)
+    return saved === 'true'
+  })
 
   // Persist UI settings to localStorage
   useEffect(() => {
@@ -143,6 +147,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}compressionFactor`, compressionFactor.toString())
   }, [compressionFactor])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}showIndicatorPane`, showIndicatorPane.toString())
+  }, [showIndicatorPane])
 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}workingDir`, workingDir)
@@ -571,6 +579,21 @@ function App() {
               onChange={handleRenkoSettingsChange}
             />
           )}
+          {chartType === 'renko' && activeInstrument && (
+            <button
+              className={`indicator-toggle-btn ${showIndicatorPane ? 'active' : ''}`}
+              onClick={() => setShowIndicatorPane(!showIndicatorPane)}
+              title="Toggle State/Type indicator pane"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 3v18h18" />
+                <circle cx="8" cy="14" r="2" />
+                <circle cx="12" cy="8" r="2" />
+                <circle cx="16" cy="12" r="2" />
+              </svg>
+              Ind
+            </button>
+          )}
           {activeInstrument && (
             <select
               className="precision-select mono"
@@ -675,6 +698,7 @@ function App() {
               pricePrecision={pricePrecision}
               maSettings={maSettings}
               compressionFactor={compressionFactor}
+              showIndicatorPane={showIndicatorPane}
             />
           )}
         </main>

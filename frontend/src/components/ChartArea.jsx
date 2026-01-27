@@ -163,6 +163,90 @@ class RenkoBricksRenderer {
   }
 }
 
+// Custom primitive for drawing Type markers (text "1" and "2") in the indicator pane
+class TypeMarkersPrimitive {
+  constructor() {
+    this._markers = []  // Array of { time, value, text, color }
+    this._chart = null
+    this._series = null
+  }
+
+  setMarkers(markers) {
+    this._markers = markers || []
+  }
+
+  attached(param) {
+    this._chart = param.chart
+    this._series = param.series
+  }
+
+  detached() {
+    this._chart = null
+    this._series = null
+  }
+
+  updateAllViews() {}
+
+  paneViews() {
+    return [new TypeMarkersPaneView(this)]
+  }
+}
+
+class TypeMarkersPaneView {
+  constructor(source) {
+    this._source = source
+  }
+
+  update() {}
+
+  renderer() {
+    return new TypeMarkersRenderer(this._source)
+  }
+
+  zOrder() {
+    return 'top'
+  }
+}
+
+class TypeMarkersRenderer {
+  constructor(source) {
+    this._source = source
+  }
+
+  draw(target, priceConverter) {
+    const markers = this._source._markers
+    const chart = this._source._chart
+    const series = this._source._series
+
+    if (!markers.length || !chart || !series) return
+
+    const timeScale = chart.timeScale()
+
+    target.useBitmapCoordinateSpace(scope => {
+      const ctx = scope.context
+      const hRatio = scope.horizontalPixelRatio
+      const vRatio = scope.verticalPixelRatio
+
+      ctx.font = `bold ${Math.round(11 * vRatio)}px "JetBrains Mono", monospace`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+
+      for (const marker of markers) {
+        const x = timeScale.logicalToCoordinate(marker.time)
+        const y = series.priceToCoordinate(marker.value)
+
+        if (x === null || y === null) continue
+
+        const xPx = Math.round(x * hRatio)
+        const yPx = Math.round(y * vRatio)
+
+        ctx.fillStyle = marker.color
+        ctx.fillText(marker.text, xPx, yPx)
+      }
+    })
+  }
+}
+
 function calculateSMA(data, period) {
   const result = []
   for (let i = 0; i < data.length; i++) {
@@ -203,7 +287,7 @@ function calculateEMA(data, period) {
   return result
 }
 
-function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0 }) {
+function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0, showIndicatorPane = false }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)  // Candlestick series for OHLC data
@@ -214,6 +298,8 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   const ma2SeriesRef = useRef(null)
   const ma3SeriesRef = useRef(null)
   const renkoDataRef = useRef(null)
+  const indicatorStateSeriesRef = useRef(null)  // Line series for State dots (-3 to +3)
+  const typeMarkersPrimitiveRef = useRef(null)  // Custom primitive for Type1/Type2 text markers
   const isTickDataRef = useRef(false)
   const [hoveredBarIndex, setHoveredBarIndex] = useState(null)  // Renko bar index
   const [hoveredM1Index, setHoveredM1Index] = useState(null)    // M1/raw bar index
@@ -449,6 +535,8 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       ma1SeriesRef.current = null
       ma2SeriesRef.current = null
       ma3SeriesRef.current = null
+      indicatorStateSeriesRef.current = null
+      typeMarkersPrimitiveRef.current = null
     }
   }, [chartType])
 
@@ -715,6 +803,160 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       updateMASeries(ma3SeriesRef, maSettings.ma3)
     }
   }, [chartData, renkoData, chartType, maSettings])
+
+  // State & Type Indicator Pane (Renko mode only)
+  useEffect(() => {
+    if (!chartRef.current) return
+
+    const chart = chartRef.current
+
+    // Helper to remove indicator series and primitive
+    const removeIndicatorSeries = () => {
+      if (indicatorStateSeriesRef.current) {
+        chart.removeSeries(indicatorStateSeriesRef.current)
+        indicatorStateSeriesRef.current = null
+        typeMarkersPrimitiveRef.current = null
+      }
+    }
+
+    // Only show indicator pane in Renko mode when enabled
+    if (chartType !== 'renko' || !showIndicatorPane) {
+      removeIndicatorSeries()
+      return
+    }
+
+    // Need chartData (which is renkoData in renko mode) and maSettings
+    if (!chartData?.data?.close || !maSettings) return
+
+    const { open, high, low, close } = chartData.data
+
+    // Calculate MA values (Fast=MA1, Med=MA2, Slow=MA3)
+    const ma1Enabled = maSettings.ma1?.enabled
+    const ma2Enabled = maSettings.ma2?.enabled
+    const ma3Enabled = maSettings.ma3?.enabled
+
+    // Need all 3 MAs enabled for State calculation
+    if (!ma1Enabled || !ma2Enabled || !ma3Enabled) {
+      removeIndicatorSeries()
+      return
+    }
+
+    const ma1Values = maSettings.ma1.type === 'ema'
+      ? calculateEMA(close, maSettings.ma1.period)
+      : calculateSMA(close, maSettings.ma1.period)
+    const ma2Values = maSettings.ma2.type === 'ema'
+      ? calculateEMA(close, maSettings.ma2.period)
+      : calculateSMA(close, maSettings.ma2.period)
+    const ma3Values = maSettings.ma3.type === 'ema'
+      ? calculateEMA(close, maSettings.ma3.period)
+      : calculateSMA(close, maSettings.ma3.period)
+
+    // Calculate State for each bar based on MA ordering
+    // Fast=MA1, Med=MA2, Slow=MA3
+    // +3: Fast > Med > Slow  (full bullish alignment)
+    // +2: Fast > Slow > Med
+    // +1: Slow > Fast > Med
+    // -1: Med > Fast > Slow
+    // -2: Med > Slow > Fast
+    // -3: Slow > Med > Fast  (full bearish alignment)
+    const stateData = []
+    const typeMarkers = []
+
+    for (let i = 0; i < close.length; i++) {
+      const fast = ma1Values[i]
+      const med = ma2Values[i]
+      const slow = ma3Values[i]
+
+      if (fast === null || med === null || slow === null) continue
+
+      let state = 0
+      if (fast > med && med > slow) state = 3       // Fast > Med > Slow
+      else if (fast > slow && slow > med) state = 2 // Fast > Slow > Med
+      else if (slow > fast && fast > med) state = 1 // Slow > Fast > Med
+      else if (med > fast && fast > slow) state = -1 // Med > Fast > Slow
+      else if (med > slow && slow > fast) state = -2 // Med > Slow > Fast
+      else if (slow > med && med > fast) state = -3 // Slow > Med > Fast
+
+      stateData.push({ time: i, value: state })
+
+      // Current bar direction
+      const isUp = close[i] > open[i]
+      const isDown = close[i] < open[i]
+
+      // Type1 Logic (displayed as "1" at ±5)
+      // Buy at -5: State +3, current bar is UP, prior bar was DOWN, prior bar's low ≤ MA1
+      // Sell at +5: State -3, current bar is DOWN, prior bar was UP, prior bar's high ≥ MA1
+      if (i > 0) {
+        const priorIsUp = close[i - 1] > open[i - 1]
+        const priorIsDown = close[i - 1] < open[i - 1]
+        const priorMa1 = ma1Values[i - 1]
+
+        if (priorMa1 !== null) {
+          if (state === 3 && isUp && priorIsDown && low[i - 1] <= priorMa1) {
+            typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
+          }
+          if (state === -3 && isDown && priorIsUp && high[i - 1] >= priorMa1) {
+            typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
+          }
+        }
+      }
+
+      // Type2 Logic (displayed as "2" at ±4)
+      // Buy at -4: State +3, current bar is UP with lower wick (open > low)
+      // Sell at +4: State -3, current bar is DOWN with upper wick (high > open)
+      if (state === 3 && isUp && open[i] > low[i]) {
+        typeMarkers.push({ time: i, value: -4, text: '2', color: '#10b981' })
+      }
+      if (state === -3 && isDown && high[i] > open[i]) {
+        typeMarkers.push({ time: i, value: 4, text: '2', color: '#f43f5e' })
+      }
+    }
+
+    // Common autoscale provider for fixed -6 to +6 range
+    const autoscaleProvider = () => ({
+      priceRange: {
+        minValue: -6,
+        maxValue: 6,
+      },
+    })
+
+    // Create State series (dots at -3 to +3)
+    if (!indicatorStateSeriesRef.current) {
+      indicatorStateSeriesRef.current = chart.addSeries(LineSeries, {
+        color: '#71717a',
+        lineWidth: 0,
+        pointMarkersVisible: true,
+        pointMarkersRadius: 3,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        autoscaleInfoProvider: autoscaleProvider,
+      }, 1)
+
+      // Attach custom primitive for Type markers
+      const primitive = new TypeMarkersPrimitive()
+      indicatorStateSeriesRef.current.attachPrimitive(primitive)
+      typeMarkersPrimitiveRef.current = primitive
+
+      // Set pane height after series is created
+      const panes = chart.panes()
+      if (panes && panes[1]) {
+        panes[1].setHeight(120)
+      }
+    }
+
+    // Set State data
+    indicatorStateSeriesRef.current.setData(stateData)
+
+    // Set Type markers via primitive
+    if (typeMarkersPrimitiveRef.current) {
+      typeMarkersPrimitiveRef.current.setMarkers(typeMarkers)
+    }
+
+    // Force redraw
+    chart.timeScale().applyOptions({})
+
+  }, [chartData, chartType, showIndicatorPane, maSettings])
 
   if (!chartData && !isLoading) {
     return (
