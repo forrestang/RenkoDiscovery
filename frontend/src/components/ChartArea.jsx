@@ -470,7 +470,7 @@ function calculateEMA(data, period) {
   return result
 }
 
-function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0, showIndicatorPane = false }) {
+function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)  // Candlestick series for OHLC data
@@ -1088,31 +1088,72 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       const isDown = close[i] < open[i]
 
       // Type1 Logic (displayed as "1" at ±5)
-      // Buy at -5: State +3, current bar is UP, prior bar was DOWN, prior bar's low ≤ MA1
-      // Sell at +5: State -3, current bar is DOWN, prior bar was UP, prior bar's high ≥ MA1
-      if (i > 0) {
+      // Pattern depends on reversal vs brick size:
+      // - reversal > brick: 3-bar pattern (DOWN, UP, UP or UP, DOWN, DOWN)
+      // - reversal == brick: 2-bar pattern (DOWN, UP or UP, DOWN)
+      // MA1 touch can be on ANY bar in the pattern
+      const use3bar = reversalSize > brickSize
+      const currMa1 = ma1Values[i]
+
+      if (use3bar && i > 1) {
+        // 3-bar pattern
+        const priorIsUp = close[i - 1] > open[i - 1]
+        const priorIsDown = close[i - 1] < open[i - 1]
+        const prior2IsUp = close[i - 2] > open[i - 2]
+        const prior2IsDown = close[i - 2] < open[i - 2]
+        const priorMa1 = ma1Values[i - 1]
+        const prior2Ma1 = ma1Values[i - 2]
+
+        // Long T1: DOWN -> UP -> UP with MA1 touch on current, prior, or prior2
+        const longMa1Touch = (currMa1 !== null && low[i] <= currMa1) ||
+                             (priorMa1 !== null && low[i - 1] <= priorMa1) ||
+                             (prior2Ma1 !== null && low[i - 2] <= prior2Ma1)
+        if (state === 3 && isUp && priorIsUp && prior2IsDown && longMa1Touch) {
+          typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
+        }
+        // Short T1: UP -> DOWN -> DOWN with MA1 touch on current, prior, or prior2
+        const shortMa1Touch = (currMa1 !== null && high[i] >= currMa1) ||
+                              (priorMa1 !== null && high[i - 1] >= priorMa1) ||
+                              (prior2Ma1 !== null && high[i - 2] >= prior2Ma1)
+        if (state === -3 && isDown && priorIsDown && prior2IsUp && shortMa1Touch) {
+          typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
+        }
+      } else if (!use3bar && i > 0) {
+        // 2-bar pattern
         const priorIsUp = close[i - 1] > open[i - 1]
         const priorIsDown = close[i - 1] < open[i - 1]
         const priorMa1 = ma1Values[i - 1]
 
-        if (priorMa1 !== null) {
-          if (state === 3 && isUp && priorIsDown && low[i - 1] <= priorMa1) {
-            typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
-          }
-          if (state === -3 && isDown && priorIsUp && high[i - 1] >= priorMa1) {
-            typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
-          }
+        // Long T1: DOWN -> UP with MA1 touch on current or prior
+        const longMa1Touch = (currMa1 !== null && low[i] <= currMa1) ||
+                             (priorMa1 !== null && low[i - 1] <= priorMa1)
+        if (state === 3 && isUp && priorIsDown && longMa1Touch) {
+          typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
+        }
+        // Short T1: UP -> DOWN with MA1 touch on current or prior
+        const shortMa1Touch = (currMa1 !== null && high[i] >= currMa1) ||
+                              (priorMa1 !== null && high[i - 1] >= priorMa1)
+        if (state === -3 && isDown && priorIsUp && shortMa1Touch) {
+          typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
         }
       }
 
       // Type2 Logic (displayed as "2" at ±4)
       // Buy at -4: State +3, current bar is UP with lower wick (open > low)
       // Sell at +4: State -3, current bar is DOWN with upper wick (high > open)
+      // When reversal > brick, prior bar must be same direction
+      const priorIsUpT2 = i > 0 ? close[i - 1] > open[i - 1] : false
       if (state === 3 && isUp && open[i] > low[i]) {
-        typeMarkers.push({ time: i, value: -4, text: '2', color: '#10b981' })
+        const priorOk = !use3bar || priorIsUpT2
+        if (priorOk) {
+          typeMarkers.push({ time: i, value: -4, text: '2', color: '#10b981' })
+        }
       }
       if (state === -3 && isDown && high[i] > open[i]) {
-        typeMarkers.push({ time: i, value: 4, text: '2', color: '#f43f5e' })
+        const priorOk = !use3bar || !priorIsUpT2  // prior must be DOWN
+        if (priorOk) {
+          typeMarkers.push({ time: i, value: 4, text: '2', color: '#f43f5e' })
+        }
       }
     }
 

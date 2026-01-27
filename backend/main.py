@@ -1246,35 +1246,64 @@ async def generate_stats(instrument: str, request: StatsRequest):
         current_is_up = is_up_arr_t[i]
         prior_is_up = is_up_arr_t[i - 1] if i > 0 else None
 
-        # Type1 logic (requires prior bar info, so skip i==0)
-        if i > 0 and state == 3:
-            # Check increment condition: UP bar following DOWN bar that touched MA1
-            if current_is_up and not prior_is_up and low_arr[i - 1] <= ma1_values[i - 1]:
+        # Type1 logic - pattern depends on reversal vs brick size
+        # reversal > brick: 3-bar pattern (DOWN, UP, UP or UP, DOWN, DOWN)
+        # reversal == brick: 2-bar pattern (DOWN, UP or UP, DOWN)
+        # MA1 touch can be on ANY bar in the pattern (current, prior, or prior2)
+        use_3bar = request.reversal_size > request.brick_size
+
+        if use_3bar and i > 1 and state == 3:
+            prior2_is_up = is_up_arr_t[i - 2]
+            # 3-bar pattern: DOWN, UP, UP - with MA1 touch on current, prior, or prior2
+            ma1_touched = (low_arr[i] <= ma1_values[i] or
+                           low_arr[i - 1] <= ma1_values[i - 1] or
+                           low_arr[i - 2] <= ma1_values[i - 2])
+            if current_is_up and prior_is_up and not prior2_is_up and ma1_touched:
+                internal_type1 += 1
+            # Display only when full pattern matches
+            type1_count[i] = internal_type1 if (current_is_up and prior_is_up and not prior2_is_up) else 0
+        elif use_3bar and i > 1 and state == -3:
+            prior2_is_up = is_up_arr_t[i - 2]
+            # 3-bar pattern: UP, DOWN, DOWN - with MA1 touch on current, prior, or prior2
+            ma1_touched = (high_arr[i] >= ma1_values[i] or
+                           high_arr[i - 1] >= ma1_values[i - 1] or
+                           high_arr[i - 2] >= ma1_values[i - 2])
+            if not current_is_up and not prior_is_up and prior2_is_up and ma1_touched:
+                internal_type1 -= 1
+            # Display only when full pattern matches
+            type1_count[i] = internal_type1 if (not current_is_up and not prior_is_up and prior2_is_up) else 0
+        elif not use_3bar and i > 0 and state == 3:
+            # 2-bar pattern: DOWN, UP - with MA1 touch on current or prior
+            ma1_touched = (low_arr[i] <= ma1_values[i] or
+                           low_arr[i - 1] <= ma1_values[i - 1])
+            if current_is_up and not prior_is_up and ma1_touched:
                 internal_type1 += 1
             # Display only on transition bar (UP following DOWN)
             type1_count[i] = internal_type1 if (current_is_up and not prior_is_up) else 0
-        elif i > 0 and state == -3:
-            # Check increment condition: DOWN bar following UP bar that touched MA1
-            if not current_is_up and prior_is_up and high_arr[i - 1] >= ma1_values[i - 1]:
+        elif not use_3bar and i > 0 and state == -3:
+            # 2-bar pattern: UP, DOWN - with MA1 touch on current or prior
+            ma1_touched = (high_arr[i] >= ma1_values[i] or
+                           high_arr[i - 1] >= ma1_values[i - 1])
+            if not current_is_up and prior_is_up and ma1_touched:
                 internal_type1 -= 1
             # Display only on transition bar (DOWN following UP)
             type1_count[i] = internal_type1 if (not current_is_up and prior_is_up) else 0
         else:
             type1_count[i] = 0
 
-        # Type2 logic
+        # Type2 logic - when reversal > brick, prior bar must be same direction
         if state == 3:
-            # Check increment condition: UP bar with lower wick
-            if current_is_up and open_arr[i] > low_arr[i]:
+            has_wick = current_is_up and open_arr[i] > low_arr[i]
+            prior_ok = not use_3bar or prior_is_up  # No check needed if equal, else prior must be UP
+            if has_wick and prior_ok:
                 internal_type2 += 1
-            # Display only if current bar is UP (flag behavior)
-            type2_count[i] = internal_type2 if current_is_up else 0
+            type2_count[i] = internal_type2 if (current_is_up and prior_ok) else 0
         elif state == -3:
-            # Check increment condition: DOWN bar with upper wick
-            if not current_is_up and high_arr[i] > open_arr[i]:
+            has_wick = not current_is_up and high_arr[i] > open_arr[i]
+            prior_ok = not use_3bar or not prior_is_up  # No check needed if equal, else prior must be DOWN
+            if has_wick and prior_ok:
                 internal_type2 -= 1
-            # Display only if current bar is DOWN (flag behavior)
-            type2_count[i] = internal_type2 if not current_is_up else 0
+            type2_count[i] = internal_type2 if (not current_is_up and prior_ok) else 0
         else:
             type2_count[i] = 0
 
@@ -1684,8 +1713,51 @@ def get_parquet_stats(filepath: str):
         run_stats["upDist"] = calc_distribution(up_runs)
         run_stats["dnDist"] = calc_distribution(dn_runs)
 
+    # Calculate total UP and DN bars
+    up_bars = int(is_up_bar.sum())
+    dn_bars = int(is_down_bar.sum())
+
+    # Calculate Type1 MFE stats (MFE_clr_Bars decay for Type1 signals)
+    type1_mfe_stats = {"upDecay": [], "dnDecay": [], "upTotal": 0, "dnTotal": 0}
+    if 'Type1' in df.columns and 'MFE_clr_Bars' in df.columns:
+        # UP Type1: Type1 > 0 (UP bars in State +3 transitions)
+        up_type1_mask = df['Type1'] > 0
+        # DN Type1: Type1 < 0 (DN bars in State -3 transitions)
+        dn_type1_mask = df['Type1'] < 0
+
+        up_type1_mfe = df.loc[up_type1_mask, 'MFE_clr_Bars'].tolist()
+        dn_type1_mfe = df.loc[dn_type1_mask, 'MFE_clr_Bars'].tolist()
+
+        type1_mfe_stats["upTotal"] = len(up_type1_mfe)
+        type1_mfe_stats["dnTotal"] = len(dn_type1_mfe)
+
+        # Decay thresholds
+        thresholds = [1, 2, 3, 4, 5, 7, 10, 15, 20]
+
+        if up_type1_mfe:
+            type1_mfe_stats["upDecay"] = [
+                {
+                    "threshold": t,
+                    "count": sum(1 for v in up_type1_mfe if v >= t),
+                    "pct": round(sum(1 for v in up_type1_mfe if v >= t) / len(up_type1_mfe) * 100, 1)
+                }
+                for t in thresholds if sum(1 for v in up_type1_mfe if v >= t) > 0
+            ]
+
+        if dn_type1_mfe:
+            type1_mfe_stats["dnDecay"] = [
+                {
+                    "threshold": t,
+                    "count": sum(1 for v in dn_type1_mfe if v >= t),
+                    "pct": round(sum(1 for v in dn_type1_mfe if v >= t) / len(dn_type1_mfe) * 100, 1)
+                }
+                for t in thresholds if sum(1 for v in dn_type1_mfe if v >= t) > 0
+            ]
+
     return {
         "totalBars": total_bars,
+        "upBars": up_bars,
+        "dnBars": dn_bars,
         "maStats": ma_stats,
         "allMaStats": {
             "aboveAll": above_all,
@@ -1697,7 +1769,8 @@ def get_parquet_stats(filepath: str):
         },
         "runStats": run_stats,
         "chopStats": chop_stats,
-        "stateStats": state_stats
+        "stateStats": state_stats,
+        "type1MfeStats": type1_mfe_stats
     }
 
 
