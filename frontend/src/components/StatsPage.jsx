@@ -23,7 +23,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     )
   }
 
-  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, type1MfeStats } = stats
+  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats } = stats
 
   const pct = (count, total) => total > 0 ? ((count / total) * 100).toFixed(0) : '0'
 
@@ -51,6 +51,30 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     }
   ]
 
+  // Build beyond table data
+  const beyondRows = beyondMaStats ? [
+    ...beyondMaStats.map((ma, idx) => ({
+      label: `MA(${ma.period})`,
+      colorClass: `ma-color-${idx + 1}`,
+      above: ma.above,
+      below: ma.below,
+      aboveUp: ma.aboveUp ?? 0,
+      aboveDown: ma.aboveDown ?? 0,
+      belowUp: ma.belowUp ?? 0,
+      belowDown: ma.belowDown ?? 0,
+    })),
+    {
+      label: 'ALL MAs',
+      colorClass: 'ma-color-all',
+      above: beyondAllMaStats.aboveAll,
+      below: beyondAllMaStats.belowAll,
+      aboveUp: beyondAllMaStats.aboveAllUp ?? 0,
+      aboveDown: beyondAllMaStats.aboveAllDown ?? 0,
+      belowUp: beyondAllMaStats.belowAllUp ?? 0,
+      belowDown: beyondAllMaStats.belowAllDown ?? 0,
+    }
+  ] : null
+
   return (
     <div className="stats-page">
       {/* File Header */}
@@ -59,12 +83,42 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         <span className="stats-total">{totalBars.toLocaleString()} bars</span>
       </div>
 
+      {/* User Settings */}
+      {settings && (
+        <div className="stats-module">
+          <table className="stats-table">
+            <thead>
+              <tr className="module-title-row">
+                <th colSpan="3" className="module-title" data-tooltip="User-configured parameters for this dataset">USER SETTINGS</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="settings-row">
+                <td className="settings-cell"><span className="settings-label">Brick Size</span><span className="settings-value">{settings.brickSize}</span></td>
+                <td className="settings-cell"><span className="settings-label">Reversal</span><span className="settings-value">{settings.reversalSize}</span></td>
+                <td className="settings-cell"><span className="settings-label">Wicks</span><span className="settings-value">{settings.wickMode}</span></td>
+              </tr>
+              <tr className="settings-row">
+                <td className="settings-cell"><span className="settings-label">ADR</span><span className="settings-value">{settings.adrPeriod}</span></td>
+                <td className="settings-cell"><span className="settings-label">Chop</span><span className="settings-value">{settings.chopPeriod}</span></td>
+                <td className="settings-cell"></td>
+              </tr>
+              <tr className="settings-row">
+                <td className="settings-cell"><span className="settings-label">MA 1</span><span className="settings-value">{settings.ma1Period}</span></td>
+                <td className="settings-cell"><span className="settings-label">MA 2</span><span className="settings-value">{settings.ma2Period}</span></td>
+                <td className="settings-cell"><span className="settings-label">MA 3</span><span className="settings-value">{settings.ma3Period}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* General Stats */}
       <div className="stats-module">
         <table className="stats-table">
           <thead>
             <tr className="module-title-row">
-              <th colSpan="3" className="module-title">GENERAL</th>
+              <th colSpan="3" className="module-title" data-tooltip="Total bar count with UP and DN breakdown">GENERAL</th>
             </tr>
             <tr>
               <th>Total Bars</th>
@@ -88,7 +142,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
           <table className="stats-table">
             <thead>
               <tr className="module-title-row">
-                <th colSpan="3" className="module-title">GLOBAL CHOP INDEX</th>
+                <th colSpan="3" className="module-title" data-tooltip="Percentage of bars that reverse direction from the prior bar">GLOBAL CHOP INDEX</th>
               </tr>
               <tr>
                 <th>Reversal Bars</th>
@@ -113,7 +167,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
           <table className="stats-table">
             <thead>
               <tr className="module-title-row">
-                <th colSpan="5" className="module-title">STATE DISTRIBUTION</th>
+                <th colSpan="5" className="module-title" data-tooltip="Bar count and UP/DN breakdown per MA alignment state (+3 to -3)">STATE DISTRIBUTION</th>
               </tr>
               <tr>
                 <th>State</th>
@@ -140,72 +194,12 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         </div>
       )}
 
-      {/* Type1 MFE Stats */}
-      {type1MfeStats && (type1MfeStats.upDecay?.length > 0 || type1MfeStats.dnDecay?.length > 0) && (
-        <div className="stats-module run-distribution">
-          <div className="module-title-row standalone-title">
-            <span className="module-title">TYPE1 MFE (Bars)</span>
-          </div>
-          <div className="run-tables-row">
-            {/* UP Type1 Decay Table */}
-            {type1MfeStats.upDecay?.length > 0 && (
-              <table className="stats-table run-table">
-                <thead>
-                  <tr className="module-title-row">
-                    <th colSpan="3" className="module-title up-title">UP TYPE1 ({type1MfeStats.upTotal})</th>
-                  </tr>
-                  <tr>
-                    <th>&gt;= Bars</th>
-                    <th>Count</th>
-                    <th>%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {type1MfeStats.upDecay.map(row => (
-                    <tr key={row.threshold}>
-                      <td>{row.threshold}+</td>
-                      <td>{row.count}</td>
-                      <td className="up">{row.pct}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            {/* DN Type1 Decay Table */}
-            {type1MfeStats.dnDecay?.length > 0 && (
-              <table className="stats-table run-table">
-                <thead>
-                  <tr className="module-title-row">
-                    <th colSpan="3" className="module-title dn-title">DN TYPE1 ({type1MfeStats.dnTotal})</th>
-                  </tr>
-                  <tr>
-                    <th>&gt;= Bars</th>
-                    <th>Count</th>
-                    <th>%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {type1MfeStats.dnDecay.map(row => (
-                    <tr key={row.threshold}>
-                      <td>{row.threshold}+</td>
-                      <td>{row.count}</td>
-                      <td className="dn">{row.pct}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Bar Location Stats */}
       <div className="stats-module">
         <table className="stats-table">
           <thead>
             <tr className="module-title-row">
-              <th colSpan="7" className="module-title">BAR LOCATION</th>
+              <th colSpan="7" className="module-title" data-tooltip="Bars where close is above or below each MA">BAR LOCATION(ALL)</th>
             </tr>
             <tr>
               <th></th>
@@ -238,6 +232,46 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         </table>
       </div>
 
+      {/* Beyond Bar Location Stats */}
+      {beyondRows && (
+        <div className="stats-module">
+          <table className="stats-table">
+            <thead>
+              <tr className="module-title-row">
+                <th colSpan="7" className="module-title" data-tooltip="Bars entirely above or below each MA (no part of the bar touches the MA)">BAR LOCATION(BEYOND)</th>
+              </tr>
+              <tr>
+                <th></th>
+                <th colSpan="3">Above</th>
+                <th colSpan="3">Below</th>
+              </tr>
+              <tr>
+                <th>MA</th>
+                <th>Count</th>
+                <th className="up">UP%</th>
+                <th className="dn">DN%</th>
+                <th>Count</th>
+                <th className="up">UP%</th>
+                <th className="dn">DN%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {beyondRows.map(row => (
+                <tr key={row.label}>
+                  <td className={row.colorClass}>{row.label}</td>
+                  <td>{row.above} <span className="pct">({pct(row.above, totalBars)}%)</span></td>
+                  <td className={`up${row.aboveUp > row.aboveDown ? ' highlight' : ''}`}>{pct(row.aboveUp, row.above)}%</td>
+                  <td className={`dn${row.aboveDown > row.aboveUp ? ' highlight' : ''}`}>{pct(row.aboveDown, row.above)}%</td>
+                  <td>{row.below} <span className="pct">({pct(row.below, totalBars)}%)</span></td>
+                  <td className={`up${row.belowUp > row.belowDown ? ' highlight' : ''}`}>{pct(row.belowUp, row.below)}%</td>
+                  <td className={`dn${row.belowDown > row.belowUp ? ' highlight' : ''}`}>{pct(row.belowDown, row.below)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* Run Distribution Stats */}
       {runStats && (runStats.upDecay?.length > 0 || runStats.dnDecay?.length > 0) && (
         <div className="stats-module run-distribution">
@@ -247,7 +281,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               <table className="stats-table run-table">
                 <thead>
                   <tr className="module-title-row">
-                    <th colSpan="3" className="module-title up-title">UP RUNS DECAY</th>
+                    <th colSpan="3" className="module-title up-title" data-tooltip="Survival rate of consecutive UP bar runs at each threshold">UP RUNS DECAY</th>
                   </tr>
                   <tr>
                     <th>&gt;= Bars</th>
@@ -272,7 +306,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               <table className="stats-table run-table">
                 <thead>
                   <tr className="module-title-row">
-                    <th colSpan="3" className="module-title dn-title">DN RUNS DECAY</th>
+                    <th colSpan="3" className="module-title dn-title" data-tooltip="Survival rate of consecutive DN bar runs at each threshold">DN RUNS DECAY</th>
                   </tr>
                   <tr>
                     <th>&gt;= Bars</th>
@@ -304,7 +338,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               <table className="stats-table run-table">
                 <thead>
                   <tr className="module-title-row">
-                    <th colSpan="3" className="module-title up-title">UP RUNS DISTRIBUTION</th>
+                    <th colSpan="3" className="module-title up-title" data-tooltip="Frequency distribution of consecutive UP bar run lengths">UP RUNS DISTRIBUTION</th>
                   </tr>
                   <tr>
                     <th>Bars</th>
@@ -329,7 +363,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               <table className="stats-table run-table">
                 <thead>
                   <tr className="module-title-row">
-                    <th colSpan="3" className="module-title dn-title">DN RUNS DISTRIBUTION</th>
+                    <th colSpan="3" className="module-title dn-title" data-tooltip="Frequency distribution of consecutive DN bar run lengths">DN RUNS DISTRIBUTION</th>
                   </tr>
                   <tr>
                     <th>Bars</th>

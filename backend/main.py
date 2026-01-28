@@ -1180,7 +1180,8 @@ async def generate_stats(instrument: str, request: StatsRequest):
         ema_values = calculate_ema(df['close'], period)
         ema_columns[period] = ema_values  # Store for State calculation
         df[f'EMA_rawDistance({period})'] = (df['close'] - ema_values).round(5)
-        df[f'EMA_normDistance({period})'] = ((df['close'] - ema_values) / df['currentADR']).round(5)
+        df[f'EMA_adrDistance({period})'] = ((df['close'] - ema_values) / df['currentADR']).round(5)
+        df[f'EMA_rrDistance({period})'] = ((df['close'] - ema_values) / request.reversal_size).round(5)
 
     # Calculate DD (drawdown/wick size in price units)
     # UP brick (close > open): wick extends below open -> DD = open - low
@@ -1404,7 +1405,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Rolling sum of reversals over chop_period, then divide by period
     df['chop(rolling)'] = (reversals.rolling(window=request.chop_period, min_periods=request.chop_period).sum() / request.chop_period).round(2)
 
-    # Calculate MFE_clr_Bars (forward-looking consecutive same-color bars)
+    # Calculate FX_clr_Bars (forward-looking consecutive same-color bars)
     # For each bar, count how many subsequent bars match its color
     is_up_arr = is_up.values
     n = len(is_up_arr)
@@ -1420,9 +1421,9 @@ async def generate_stats(instrument: str, request: StatsRequest):
                 break
         mfe_clr_bars[i] = count
 
-    df['MFE_clr_Bars'] = mfe_clr_bars
+    df['FX_clr_Bars'] = mfe_clr_bars
 
-    # Calculate MFE_clr_price (price move during consecutive same-color run)
+    # Calculate FX_clr_price (price move during consecutive same-color run)
     # For each bar, find price difference to the last consecutive same-color bar
     close_arr = df['close'].values
     mfe_clr_price = np.zeros(n, dtype=float)
@@ -1430,18 +1431,18 @@ async def generate_stats(instrument: str, request: StatsRequest):
     for i in range(n):
         if mfe_clr_bars[i] > 0:
             last_match_idx = i + mfe_clr_bars[i]
-            mfe_clr_price[i] = close_arr[last_match_idx] - close_arr[i]
+            mfe_clr_price[i] = abs(close_arr[last_match_idx] - close_arr[i])
         # else: remains 0
 
-    df['MFE_clr_price'] = pd.Series(mfe_clr_price).round(5).values
+    df['FX_clr_price'] = pd.Series(mfe_clr_price).round(5).values
 
-    # Calculate MFE_clr_ADR (ADR-normalized version)
-    df['MFE_clr_ADR'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
+    # Calculate FX_clr_ADR (ADR-normalized version)
+    df['FX_clr_ADR'] = (df['FX_clr_price'] / df['currentADR']).round(2)
 
-    # Calculate MFE_clr_RR (Reversal-normalized version)
-    df['MFE_clr_RR'] = (df['MFE_clr_price'] / df['reversal_size']).round(2)
+    # Calculate FX_clr_RR (Reversal-normalized version)
+    df['FX_clr_RR'] = (df['FX_clr_price'] / df['reversal_size']).round(2)
 
-    # Calculate MFE_MA columns (price move until first opposite-color bar closes beyond MA)
+    # Calculate FX_MA columns (price move until first opposite-color bar closes beyond MA)
     for idx, period in enumerate(ma_periods, start=1):
         # Get EMA values for this period
         ema_values = calculate_ema(df['close'], period)
@@ -1451,6 +1452,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
         for i in range(n):
             current_is_up = is_up_arr[i]
             current_close = close_arr[i]
+            rev_size = df['reversal_size'].iloc[i]
 
             # Look forward for first opposite-color bar closing beyond MA
             for j in range(i + 1, n):
@@ -1458,21 +1460,21 @@ async def generate_stats(instrument: str, request: StatsRequest):
                     if current_is_up:
                         # Current is UP, looking for DOWN bar closing below MA
                         if close_arr[j] < ema_values[j]:
-                            mfe_ma_price[i] = close_arr[j] - current_close
+                            mfe_ma_price[i] = max(close_arr[j] - current_close, -rev_size)
                             break
                     else:
                         # Current is DOWN, looking for UP bar closing above MA
                         if close_arr[j] > ema_values[j]:
-                            mfe_ma_price[i] = close_arr[j] - current_close
+                            mfe_ma_price[i] = max(current_close - close_arr[j], -rev_size)
                             break
             # If no qualifying bar found, remains NaN
 
-        df[f'MFE_MA{idx}_Price'] = pd.Series(mfe_ma_price).round(5).values
-        df[f'MFE_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
-        df[f'MFE_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
+        df[f'FX_MA{idx}_Price'] = pd.Series(mfe_ma_price).round(5).values
+        df[f'FX_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
+        df[f'FX_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
 
     # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
-    required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
+    required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods] + [f'FX_MA{idx}_Price' for idx in range(1, len(ma_periods) + 1)]
     df = df.dropna(subset=required_columns)
 
     # Clean up helper column
@@ -1487,6 +1489,33 @@ async def generate_stats(instrument: str, request: StatsRequest):
         "rows": len(df),
         "instrument": instrument
     }
+
+
+@app.get("/parquet-data")
+def get_parquet_data(filepath: str):
+    """Return raw parquet data as JSON (columns + rows)."""
+    parquet_path = Path(filepath)
+
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"Parquet file not found: {filepath}")
+
+    try:
+        df = pd.read_parquet(parquet_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read parquet: {str(e)}")
+
+    if len(df) == 0:
+        raise HTTPException(status_code=400, detail="Parquet file contains no data")
+
+    # Convert datetime columns to strings for JSON serialization
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].astype(str)
+
+    columns = df.columns.tolist()
+    rows = df.values.tolist()
+
+    return {"columns": columns, "rows": rows, "totalRows": len(rows)}
 
 
 @app.get("/parquet-stats")
@@ -1612,6 +1641,55 @@ def get_parquet_stats(filepath: str):
     below_all_up = int((below_all_mask & is_up_bar).sum())
     below_all_down = int((below_all_mask & is_down_bar).sum())
 
+    # Calculate "beyond" bar location stats (bar fully above/below MA - both open and close)
+    beyond_ma_stats = []
+    beyond_above_all_mask = pd.Series([True] * total_bars, index=df.index)
+    beyond_below_all_mask = pd.Series([True] * total_bars, index=df.index)
+
+    for period in ma_periods:
+        col_name = f'EMA_rawDistance({period})'
+        if col_name in df.columns:
+            # Derive EMA from close - rawDistance
+            ema = df['close'] - df[col_name]
+            beyond_above_mask = df['low'] > ema
+            beyond_below_mask = df['high'] < ema
+
+            beyond_above_count = int(beyond_above_mask.sum())
+            beyond_below_count = int(beyond_below_mask.sum())
+
+            beyond_above_up = int((beyond_above_mask & is_up_bar).sum())
+            beyond_above_down = int((beyond_above_mask & is_down_bar).sum())
+            beyond_below_up = int((beyond_below_mask & is_up_bar).sum())
+            beyond_below_down = int((beyond_below_mask & is_down_bar).sum())
+
+            beyond_above_all_mask &= beyond_above_mask
+            beyond_below_all_mask &= beyond_below_mask
+        else:
+            beyond_above_count = 0
+            beyond_below_count = 0
+            beyond_above_up = 0
+            beyond_above_down = 0
+            beyond_below_up = 0
+            beyond_below_down = 0
+
+        beyond_ma_stats.append({
+            "period": period,
+            "above": beyond_above_count,
+            "below": beyond_below_count,
+            "aboveUp": beyond_above_up,
+            "aboveDown": beyond_above_down,
+            "belowUp": beyond_below_up,
+            "belowDown": beyond_below_down
+        })
+
+    # Calculate beyond bars above/below ALL MAs
+    beyond_above_all = int(beyond_above_all_mask.sum())
+    beyond_below_all = int(beyond_below_all_mask.sum())
+    beyond_above_all_up = int((beyond_above_all_mask & is_up_bar).sum())
+    beyond_above_all_down = int((beyond_above_all_mask & is_down_bar).sum())
+    beyond_below_all_up = int((beyond_below_all_mask & is_up_bar).sum())
+    beyond_below_all_down = int((beyond_below_all_mask & is_down_bar).sum())
+
     # Calculate run distribution (consecutive bar runs)
     run_stats = {"upRuns": [], "dnRuns": [], "upDecay": [], "dnDecay": []}
 
@@ -1719,19 +1797,22 @@ def get_parquet_stats(filepath: str):
     up_bars = int(is_up_bar.sum())
     dn_bars = int(is_down_bar.sum())
 
-    # Calculate Type1 MFE stats (MFE_clr_Bars decay for Type1 signals)
+    # Calculate Type1 MFE stats (FX_clr_Bars decay for Type1 signals)
     type1_mfe_stats = {
         "upDecay": [], "dnDecay": [], "upTotal": 0, "dnTotal": 0,
-        "upAdrDist": [], "dnAdrDist": [], "upRrDist": [], "dnRrDist": []
+        "upAdrDist": [], "dnAdrDist": [], "upRrDist": [], "dnRrDist": [],
+        "upMa1RrDist": [], "dnMa1RrDist": [],
+        "upMa2RrDist": [], "dnMa2RrDist": [],
+        "upMa3RrDist": [], "dnMa3RrDist": []
     }
-    if 'Type1' in df.columns and 'MFE_clr_Bars' in df.columns:
+    if 'Type1' in df.columns and 'FX_clr_Bars' in df.columns:
         # UP Type1: Type1 > 0 (UP bars in State +3 transitions)
         up_type1_mask = df['Type1'] > 0
         # DN Type1: Type1 < 0 (DN bars in State -3 transitions)
         dn_type1_mask = df['Type1'] < 0
 
-        up_type1_mfe = df.loc[up_type1_mask, 'MFE_clr_Bars'].tolist()
-        dn_type1_mfe = df.loc[dn_type1_mask, 'MFE_clr_Bars'].tolist()
+        up_type1_mfe = df.loc[up_type1_mask, 'FX_clr_Bars'].tolist()
+        dn_type1_mfe = df.loc[dn_type1_mask, 'FX_clr_Bars'].tolist()
 
         type1_mfe_stats["upTotal"] = len(up_type1_mfe)
         type1_mfe_stats["dnTotal"] = len(dn_type1_mfe)
@@ -1806,17 +1887,52 @@ def get_parquet_stats(filepath: str):
             return distribution
 
         # Get ADR and RR values for Type1 signals
-        if 'MFE_clr_ADR' in df.columns:
-            up_adr = df.loc[up_type1_mask, 'MFE_clr_ADR'].tolist()
-            dn_adr = df.loc[dn_type1_mask, 'MFE_clr_ADR'].tolist()
+        if 'FX_clr_ADR' in df.columns:
+            up_adr = df.loc[up_type1_mask, 'FX_clr_ADR'].tolist()
+            dn_adr = df.loc[dn_type1_mask, 'FX_clr_ADR'].tolist()
             type1_mfe_stats["upAdrDist"] = calc_decimal_dist(up_adr)
             type1_mfe_stats["dnAdrDist"] = calc_decimal_dist(dn_adr, use_abs=True)
 
-        if 'MFE_clr_RR' in df.columns:
-            up_rr = df.loc[up_type1_mask, 'MFE_clr_RR'].tolist()
-            dn_rr = df.loc[dn_type1_mask, 'MFE_clr_RR'].tolist()
+        if 'FX_clr_RR' in df.columns:
+            up_rr = df.loc[up_type1_mask, 'FX_clr_RR'].tolist()
+            dn_rr = df.loc[dn_type1_mask, 'FX_clr_RR'].tolist()
             type1_mfe_stats["upRrDist"] = calc_decimal_dist(up_rr)
             type1_mfe_stats["dnRrDist"] = calc_decimal_dist(dn_rr, use_abs=True)
+
+        # MA RR distributions
+        if 'FX_MA1_RR' in df.columns:
+            up_ma1_rr = df.loc[up_type1_mask, 'FX_MA1_RR'].tolist()
+            dn_ma1_rr = df.loc[dn_type1_mask, 'FX_MA1_RR'].tolist()
+            type1_mfe_stats["upMa1RrDist"] = calc_decimal_dist(up_ma1_rr)
+            type1_mfe_stats["dnMa1RrDist"] = calc_decimal_dist(dn_ma1_rr, use_abs=True)
+
+        if 'FX_MA2_RR' in df.columns:
+            up_ma2_rr = df.loc[up_type1_mask, 'FX_MA2_RR'].tolist()
+            dn_ma2_rr = df.loc[dn_type1_mask, 'FX_MA2_RR'].tolist()
+            type1_mfe_stats["upMa2RrDist"] = calc_decimal_dist(up_ma2_rr)
+            type1_mfe_stats["dnMa2RrDist"] = calc_decimal_dist(dn_ma2_rr, use_abs=True)
+
+        if 'FX_MA3_RR' in df.columns:
+            up_ma3_rr = df.loc[up_type1_mask, 'FX_MA3_RR'].tolist()
+            dn_ma3_rr = df.loc[dn_type1_mask, 'FX_MA3_RR'].tolist()
+            type1_mfe_stats["upMa3RrDist"] = calc_decimal_dist(up_ma3_rr)
+            type1_mfe_stats["dnMa3RrDist"] = calc_decimal_dist(dn_ma3_rr, use_abs=True)
+
+    # Extract settings stored in parquet columns
+    settings = {}
+    for col, key in [
+        ('adr_period', 'adrPeriod'),
+        ('brick_size', 'brickSize'),
+        ('reversal_size', 'reversalSize'),
+        ('wick_mode', 'wickMode'),
+        ('ma1_period', 'ma1Period'),
+        ('ma2_period', 'ma2Period'),
+        ('ma3_period', 'ma3Period'),
+        ('chopPeriod', 'chopPeriod'),
+    ]:
+        if col in df.columns:
+            val = df[col].iloc[0]
+            settings[key] = val.item() if hasattr(val, 'item') else val
 
     return {
         "totalBars": total_bars,
@@ -1834,7 +1950,17 @@ def get_parquet_stats(filepath: str):
         "runStats": run_stats,
         "chopStats": chop_stats,
         "stateStats": state_stats,
-        "type1MfeStats": type1_mfe_stats
+        "settings": settings,
+        "type1MfeStats": type1_mfe_stats,
+        "beyondMaStats": beyond_ma_stats,
+        "beyondAllMaStats": {
+            "aboveAll": beyond_above_all,
+            "belowAll": beyond_below_all,
+            "aboveAllUp": beyond_above_all_up,
+            "aboveAllDown": beyond_above_all_down,
+            "belowAllUp": beyond_below_all_up,
+            "belowAllDown": beyond_below_all_down
+        }
     }
 
 

@@ -60,6 +60,25 @@
   margin-bottom: var(--space-3);
 }
 
+/* Settings rows inside USER SETTINGS module */
+.settings-row td.settings-cell {
+  text-align: center;
+  padding: var(--space-1) var(--space-2);
+}
+
+.settings-cell .settings-label {
+  display: block;
+  font-size: 10px;
+  color: var(--text-primary);
+}
+
+.settings-cell .settings-value {
+  display: block;
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 /* Table */
 .stats-table {
   border-collapse: collapse;
@@ -93,6 +112,29 @@
   letter-spacing: 0.1em;
   padding: 8px 12px;
   text-align: left;
+  position: relative;
+  cursor: default;
+}
+
+/* Custom tooltip for module titles */
+.stats-table th.module-title[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 12px;
+  top: 100%;
+  z-index: 100;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
 
 .stats-table th.up {

@@ -4,6 +4,7 @@ import ChartArea from './components/ChartArea'
 import RenkoControls from './components/RenkoControls'
 import MAControls from './components/MAControls'
 import StatsPage from './components/StatsPage'
+import ParquetPage from './components/ParquetPage'
 import './styles/App.css'
 
 const API_BASE = 'http://localhost:8000'
@@ -59,6 +60,10 @@ function App() {
   const [isLoadingStats, setIsLoadingStats] = useState(false)
   const [statsFilename, setStatsFilename] = useState('')
   const [statsFilepath, setStatsFilepath] = useState('')
+  const [parquetData, setParquetData] = useState(null)
+  const [isLoadingParquet, setIsLoadingParquet] = useState(false)
+  const [parquetFilename, setParquetFilename] = useState('')
+  const [statsView, setStatsView] = useState('stats') // 'stats' | 'parquet'
   // Data import settings
   const [dataFormat, setDataFormat] = useState('MT4')  // 'MT4' or 'J4X'
   const [intervalType, setIntervalType] = useState('M')  // 'M' for minute, 'T' for tick
@@ -217,6 +222,7 @@ function App() {
   }, [])
 
   const handleShowStats = async (filepath) => {
+    setStatsView('stats')
     setIsLoadingStats(true)
     setStatsFilepath(filepath)
 
@@ -239,6 +245,30 @@ function App() {
       setStatsData(null)
     } finally {
       setIsLoadingStats(false)
+    }
+  }
+
+  const handleShowParquet = async (filepath) => {
+    setStatsView('parquet')
+    setIsLoadingParquet(true)
+    const filename = filepath.split(/[/\\]/).pop()
+    setParquetFilename(filename)
+
+    try {
+      const res = await fetch(`${API_BASE}/parquet-data?filepath=${encodeURIComponent(filepath)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setParquetData(data)
+      } else {
+        const error = await res.json()
+        console.error('Failed to load parquet:', error.detail)
+        setParquetData(null)
+      }
+    } catch (err) {
+      console.error('Failed to load parquet:', err)
+      setParquetData(null)
+    } finally {
+      setIsLoadingParquet(false)
     }
   }
 
@@ -669,7 +699,9 @@ function App() {
             selectedStatsFile={selectedStatsFile}
             onStatsFileSelect={handleStatsFileSelect}
             onShowStats={handleShowStats}
+            onShowParquet={handleShowParquet}
             isLoadingStats={isLoadingStats}
+            isLoadingParquet={isLoadingParquet}
             onDeleteStatsFile={handleDeleteStatsFile}
             onDeleteAllStatsFiles={handleDeleteAllStatsFiles}
           />
@@ -680,7 +712,14 @@ function App() {
         </aside>
 
         <main className="main-content">
-          {activeTab === 'stats' ? (
+          {activeTab === 'stats' && statsView === 'parquet' ? (
+            <ParquetPage
+              data={parquetData}
+              filename={parquetFilename}
+              isLoading={isLoadingParquet}
+              onBack={() => setStatsView('stats')}
+            />
+          ) : activeTab === 'stats' ? (
             <StatsPage
               stats={statsData}
               filename={statsFilename}
