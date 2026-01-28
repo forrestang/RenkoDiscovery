@@ -1720,7 +1720,10 @@ def get_parquet_stats(filepath: str):
     dn_bars = int(is_down_bar.sum())
 
     # Calculate Type1 MFE stats (MFE_clr_Bars decay for Type1 signals)
-    type1_mfe_stats = {"upDecay": [], "dnDecay": [], "upTotal": 0, "dnTotal": 0}
+    type1_mfe_stats = {
+        "upDecay": [], "dnDecay": [], "upTotal": 0, "dnTotal": 0,
+        "upAdrDist": [], "dnAdrDist": [], "upRrDist": [], "dnRrDist": []
+    }
     if 'Type1' in df.columns and 'MFE_clr_Bars' in df.columns:
         # UP Type1: Type1 > 0 (UP bars in State +3 transitions)
         up_type1_mask = df['Type1'] > 0
@@ -1733,8 +1736,8 @@ def get_parquet_stats(filepath: str):
         type1_mfe_stats["upTotal"] = len(up_type1_mfe)
         type1_mfe_stats["dnTotal"] = len(dn_type1_mfe)
 
-        # Decay thresholds
-        thresholds = [1, 2, 3, 4, 5, 7, 10, 15, 20]
+        # Decay thresholds (same as Run Decay)
+        thresholds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 50, 100, 200, 500]
 
         if up_type1_mfe:
             type1_mfe_stats["upDecay"] = [
@@ -1755,6 +1758,65 @@ def get_parquet_stats(filepath: str):
                 }
                 for t in thresholds if sum(1 for v in dn_type1_mfe if v >= t) > 0
             ]
+
+        # Auto-binned distribution for decimal values (ADR/RR)
+        # use_abs=True for DN values to display as positive
+        def calc_decimal_dist(values, use_abs=False):
+            if not values:
+                return []
+            values = [v for v in values if not np.isnan(v)]
+            if not values:
+                return []
+            if use_abs:
+                values = [abs(v) for v in values]
+
+            total = len(values)
+            # Define bins for normalized values (positive only since DN uses abs)
+            # First bin is exactly 0, then ranges use [low, high) means low <= v < high
+            bin_edges = [
+                (0, 0.5, '>0 to <0.5'),
+                (0.5, 1, '0.5 to <1'),
+                (1, 1.5, '1 to <1.5'),
+                (1.5, 2, '1.5 to <2'),
+                (2, 3, '2 to <3'),
+                (3, 5, '3 to <5'),
+                (5, float('inf'), '5+'),
+            ]
+
+            distribution = []
+            # Special row for exactly 0
+            zero_count = sum(1 for v in values if v == 0)
+            distribution.append({
+                "label": "0",
+                "count": zero_count,
+                "pct": round(zero_count / total * 100, 1)
+            })
+            # Show all bins even if count is 0
+            for i, (low, high, label) in enumerate(bin_edges):
+                # First bin excludes lower bound (>0), rest include lower bound
+                if i == 0:
+                    count = sum(1 for v in values if low < v < high)
+                else:
+                    count = sum(1 for v in values if low <= v < high)
+                distribution.append({
+                    "label": label,
+                    "count": count,
+                    "pct": round(count / total * 100, 1)
+                })
+            return distribution
+
+        # Get ADR and RR values for Type1 signals
+        if 'MFE_clr_ADR' in df.columns:
+            up_adr = df.loc[up_type1_mask, 'MFE_clr_ADR'].tolist()
+            dn_adr = df.loc[dn_type1_mask, 'MFE_clr_ADR'].tolist()
+            type1_mfe_stats["upAdrDist"] = calc_decimal_dist(up_adr)
+            type1_mfe_stats["dnAdrDist"] = calc_decimal_dist(dn_adr, use_abs=True)
+
+        if 'MFE_clr_RR' in df.columns:
+            up_rr = df.loc[up_type1_mask, 'MFE_clr_RR'].tolist()
+            dn_rr = df.loc[dn_type1_mask, 'MFE_clr_RR'].tolist()
+            type1_mfe_stats["upRrDist"] = calc_decimal_dist(up_rr)
+            type1_mfe_stats["dnRrDist"] = calc_decimal_dist(dn_rr, use_abs=True)
 
     return {
         "totalBars": total_bars,
