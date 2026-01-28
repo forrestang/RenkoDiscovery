@@ -23,7 +23,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     )
   }
 
-  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats } = stats
+  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats, emaRrDecay, wickDist } = stats
 
   const pct = (count, total) => total > 0 ? ((count / total) * 100).toFixed(0) : '0'
 
@@ -276,55 +276,35 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       {runStats && (runStats.upDecay?.length > 0 || runStats.dnDecay?.length > 0) && (
         <div className="stats-module run-distribution">
           <div className="run-tables-row">
-            {/* UP Runs Decay Table */}
-            {runStats.upDecay?.length > 0 && (
-              <table className="stats-table run-table">
-                <thead>
-                  <tr className="module-title-row">
-                    <th colSpan="3" className="module-title up-title" data-tooltip="Survival rate of consecutive UP bar runs at each threshold">UP RUNS DECAY</th>
-                  </tr>
-                  <tr>
-                    <th>&gt;= Bars</th>
-                    <th>Count</th>
-                    <th>%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runStats.upDecay.map(row => (
+            <table className="stats-table run-table">
+              <thead>
+                <tr className="module-title-row">
+                  <th colSpan="5" className="module-title" data-tooltip="Survival rate of consecutive bar runs at each threshold">RUNS DECAY</th>
+                </tr>
+                <tr>
+                  <th>&gt;= Bars</th>
+                  <th>UP Count</th>
+                  <th>UP %</th>
+                  <th>DN Count</th>
+                  <th>DN %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(runStats.upDecay || runStats.dnDecay || []).map((row, i) => {
+                  const upRow = runStats.upDecay?.[i];
+                  const dnRow = runStats.dnDecay?.[i];
+                  return (
                     <tr key={row.threshold}>
                       <td>{row.threshold}+</td>
-                      <td>{row.count}</td>
-                      <td className="up">{row.pct}%</td>
+                      <td>{upRow?.count ?? ''}</td>
+                      <td className="up">{upRow ? `${upRow.pct}%` : ''}</td>
+                      <td>{dnRow?.count ?? ''}</td>
+                      <td className="dn">{dnRow ? `${dnRow.pct}%` : ''}</td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            {/* DN Runs Decay Table */}
-            {runStats.dnDecay?.length > 0 && (
-              <table className="stats-table run-table">
-                <thead>
-                  <tr className="module-title-row">
-                    <th colSpan="3" className="module-title dn-title" data-tooltip="Survival rate of consecutive DN bar runs at each threshold">DN RUNS DECAY</th>
-                  </tr>
-                  <tr>
-                    <th>&gt;= Bars</th>
-                    <th>Count</th>
-                    <th>%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runStats.dnDecay.map(row => (
-                    <tr key={row.threshold}>
-                      <td>{row.threshold}+</td>
-                      <td>{row.count}</td>
-                      <td className="dn">{row.pct}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -333,55 +313,110 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       {runStats && (runStats.upDist?.length > 0 || runStats.dnDist?.length > 0) && (
         <div className="stats-module run-distribution">
           <div className="run-tables-row">
-            {/* UP Runs Distribution Table */}
-            {runStats.upDist?.length > 0 && (
+            <table className="stats-table run-table">
+              <thead>
+                <tr className="module-title-row">
+                  <th colSpan="5" className="module-title" data-tooltip="Frequency distribution of consecutive bar run lengths">RUNS DISTRIBUTION</th>
+                </tr>
+                <tr>
+                  <th>Bars</th>
+                  <th>UP Count</th>
+                  <th>UP %</th>
+                  <th>DN Count</th>
+                  <th>DN %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(runStats.upDist || runStats.dnDist || []).map((row, i) => {
+                  const upRow = runStats.upDist?.[i];
+                  const dnRow = runStats.dnDist?.[i];
+                  return (
+                    <tr key={row.label}>
+                      <td>{row.label}</td>
+                      <td>{upRow?.count ?? ''}</td>
+                      <td className="up">{upRow ? `${upRow.pct}%` : ''}</td>
+                      <td>{dnRow?.count ?? ''}</td>
+                      <td className="dn">{dnRow ? `${dnRow.pct}%` : ''}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {/* EMA RR Distance Decay Tables */}
+      {emaRrDecay && emaRrDecay.map(entry => (
+        (entry.upDecay?.length > 0 || entry.dnDecay?.length > 0) && (
+          <div className="stats-module run-distribution" key={entry.period}>
+            <div className="run-tables-row">
               <table className="stats-table run-table">
                 <thead>
                   <tr className="module-title-row">
-                    <th colSpan="3" className="module-title up-title" data-tooltip="Frequency distribution of consecutive UP bar run lengths">UP RUNS DISTRIBUTION</th>
+                    <th colSpan="5" className="module-title" data-tooltip={`Survival rate of EMA RR distance from EMA(${entry.period})`}>EMA RR DISTANCE DECAY ({entry.period})</th>
                   </tr>
                   <tr>
-                    <th>Bars</th>
-                    <th>Count</th>
-                    <th>%</th>
+                    <th>&gt;= RR</th>
+                    <th>UP Count</th>
+                    <th>UP %</th>
+                    <th>DN Count</th>
+                    <th>DN %</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runStats.upDist.map(row => (
-                    <tr key={row.label}>
-                      <td>{row.label}</td>
-                      <td>{row.count}</td>
-                      <td className="up">{row.pct}%</td>
-                    </tr>
-                  ))}
+                  {(entry.upDecay || entry.dnDecay || []).map((row, i) => {
+                    const upRow = entry.upDecay?.[i];
+                    const dnRow = entry.dnDecay?.[i];
+                    return (
+                      <tr key={row.threshold}>
+                        <td>{row.threshold}+</td>
+                        <td>{upRow?.count ?? ''}</td>
+                        <td className="up">{upRow ? `${upRow.pct}%` : ''}</td>
+                        <td>{dnRow?.count ?? ''}</td>
+                        <td className="dn">{dnRow ? `${dnRow.pct}%` : ''}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-            )}
+            </div>
+          </div>
+        )
+      ))}
 
-            {/* DN Runs Distribution Table */}
-            {runStats.dnDist?.length > 0 && (
-              <table className="stats-table run-table">
-                <thead>
-                  <tr className="module-title-row">
-                    <th colSpan="3" className="module-title dn-title" data-tooltip="Frequency distribution of consecutive DN bar run lengths">DN RUNS DISTRIBUTION</th>
-                  </tr>
-                  <tr>
-                    <th>Bars</th>
-                    <th>Count</th>
-                    <th>%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runStats.dnDist.map(row => (
+      {/* Wick Distribution (DD_RR) */}
+      {wickDist && (wickDist.upDist?.length > 0 || wickDist.dnDist?.length > 0) && (
+        <div className="stats-module run-distribution">
+          <div className="run-tables-row">
+            <table className="stats-table run-table">
+              <thead>
+                <tr className="module-title-row">
+                  <th colSpan="5" className="module-title" data-tooltip="Distribution of wick size (DD_RR) on UP and DN bars">WICK DISTRIBUTION</th>
+                </tr>
+                <tr>
+                  <th>RR</th>
+                  <th>UP Count</th>
+                  <th>UP %</th>
+                  <th>DN Count</th>
+                  <th>DN %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(wickDist.upDist || wickDist.dnDist || []).map((row, i) => {
+                  const upRow = wickDist.upDist?.[i];
+                  const dnRow = wickDist.dnDist?.[i];
+                  return (
                     <tr key={row.label}>
                       <td>{row.label}</td>
-                      <td>{row.count}</td>
-                      <td className="dn">{row.pct}%</td>
+                      <td>{upRow?.count ?? ''}</td>
+                      <td className="up">{upRow ? `${upRow.pct}%` : ''}</td>
+                      <td>{dnRow?.count ?? ''}</td>
+                      <td className="dn">{dnRow ? `${dnRow.pct}%` : ''}</td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

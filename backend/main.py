@@ -1722,76 +1722,59 @@ def get_parquet_stats(filepath: str):
         run_stats["upRuns"] = up_runs
         run_stats["dnRuns"] = dn_runs
 
-        # Calculate decay thresholds
+        # Calculate decay thresholds (unified so UP and DN rows always align)
         thresholds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 50, 100, 200, 500]
+        max_either = max(max(up_runs) if up_runs else 0, max(dn_runs) if dn_runs else 0)
+        active_thresholds = [t for t in thresholds if t <= max_either]
 
-        if up_runs:
-            max_up = max(up_runs)
-            active_up_thresholds = [t for t in thresholds if t <= max_up]
-            run_stats["upDecay"] = [
-                {
-                    "threshold": t,
-                    "count": sum(1 for r in up_runs if r >= t),
-                    "pct": round(sum(1 for r in up_runs if r >= t) / len(up_runs) * 100, 1)
-                }
-                for t in active_up_thresholds
-            ]
+        up_total = len(up_runs)
+        dn_total = len(dn_runs)
+        run_stats["upDecay"] = [
+            {
+                "threshold": t,
+                "count": sum(1 for r in up_runs if r >= t),
+                "pct": round(sum(1 for r in up_runs if r >= t) / up_total * 100, 1) if up_total > 0 else 0
+            }
+            for t in active_thresholds
+        ]
+        run_stats["dnDecay"] = [
+            {
+                "threshold": t,
+                "count": sum(1 for r in dn_runs if r >= t),
+                "pct": round(sum(1 for r in dn_runs if r >= t) / dn_total * 100, 1) if dn_total > 0 else 0
+            }
+            for t in active_thresholds
+        ]
 
-        if dn_runs:
-            max_dn = max(dn_runs)
-            active_dn_thresholds = [t for t in thresholds if t <= max_dn]
-            run_stats["dnDecay"] = [
-                {
-                    "threshold": t,
-                    "count": sum(1 for r in dn_runs if r >= t),
-                    "pct": round(sum(1 for r in dn_runs if r >= t) / len(dn_runs) * 100, 1)
-                }
-                for t in active_dn_thresholds
-            ]
+        # Calculate auto-binned distribution (unified bins for UP and DN)
+        from collections import Counter
+        up_counts = Counter(up_runs) if up_runs else Counter()
+        dn_counts = Counter(dn_runs) if dn_runs else Counter()
+        max_run = max(max(up_runs) if up_runs else 0, max(dn_runs) if dn_runs else 0)
 
-        # Calculate auto-binned distribution
-        def calc_distribution(runs):
-            if not runs:
-                return []
+        bins = []
+        for i in range(1, min(11, max_run + 1)):
+            bins.append((i, i, str(i)))
+        ranges = [(11, 20), (21, 50), (51, 100), (101, 200), (201, 500), (501, 1000)]
+        for start, end in ranges:
+            if start <= max_run:
+                actual_end = min(end, max_run)
+                label = str(start) if start == actual_end else f"{start}-{actual_end}"
+                bins.append((start, actual_end, label))
 
-            from collections import Counter
-            counts = Counter(runs)
-            max_run = max(runs)
-            total = len(runs)
-
-            # Define bin edges: 1-5 individual, then ranges
-            bins = []
-
-            # Individual bins for 1-5
-            for i in range(1, min(6, max_run + 1)):
-                bins.append((i, i, str(i)))
-
-            # Range bins for larger values
-            ranges = [(6, 10), (11, 20), (21, 50), (51, 100), (101, 200), (201, 500), (501, 1000)]
-            for start, end in ranges:
-                if start <= max_run:
-                    actual_end = min(end, max_run)
-                    if start == actual_end:
-                        label = str(start)
-                    else:
-                        label = f"{start}-{actual_end}"
-                    bins.append((start, actual_end, label))
-
-            # Build distribution
-            distribution = []
+        def build_dist(counts_map, total):
+            dist = []
             for start, end, label in bins:
-                count = sum(counts.get(i, 0) for i in range(start, end + 1))
-                if count > 0:
-                    distribution.append({
-                        "label": label,
-                        "count": count,
-                        "pct": round(count / total * 100, 1)
-                    })
+                count = sum(counts_map.get(i, 0) for i in range(start, end + 1))
+                dist.append({
+                    "label": label,
+                    "count": count,
+                    "pct": round(count / total * 100, 1) if total > 0 else 0
+                })
+            return dist
 
-            return distribution
-
-        run_stats["upDist"] = calc_distribution(up_runs)
-        run_stats["dnDist"] = calc_distribution(dn_runs)
+        run_stats["upDist"] = build_dist(up_counts, len(up_runs))
+        run_stats["dnDist"] = build_dist(dn_counts, len(dn_runs))
 
     # Calculate total UP and DN bars
     up_bars = int(is_up_bar.sum())
@@ -1918,6 +1901,69 @@ def get_parquet_stats(filepath: str):
             type1_mfe_stats["upMa3RrDist"] = calc_decimal_dist(up_ma3_rr)
             type1_mfe_stats["dnMa3RrDist"] = calc_decimal_dist(dn_ma3_rr, use_abs=True)
 
+    # Wick Distribution (DD_RR split by bar direction)
+    wick_dist = {"upDist": [], "dnDist": []}
+    if 'DD_RR' in df.columns:
+        up_wick = df.loc[is_up_bar, 'DD_RR'].dropna().tolist()
+        dn_wick = df.loc[is_down_bar, 'DD_RR'].dropna().tolist()
+
+        def calc_wick_dist(values):
+            if not values:
+                return []
+            values = [v for v in values if not np.isnan(v)]
+            if not values:
+                return []
+            total = len(values)
+            bin_edges = [
+                (0, 0.5, '>0 to <0.5'),
+                (0.5, 1, '0.5 to <1'),
+                (1, 1.5, '1 to <1.5'),
+                (1.5, 2, '1.5 to <2'),
+                (2, 3, '2 to <3'),
+                (3, 5, '3 to <5'),
+                (5, float('inf'), '5+'),
+            ]
+            distribution = []
+            zero_count = sum(1 for v in values if v == 0)
+            distribution.append({"label": "0", "count": zero_count, "pct": round(zero_count / total * 100, 1)})
+            for i, (low, high, label) in enumerate(bin_edges):
+                if i == 0:
+                    count = sum(1 for v in values if low < v < high)
+                else:
+                    count = sum(1 for v in values if low <= v < high)
+                distribution.append({"label": label, "count": count, "pct": round(count / total * 100, 1)})
+            return distribution
+
+        wick_dist["upDist"] = calc_wick_dist(up_wick)
+        wick_dist["dnDist"] = calc_wick_dist(dn_wick)
+
+    # EMA RR Distance decay tables
+    ema_rr_decay = []
+    rr_thresholds = [0.5, 1, 1.5, 2, 3, 5, 10, 20, 50]
+    for period in ma_periods:
+        col_name = f'EMA_rrDistance({period})'
+        if col_name in df.columns:
+            values = df[col_name].dropna()
+            pos_values = values[values > 0]
+            neg_values = values[values < 0].abs()
+            up_total = len(pos_values)
+            dn_total = len(neg_values)
+            up_decay = []
+            for t in rr_thresholds:
+                cnt = int((pos_values >= t).sum())
+                up_decay.append({"threshold": t, "count": cnt, "pct": round(cnt / up_total * 100) if up_total > 0 else 0})
+            dn_decay = []
+            for t in rr_thresholds:
+                cnt = int((neg_values >= t).sum())
+                dn_decay.append({"threshold": t, "count": cnt, "pct": round(cnt / dn_total * 100) if dn_total > 0 else 0})
+            ema_rr_decay.append({
+                "period": period,
+                "upDecay": up_decay,
+                "dnDecay": dn_decay,
+                "upTotal": up_total,
+                "dnTotal": dn_total
+            })
+
     # Extract settings stored in parquet columns
     settings = {}
     for col, key in [
@@ -1960,7 +2006,9 @@ def get_parquet_stats(filepath: str):
             "aboveAllDown": beyond_above_all_down,
             "belowAllUp": beyond_below_all_up,
             "belowAllDown": beyond_below_all_down
-        }
+        },
+        "emaRrDecay": ema_rr_decay,
+        "wickDist": wick_dist
     }
 
 
