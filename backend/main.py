@@ -1443,8 +1443,14 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Calculate FX_clr_ADR (ADR-normalized version)
     df['FX_clr_ADR'] = (df['FX_clr_price'] / df['currentADR']).round(2)
 
+    # Calculate FX_clr_ADR(adj) (subtract 1RR in ADR units for realistic exit)
+    df['FX_clr_ADR(adj)'] = (df['FX_clr_ADR'] - (df['reversal_size'] / df['currentADR'])).round(2)
+
     # Calculate FX_clr_RR (Reversal-normalized version)
     df['FX_clr_RR'] = (df['FX_clr_price'] / df['reversal_size']).round(2)
+
+    # Calculate FX_clr_RR(adj) (subtract 1RR for realistic exit)
+    df['FX_clr_RR(adj)'] = (df['FX_clr_RR'] - 1).round(2)
 
     # Calculate FX_MA columns (price move until first opposite-color bar closes beyond MA)
     for idx, period in enumerate(ma_periods, start=1):
@@ -2014,6 +2020,8 @@ def get_parquet_stats(filepath: str):
     extra_metric_cols = []
     for col_name, field_name in [
         ('FX_clr_ADR', 'clr_adr'),
+        ('FX_clr_ADR(adj)', 'clr_adr_adj'),
+        ('FX_clr_RR(adj)', 'rr_adj'),
         ('FX_MA1_RR', 'ma1_rr'),
         ('FX_MA1_ADR', 'ma1_adr'),
         ('FX_MA2_RR', 'ma2_rr'),
@@ -2026,7 +2034,7 @@ def get_parquet_stats(filepath: str):
 
     if 'FX_clr_RR' in df.columns:
         # Columns to pull from the subset
-        needed_cols_base = ['FX_clr_RR', 'currentADR', 'reversal_size'] + [c for c, _ in extra_metric_cols] + (['chop(rolling)'] if 'chop(rolling)' in df.columns else [])
+        needed_cols_base = ['FX_clr_RR'] + [c for c, _ in extra_metric_cols] + (['chop(rolling)'] if 'chop(rolling)' in df.columns else [])
         for key, col, cond in [
             ('type1Up', 'Type1', 'pos'),
             ('type1Dn', 'Type1', 'neg'),
@@ -2043,14 +2051,6 @@ def get_parquet_stats(filepath: str):
                 points = []
                 for i in range(len(n_vals)):
                     pt = {"n": int(n_vals[i]), "rr": float(rr_vals[i]), "idx": int(idx_vals[i])}
-                    # rr_adj = FX_clr_RR - 1
-                    pt["rr_adj"] = round(rr_vals[i] - 1, 2)
-                    # clr_adr_adj = FX_clr_ADR - (reversal_size / currentADR)
-                    if 'FX_clr_ADR' in subset.columns and 'currentADR' in subset.columns:
-                        clr_adr = float(subset['FX_clr_ADR'].iloc[i])
-                        cur_adr = float(subset['currentADR'].iloc[i])
-                        rev_size = float(subset['reversal_size'].iloc[i])
-                        pt["clr_adr_adj"] = round(clr_adr - (rev_size / cur_adr), 2) if cur_adr != 0 else 0.0
                     for col_name, field_name in extra_metric_cols:
                         pt[field_name] = round(float(subset[col_name].iloc[i]), 2)
                     if 'chop(rolling)' in subset.columns:
