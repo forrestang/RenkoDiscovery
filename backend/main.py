@@ -1970,19 +1970,23 @@ def get_parquet_stats(filepath: str):
 
     # Raw signal data for client-side filtering and cumulation
     signal_data = {}
-    # Determine which extra RR columns are available
-    extra_rr_cols = []
+    # Determine which extra metric columns are available
+    extra_metric_cols = []
     for col_name, field_name in [
+        ('FX_clr_ADR', 'clr_adr'),
         ('FX_MA1_RR', 'ma1_rr'),
+        ('FX_MA1_ADR', 'ma1_adr'),
         ('FX_MA2_RR', 'ma2_rr'),
+        ('FX_MA2_ADR', 'ma2_adr'),
         ('FX_MA3_RR', 'ma3_rr'),
+        ('FX_MA3_ADR', 'ma3_adr'),
     ]:
         if col_name in df.columns:
-            extra_rr_cols.append((col_name, field_name))
+            extra_metric_cols.append((col_name, field_name))
 
     if 'FX_clr_RR' in df.columns:
         # Columns to pull from the subset
-        needed_cols_base = ['FX_clr_RR'] + [c for c, _ in extra_rr_cols]
+        needed_cols_base = ['FX_clr_RR', 'currentADR', 'reversal_size'] + [c for c, _ in extra_metric_cols]
         for key, col, cond in [
             ('type1Up', 'Type1', 'pos'),
             ('type1Dn', 'Type1', 'neg'),
@@ -2001,7 +2005,13 @@ def get_parquet_stats(filepath: str):
                     pt = {"n": int(n_vals[i]), "rr": float(rr_vals[i]), "idx": int(idx_vals[i])}
                     # rr_adj = FX_clr_RR - 1
                     pt["rr_adj"] = round(rr_vals[i] - 1, 2)
-                    for col_name, field_name in extra_rr_cols:
+                    # clr_adr_adj = FX_clr_ADR - (reversal_size / currentADR)
+                    if 'FX_clr_ADR' in subset.columns and 'currentADR' in subset.columns:
+                        clr_adr = float(subset['FX_clr_ADR'].iloc[i])
+                        cur_adr = float(subset['currentADR'].iloc[i])
+                        rev_size = float(subset['reversal_size'].iloc[i])
+                        pt["clr_adr_adj"] = round(clr_adr - (rev_size / cur_adr), 2) if cur_adr != 0 else 0.0
+                    for col_name, field_name in extra_metric_cols:
                         pt[field_name] = round(float(subset[col_name].iloc[i]), 2)
                     points.append(pt)
                 signal_data[key] = points

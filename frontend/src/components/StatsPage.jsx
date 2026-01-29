@@ -5,11 +5,16 @@ import './StatsPage.css'
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
 const RR_FIELDS = [
-  { value: 'rr', label: 'FX_clr_RR' },
-  { value: 'rr_adj', label: 'FX_clr_RR (adj)' },
-  { value: 'ma1_rr', label: 'FX_MA1_RR' },
-  { value: 'ma2_rr', label: 'FX_MA2_RR' },
-  { value: 'ma3_rr', label: 'FX_MA3_RR' },
+  { value: 'rr', label: 'FX_clr_RR', desc: 'MFE to color change, reversal-normalized' },
+  { value: 'rr_adj', label: 'FX_clr_RR (adj)', desc: 'FX_clr_RR - 1, subtracts one reversal for a more realistic exit estimate' },
+  { value: 'clr_adr', label: 'FX_clr_ADR', desc: 'MFE to color change, ADR-normalized' },
+  { value: 'clr_adr_adj', label: 'FX_clr_ADR (adj)', desc: 'FX_clr_ADR minus one reversal in ADR units (reversal_size / currentADR), for a more realistic exit estimate' },
+  { value: 'ma1_rr', label: 'FX_MA1_RR', desc: 'Move until price closes beyond MA1, reversal-normalized' },
+  { value: 'ma1_adr', label: 'FX_MA1_ADR', desc: 'Move until price closes beyond MA1, ADR-normalized' },
+  { value: 'ma2_rr', label: 'FX_MA2_RR', desc: 'Move until price closes beyond MA2, reversal-normalized' },
+  { value: 'ma2_adr', label: 'FX_MA2_ADR', desc: 'Move until price closes beyond MA2, ADR-normalized' },
+  { value: 'ma3_rr', label: 'FX_MA3_RR', desc: 'Move until price closes beyond MA3, reversal-normalized' },
+  { value: 'ma3_adr', label: 'FX_MA3_ADR', desc: 'Move until price closes beyond MA3, ADR-normalized' },
 ]
 
 const RR_BUCKETS = [
@@ -436,7 +441,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               onChange={e => setSelectedRRField(e.target.value)}
             >
               {RR_FIELDS.map(f => (
-                <option key={f.value} value={f.value}>{f.label}</option>
+                <option key={f.value} value={f.value} title={f.desc}>{f.label}</option>
               ))}
             </select>
           </div>
