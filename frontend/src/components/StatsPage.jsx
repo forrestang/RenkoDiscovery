@@ -5,12 +5,12 @@ import './StatsPage.css'
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
 const RR_BUCKETS = [
-  { label: '<=0', test: v => v <= 0 },
-  { label: '0-1', test: v => v > 0 && v <= 1 },
-  { label: '1-2', test: v => v > 1 && v <= 2 },
-  { label: '2-3', test: v => v > 2 && v <= 3 },
-  { label: '3-5', test: v => v > 3 && v <= 5 },
-  { label: '5+', test: v => v > 5 },
+  { label: '<=0',      test: v => v <= 0 },
+  { label: '>0 to <1', test: v => v > 0 && v < 1 },
+  { label: '1 to <2',  test: v => v >= 1 && v < 2 },
+  { label: '2 to <3',  test: v => v >= 2 && v < 3 },
+  { label: '3 to <5',  test: v => v >= 3 && v < 5 },
+  { label: '5+',       test: v => v >= 5 },
 ]
 
 function computeSignalStats(upArr, dnArr) {
@@ -479,11 +479,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         </div>
       )}
 
-      {/* Signal Type 1 Stats */}
-      {renderSignalModule('SIGNAL TYPE 1', type1Stats, 'Type1 pullback signal performance (MA1 touch reversal pattern in +3/-3 state)')}
-
-      {/* Signal Type 2 Stats */}
-      {renderSignalModule('SIGNAL TYPE 2', type2Stats, 'Type2 wick signal performance (wicked bars in +3/-3 state)')}
+      <div className="signal-modules-row">
+        {renderSignalModule('SIGNAL TYPE 1', type1Stats, 'Type1 pullback signal performance (MA1 touch reversal pattern in +3/-3 state)')}
+        {renderSignalModule('SIGNAL TYPE 2', type2Stats, 'Type2 wick signal performance (wicked bars in +3/-3 state)')}
+      </div>
 
       {/* User Settings */}
       {settings && (
