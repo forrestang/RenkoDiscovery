@@ -1970,7 +1970,19 @@ def get_parquet_stats(filepath: str):
 
     # Raw signal data for client-side filtering and cumulation
     signal_data = {}
+    # Determine which extra RR columns are available
+    extra_rr_cols = []
+    for col_name, field_name in [
+        ('FX_MA1_RR', 'ma1_rr'),
+        ('FX_MA2_RR', 'ma2_rr'),
+        ('FX_MA3_RR', 'ma3_rr'),
+    ]:
+        if col_name in df.columns:
+            extra_rr_cols.append((col_name, field_name))
+
     if 'FX_clr_RR' in df.columns:
+        # Columns to pull from the subset
+        needed_cols_base = ['FX_clr_RR'] + [c for c, _ in extra_rr_cols]
         for key, col, cond in [
             ('type1Up', 'Type1', 'pos'),
             ('type1Dn', 'Type1', 'neg'),
@@ -1979,14 +1991,20 @@ def get_parquet_stats(filepath: str):
         ]:
             if col in df.columns:
                 mask = df[col] > 0 if cond == 'pos' else df[col] < 0
-                subset = df.loc[mask, [col, 'FX_clr_RR']].dropna(subset=['FX_clr_RR'])
+                needed_cols = [col] + [c for c in needed_cols_base if c in df.columns]
+                subset = df.loc[mask, needed_cols].dropna(subset=['FX_clr_RR'])
                 n_vals = subset[col].abs().astype(int).values
                 rr_vals = subset['FX_clr_RR'].round(2).values
                 idx_vals = subset.index.values
-                signal_data[key] = [
-                    {"n": int(n_vals[i]), "rr": float(rr_vals[i]), "idx": int(idx_vals[i])}
-                    for i in range(len(n_vals))
-                ]
+                points = []
+                for i in range(len(n_vals)):
+                    pt = {"n": int(n_vals[i]), "rr": float(rr_vals[i]), "idx": int(idx_vals[i])}
+                    # rr_adj = FX_clr_RR - 1
+                    pt["rr_adj"] = round(rr_vals[i] - 1, 2)
+                    for col_name, field_name in extra_rr_cols:
+                        pt[field_name] = round(float(subset[col_name].iloc[i]), 2)
+                    points.append(pt)
+                signal_data[key] = points
 
     # Extract settings stored in parquet columns
     settings = {}

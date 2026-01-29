@@ -4,6 +4,14 @@ import './StatsPage.css'
 
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
+const RR_FIELDS = [
+  { value: 'rr', label: 'FX_clr_RR' },
+  { value: 'rr_adj', label: 'FX_clr_RR (adj)' },
+  { value: 'ma1_rr', label: 'FX_MA1_RR' },
+  { value: 'ma2_rr', label: 'FX_MA2_RR' },
+  { value: 'ma3_rr', label: 'FX_MA3_RR' },
+]
+
 const RR_BUCKETS = [
   { label: '<=0',      test: v => v <= 0 },
   { label: '>0 to <1', test: v => v > 0 && v < 1 },
@@ -13,11 +21,13 @@ const RR_BUCKETS = [
   { label: '5+',       test: v => v >= 5 },
 ]
 
-function computeSignalStats(upArr, dnArr) {
+function computeSignalStats(upArr, dnArr, rrField = 'rr') {
+  const getRR = (p) => p[rrField] ?? 0
+
   const calcSummary = (arr) => {
     if (arr.length === 0) return { count: 0, avgRR: 0, winRate: 0 }
-    const sum = arr.reduce((s, p) => s + p.rr, 0)
-    const wins = arr.filter(p => p.rr > 0).length
+    const sum = arr.reduce((s, p) => s + getRR(p), 0)
+    const wins = arr.filter(p => getRR(p) > 0).length
     return {
       count: arr.length,
       avgRR: (sum / arr.length).toFixed(2),
@@ -29,7 +39,7 @@ function computeSignalStats(upArr, dnArr) {
     const byN = {}
     arr.forEach(p => {
       if (!byN[p.n]) byN[p.n] = []
-      byN[p.n].push(p.rr)
+      byN[p.n].push(getRR(p))
     })
     return Object.entries(byN)
       .sort(([a], [b]) => Number(a) - Number(b))
@@ -45,8 +55,8 @@ function computeSignalStats(upArr, dnArr) {
     const total = arr.length
     return RR_BUCKETS.map(b => ({
       label: b.label,
-      count: arr.filter(p => b.test(p.rr)).length,
-      pct: total > 0 ? (arr.filter(p => b.test(p.rr)).length / total * 100).toFixed(0) : '0',
+      count: arr.filter(p => b.test(getRR(p))).length,
+      pct: total > 0 ? (arr.filter(p => b.test(getRR(p))).length / total * 100).toFixed(0) : '0',
     }))
   }
 
@@ -92,6 +102,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   const [type1Enabled, setType1Enabled] = useState(true)
   const [type2Enabled, setType2Enabled] = useState(true)
   const [comboMode, setComboMode] = useState(false)
+  const [selectedRRField, setSelectedRRField] = useState('rr')
 
   // Collapsible filter panel — persist to localStorage
   const [filtersOpen, setFiltersOpen] = useState(() => {
@@ -120,6 +131,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     return result
   }, [signalData, selectedType1Ns, selectedType2Ns, type1Enabled, type2Enabled])
 
+  const rrLabel = RR_FIELDS.find(f => f.value === selectedRRField)?.label || 'RR'
+
   // Build equity curve traces from filtered data
   const equityCurveTraces = useMemo(() => {
     if (!filteredSignalData) return []
@@ -136,7 +149,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         const xs = []
         const ys = []
         arr.forEach((pt, i) => {
-          cum += pt.rr
+          cum += (pt[selectedRRField] ?? 0)
           xs.push(i + 1)
           ys.push(Math.round(cum * 100) / 100)
         })
@@ -147,10 +160,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
           mode: 'lines',
           name: s.name,
           line: { color: s.color, width: 2, dash: s.dash },
-          hovertemplate: '%{y:.2f} RR<extra>%{fullData.name}</extra>',
+          hovertemplate: `%{y:.2f} ${rrLabel}<extra>%{fullData.name}</extra>`,
         }
       })
-  }, [filteredSignalData])
+  }, [filteredSignalData, selectedRRField, rrLabel])
 
   // Build combined UP+DN traces (interleaved chronologically by row index)
   const comboCurveTraces = useMemo(() => {
@@ -169,7 +182,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         const xs = []
         const ys = []
         merged.forEach((pt, i) => {
-          cum += pt.rr
+          cum += (pt[selectedRRField] ?? 0)
           xs.push(i + 1)
           ys.push(Math.round(cum * 100) / 100)
         })
@@ -180,22 +193,22 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
           mode: 'lines',
           name: c.name,
           line: { color: c.color, width: 2, dash: c.dash },
-          hovertemplate: '%{y:.2f} RR<extra>%{fullData.name}</extra>',
+          hovertemplate: `%{y:.2f} ${rrLabel}<extra>%{fullData.name}</extra>`,
         }
       })
       .filter(Boolean)
-  }, [filteredSignalData])
+  }, [filteredSignalData, selectedRRField, rrLabel])
 
   // Compute signal type stats from filtered data
   const type1Stats = useMemo(() => {
     if (!filteredSignalData.type1Up && !filteredSignalData.type1Dn) return null
-    return computeSignalStats(filteredSignalData.type1Up || [], filteredSignalData.type1Dn || [])
-  }, [filteredSignalData])
+    return computeSignalStats(filteredSignalData.type1Up || [], filteredSignalData.type1Dn || [], selectedRRField)
+  }, [filteredSignalData, selectedRRField])
 
   const type2Stats = useMemo(() => {
     if (!filteredSignalData.type2Up && !filteredSignalData.type2Dn) return null
-    return computeSignalStats(filteredSignalData.type2Up || [], filteredSignalData.type2Dn || [])
-  }, [filteredSignalData])
+    return computeSignalStats(filteredSignalData.type2Up || [], filteredSignalData.type2Dn || [], selectedRRField)
+  }, [filteredSignalData, selectedRRField])
 
   const hasSignalData = signalData && Object.values(signalData).some(a => a?.length > 0)
 
@@ -417,7 +430,15 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         <div className="stats-module equity-curve-module">
           <div className="equity-curve-header">
             <span className="module-title-text">CUMULATIVE R CURVE</span>
-            <span className="equity-curve-source">FX_clr_RR</span>
+            <select
+              className="fx-column-select"
+              value={selectedRRField}
+              onChange={e => setSelectedRRField(e.target.value)}
+            >
+              {RR_FIELDS.map(f => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
           </div>
           <div className="curve-filters-toggle">
             <span className="curve-filters-toggle-left" onClick={() => setFiltersOpen(prev => !prev)}>
