@@ -413,6 +413,7 @@ function App() {
   }
 
   const loadChart = async (instrument) => {
+    if (instrument === activeInstrument && chartData) return;  // already loaded
     setActiveInstrument(instrument)
     setRenkoData(null) // Clear renko data when loading new instrument
     setIsLoading(true)
@@ -704,6 +705,7 @@ function App() {
             isLoadingParquet={isLoadingParquet}
             onDeleteStatsFile={handleDeleteStatsFile}
             onDeleteAllStatsFiles={handleDeleteAllStatsFiles}
+            isLoading={isLoading}
           />
 
           {!sidebarCollapsed && (

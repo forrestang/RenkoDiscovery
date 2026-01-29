@@ -44,7 +44,8 @@ function Sidebar({
   isLoadingStats,
   isLoadingParquet,
   onDeleteStatsFile,
-  onDeleteAllStatsFiles
+  onDeleteAllStatsFiles,
+  isLoading
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -492,7 +493,12 @@ function Sidebar({
                         title={item.date_range ? `${item.date_range.start?.split('T')[0]} to ${item.date_range.end?.split('T')[0]}` : ''}
                       >
                         <div className="cache-item-info">
-                          <span className="cache-instrument mono">{item.instrument}</span>
+                          <span className="cache-instrument mono">
+                          {item.instrument}
+                          {activeInstrument === item.instrument && isLoading && (
+                            <span className="spinner cache-spinner" />
+                          )}
+                        </span>
                           <div className="cache-tags">
                             {item.data_format && (
                               <span className={`cache-tag format-tag ${item.data_format.toLowerCase()}`}>

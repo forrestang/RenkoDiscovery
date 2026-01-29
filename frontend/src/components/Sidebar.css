@@ -551,6 +551,14 @@
   to { transform: rotate(360deg); }
 }
 
+.cache-spinner {
+  width: 12px;
+  height: 12px;
+  margin-left: 6px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
 /* Results */
 .results-section {
   animation: fadeIn 0.3s ease;
