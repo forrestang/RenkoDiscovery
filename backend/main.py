@@ -1596,6 +1596,46 @@ def get_parquet_stats(filepath: str):
                 "dnPct": round(dn_count / count * 100, 0) if count > 0 else 0
             })
 
+    # Calculate Chop Regime Stats (Module 3)
+    chop_regime_stats = None
+    if 'chop(rolling)' in df.columns:
+        chop_col = df['chop(rolling)']
+        chop_regimes = [
+            {"key": "low", "label": "Low (<0.2)", "mask": chop_col < 0.2},
+            {"key": "mid", "label": "Mid (0.2-0.4)", "mask": (chop_col >= 0.2) & (chop_col <= 0.4)},
+            {"key": "high", "label": "High (>0.4)", "mask": chop_col > 0.4},
+        ]
+        # Table 1: Overview (all bars)
+        overview = []
+        for regime in chop_regimes:
+            rmask = regime["mask"]
+            rcount = int(rmask.sum())
+            up_c = int((rmask & is_up_bar).sum())
+            dn_c = int((rmask & is_down_bar).sum())
+            overview.append({
+                "label": regime["label"],
+                "key": regime["key"],
+                "count": rcount,
+                "upPct": round(up_c / rcount * 100, 0) if rcount > 0 else 0,
+                "dnPct": round(dn_c / rcount * 100, 0) if rcount > 0 else 0,
+            })
+        # Table 2: State distribution by chop regime
+        state_by_chop = []
+        if 'State' in df.columns:
+            for state in [3, 2, 1, -1, -2, -3]:
+                state_mask = df['State'] == state
+                row = {"state": state}
+                for regime in chop_regimes:
+                    rmask = regime["mask"]
+                    regime_total = int(rmask.sum())
+                    in_state = int((rmask & state_mask).sum())
+                    row[regime["key"]] = round(in_state / regime_total * 100, 1) if regime_total > 0 else 0
+                state_by_chop.append(row)
+        chop_regime_stats = {
+            "overview": overview,
+            "stateByChop": state_by_chop,
+        }
+
     for period in ma_periods:
         col_name = f'EMA_rawDistance({period})'
         if col_name in df.columns:
@@ -1986,7 +2026,7 @@ def get_parquet_stats(filepath: str):
 
     if 'FX_clr_RR' in df.columns:
         # Columns to pull from the subset
-        needed_cols_base = ['FX_clr_RR', 'currentADR', 'reversal_size'] + [c for c, _ in extra_metric_cols]
+        needed_cols_base = ['FX_clr_RR', 'currentADR', 'reversal_size'] + [c for c, _ in extra_metric_cols] + (['chop(rolling)'] if 'chop(rolling)' in df.columns else [])
         for key, col, cond in [
             ('type1Up', 'Type1', 'pos'),
             ('type1Dn', 'Type1', 'neg'),
@@ -2013,6 +2053,9 @@ def get_parquet_stats(filepath: str):
                         pt["clr_adr_adj"] = round(clr_adr - (rev_size / cur_adr), 2) if cur_adr != 0 else 0.0
                     for col_name, field_name in extra_metric_cols:
                         pt[field_name] = round(float(subset[col_name].iloc[i]), 2)
+                    if 'chop(rolling)' in subset.columns:
+                        chop_val = subset['chop(rolling)'].iloc[i]
+                        pt["chop"] = round(float(chop_val), 2) if pd.notna(chop_val) else None
                     points.append(pt)
                 signal_data[key] = points
 
@@ -2061,7 +2104,8 @@ def get_parquet_stats(filepath: str):
         },
         "emaRrDecay": ema_rr_decay,
         "wickDist": wick_dist,
-        "signalData": signal_data
+        "signalData": signal_data,
+        "chopRegimeStats": chop_regime_stats
     }
 
 

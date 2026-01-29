@@ -215,6 +215,33 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     return computeSignalStats(filteredSignalData.type2Up || [], filteredSignalData.type2Dn || [], selectedRRField)
   }, [filteredSignalData, selectedRRField])
 
+  // Compute Module 3: Signal performance by chop regime (respects signal filter)
+  const chopSignalPerf = useMemo(() => {
+    if (!filteredSignalData) return null
+    const regimes = [
+      { key: 'low', label: 'Low (<0.2)', test: v => v < 0.2 },
+      { key: 'mid', label: 'Mid (0.2-0.4)', test: v => v >= 0.2 && v <= 0.4 },
+      { key: 'high', label: 'High (>0.4)', test: v => v > 0.4 },
+    ]
+    const getRR = (pt) => pt[selectedRRField] ?? 0
+    const result = regimes.map(r => {
+      const t1 = [...(filteredSignalData.type1Up || []), ...(filteredSignalData.type1Dn || [])].filter(pt => pt.chop != null && r.test(pt.chop))
+      const t2 = [...(filteredSignalData.type2Up || []), ...(filteredSignalData.type2Dn || [])].filter(pt => pt.chop != null && r.test(pt.chop))
+      const calc = (arr) => {
+        if (arr.length === 0) return { count: 0, winPct: 0, avgRR: 0 }
+        const wins = arr.filter(pt => getRR(pt) > 0).length
+        const sum = arr.reduce((s, pt) => s + getRR(pt), 0)
+        return {
+          count: arr.length,
+          winPct: (wins / arr.length * 100).toFixed(0),
+          avgRR: (sum / arr.length).toFixed(2),
+        }
+      }
+      return { ...r, type1: calc(t1), type2: calc(t2) }
+    })
+    return result
+  }, [filteredSignalData, selectedRRField])
+
   const hasSignalData = signalData && Object.values(signalData).some(a => a?.length > 0)
 
   // Per-type chip toggle handlers
@@ -257,7 +284,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     )
   }
 
-  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats, emaRrDecay, wickDist } = stats
+  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats, emaRrDecay, wickDist, chopRegimeStats } = stats
 
   const pct = (count, total) => total > 0 ? ((count / total) * 100).toFixed(0) : '0'
 
@@ -430,9 +457,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         <span className="stats-total">{totalBars.toLocaleString()} bars</span>
       </div>
 
-      {/* Cumulative R Curve */}
+      {/* Module 1: Cumulative R Curve */}
       {hasSignalData && (
-        <div className="stats-module equity-curve-module">
+        <div className="stats-module equity-curve-module module-box">
           <div className="equity-curve-header">
             <span className="module-title-text">CUMULATIVE R CURVE</span>
             <select
@@ -544,10 +571,99 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         </div>
       )}
 
-      <div className="signal-modules-row">
+      {/* Module 2: Signal Type Performance */}
+      <div className="signal-modules-row module-box">
         {renderSignalModule('SIGNAL TYPE 1', type1Stats, 'Type1 pullback signal performance (MA1 touch reversal pattern in +3/-3 state)')}
         {renderSignalModule('SIGNAL TYPE 2', type2Stats, 'Type2 wick signal performance (wicked bars in +3/-3 state)')}
       </div>
+
+      {/* Module 3: Chop Regime Stats */}
+      {chopRegimeStats && (
+        <div className="module-box chop-regime-module">
+          <div className="chop-regime-tables">
+            {/* Table 1: Chop Regime Overview */}
+            <table className="stats-table">
+              <thead>
+                <tr className="module-title-row">
+                  <th colSpan="4" className="module-title" data-tooltip="Bar count and UP/DN breakdown per chop regime (all bars)">CHOP REGIME OVERVIEW</th>
+                </tr>
+                <tr>
+                  <th></th>
+                  {chopRegimeStats.overview.map(r => <th key={r.key}>{r.label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Bar count</td>
+                  {chopRegimeStats.overview.map(r => <td key={r.key}>{r.count.toLocaleString()}</td>)}
+                </tr>
+                <tr>
+                  <td>UP %</td>
+                  {chopRegimeStats.overview.map(r => <td key={r.key} className="up">{r.upPct}%</td>)}
+                </tr>
+                <tr>
+                  <td>DN %</td>
+                  {chopRegimeStats.overview.map(r => <td key={r.key} className="dn">{r.dnPct}%</td>)}
+                </tr>
+              </tbody>
+            </table>
+
+            {/* Table 2: State Distribution by Chop Regime */}
+            {chopRegimeStats.stateByChop?.length > 0 && (
+              <table className="stats-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="4" className="module-title" data-tooltip="State distribution within each chop regime (all bars)">STATE DISTRIBUTION BY CHOP</th>
+                  </tr>
+                  <tr>
+                    <th>State</th>
+                    <th>Low (&lt;0.2)</th>
+                    <th>Mid (0.2-0.4)</th>
+                    <th>High (&gt;0.4)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chopRegimeStats.stateByChop.map(row => (
+                    <tr key={row.state}>
+                      <td className={row.state > 0 ? 'state-up' : row.state < 0 ? 'state-dn' : ''}>
+                        {row.state > 0 ? `+${row.state}` : row.state}
+                      </td>
+                      <td>{row.low}%</td>
+                      <td>{row.mid}%</td>
+                      <td>{row.high}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {/* Table 3: Signal Performance by Chop Regime */}
+            {chopSignalPerf && (
+              <table className="stats-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="4" className="module-title" data-tooltip="Signal performance within each chop regime (signal bars only, respects filters)">SIGNAL PERF BY CHOP</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    <th>Low (&lt;0.2)</th>
+                    <th>Mid (0.2-0.4)</th>
+                    <th>High (&gt;0.4)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>Type1 count</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type1.count}</td>)}</tr>
+                  <tr><td>Type1 win %</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type1.winPct}%</td>)}</tr>
+                  <tr><td>Type1 avg RR</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type1.avgRR}</td>)}</tr>
+                  <tr><td>Type2 count</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.count}</td>)}</tr>
+                  <tr><td>Type2 win %</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.winPct}%</td>)}</tr>
+                  <tr><td>Type2 avg RR</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.avgRR}</td>)}</tr>
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* User Settings */}
       {settings && (

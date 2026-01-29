@@ -55,6 +55,24 @@
 }
 
 
+/* Feint module box outline */
+.module-box {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: var(--space-3);
+}
+
+/* Chop Regime Module (Module 3) */
+.chop-regime-module {
+  margin-bottom: var(--space-3);
+}
+
+.chop-regime-tables {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
 /* Stats Module */
 .signal-modules-row {
   display: flex;

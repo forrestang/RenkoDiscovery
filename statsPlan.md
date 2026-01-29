@@ -1,6 +1,21 @@
 # Stats Page Enhancement Ideas
 
-Independent modules to add to the stats page. Each one adds a new section to the existing `StatsPage.jsx` by computing new aggregations in the backend `get_parquet_stats()` endpoint and rendering them in the frontend. Use Plotly (`react-plotly.js`) for chart-based modules — it supports all needed chart types (line, bar, scatter, heatmap) natively. Module 1 (equity curve) was already built using lightweight-charts (LWC), which is fine to keep.
+## Tab Structure & Filter Hierarchy
+
+The stats page has two categories of modules, each in its own tab:
+
+**Tab A — Signal Stats** (Modules 1, 2, 3 Table 3)
+- These analyze Type1/Type2 signal performance
+- Controlled by the **signal filter** (Type1/Type2 checkboxes + Nth occurrence) and the **FX column dropdown**
+- Both controls live inside this tab — they don't apply globally
+
+**Tab B — All-Bars Stats** (existing modules + new Modules 3 Tables 1-2, 4, 5, 6, 8, 9, 10)
+- These analyze every bar regardless of signal presence
+- Existing modules: General, Global Chop Index, State Distribution, Bar Location (all/beyond), Runs Decay, Runs Distribution, EMA RR Distance Decay, Wick Distribution
+- New modules from this plan: Module 3 Tables 1-2 (chop regime overview + state dist by chop), Module 4 (time-of-day), Module 5 (state x conbars heatmap), Module 6 (state transition matrix), Module 8 (run length vs forward move), Module 9 (drawdown by context), Module 10 (EMA distance scatterplot)
+- Module 7 (chop global toggle) would be a filter control inside this tab, re-filtering all-bars stats by chop regime
+
+---
 
 **Metric note**: The parquet contains three normalizations for most metrics: raw price, ADR-normalized, and RR-normalized. Each module notes which metric is best suited. RR is the default "trade unit" for cross-config comparison. ADR is better when volatility context matters (time-based analysis). Some modules benefit from showing both.
 
@@ -86,9 +101,9 @@ Type2 avg ADR  |   0.33     |     0.04       |   -0.10
 
 ## Module 4: Time-of-Day / Session Patterns
 
-Extract the hour from each bar's `datetime` and compute per-hour stats: bar count (when does the market move?), average barDuration, average FX_clr_RR (which hours trend best?), and average chop. Display as a bar chart by hour, optionally color-coded by trading session (Asia 0-7 UTC, London 7-15, NY 13-21).
+Extract the hour from each bar's `datetime` and compute per-hour stats: bar count (when does the market move?), average barDuration, average FX_clr_ADR (which hours trend best?), and average chop. Display as a bar chart by hour, optionally color-coded by trading session (Asia 0-9 UTC-yellow, London 8-17-red, NY 13-22-blue).  
 
-**Metric**: ADR preferred. Volatility varies by session, so ADR-normalized moves give a fairer comparison across hours. Show FX_clr_ADR as the primary metric, with RR as a secondary option.
+**Metric**: `FX_clr_ADR`. Volatility varies by session, so ADR-normalized moves give a fairer comparison across hours.
 
 ---
 
