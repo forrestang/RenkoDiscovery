@@ -1,6 +1,10 @@
+import React from 'react'
+import Plot from 'react-plotly.js'
 import './StatsPage.css'
 
 function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
+  const equityCurves = stats?.equityCurves
+
   if (isLoading) {
     return (
       <div className="stats-page">
@@ -82,6 +86,63 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         <span className="stats-filename">{filename}</span>
         <span className="stats-total">{totalBars.toLocaleString()} bars</span>
       </div>
+
+      {/* Cumulative R Curve */}
+      {equityCurves && Object.values(equityCurves).some(a => a && a.length > 0) && (
+        <div className="stats-module equity-curve-module">
+          <div className="equity-curve-header">
+            <span className="module-title-text">CUMULATIVE R CURVE</span>
+            <span className="equity-curve-source">FX_clr_RR</span>
+          </div>
+          <Plot
+            data={[
+              { key: 'type1Up', color: '#22c55e', name: 'Type1 UP' },
+              { key: 'type1Dn', color: '#ef4444', name: 'Type1 DN' },
+              { key: 'type2Up', color: '#4ade80', name: 'Type2 UP', dash: 'dot' },
+              { key: 'type2Dn', color: '#f87171', name: 'Type2 DN', dash: 'dot' },
+            ]
+              .filter(s => equityCurves[s.key]?.length > 0)
+              .map(s => ({
+                x: equityCurves[s.key].map(pt => pt.x),
+                y: equityCurves[s.key].map(pt => pt.y),
+                type: 'scatter',
+                mode: 'lines',
+                name: s.name,
+                line: { color: s.color, width: 2, dash: s.dash },
+                hovertemplate: '%{y:.2f} RR<extra>%{fullData.name}</extra>',
+              }))}
+            layout={{
+              height: 300,
+              margin: { t: 8, r: 16, b: 40, l: 50 },
+              paper_bgcolor: '#000000',
+              plot_bgcolor: '#000000',
+              font: { family: 'monospace', size: 11, color: '#a0a0b0' },
+              xaxis: {
+                title: { text: 'Signal #', font: { size: 10 } },
+                gridcolor: 'rgba(255,255,255,0.1)',
+                zeroline: false,
+              },
+              yaxis: {
+                title: { text: 'Cumulative RR', font: { size: 10 } },
+                gridcolor: 'rgba(255,255,255,0.1)',
+                zeroline: true,
+                zerolinecolor: 'rgba(255,255,255,0.15)',
+              },
+              legend: {
+                orientation: 'h',
+                x: 0.5,
+                xanchor: 'center',
+                y: -0.18,
+                font: { size: 10 },
+              },
+              hovermode: 'x unified',
+            }}
+            config={{ displayModeBar: true, responsive: true, modeBarButtonsToRemove: ['toImage', 'lasso2d', 'select2d'] }}
+            useResizeHandler
+            style={{ width: '100%', height: 300 }}
+          />
+        </div>
+      )}
 
       {/* User Settings */}
       {settings && (
