@@ -99,7 +99,7 @@ Type2 avg ADR  |   0.33     |     0.04       |   -0.10
 
 ---
 
-## Module 4: Time-of-Day / Session Patterns
+## Module 4: Time-of-Day / Session Patterns -shit, not using
 
 Extract the hour from each bar's `datetime` and compute per-hour stats: bar count (when does the market move?), average barDuration, average FX_clr_ADR (which hours trend best?), and average chop. Display as a bar chart by hour, optionally color-coded by trading session (Asia 0-9 UTC-yellow, London 8-17-red, NY 13-22-blue).  
 
