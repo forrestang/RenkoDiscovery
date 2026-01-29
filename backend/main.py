@@ -1419,7 +1419,10 @@ async def generate_stats(instrument: str, request: StatsRequest):
                 count += 1
             else:
                 break
-        mfe_clr_bars[i] = count
+        if count == 0:
+            mfe_clr_bars[i] = -int(request.reversal_size / request.brick_size)
+        else:
+            mfe_clr_bars[i] = count
 
     df['FX_clr_Bars'] = mfe_clr_bars
 
@@ -1432,7 +1435,8 @@ async def generate_stats(instrument: str, request: StatsRequest):
         if mfe_clr_bars[i] > 0:
             last_match_idx = i + mfe_clr_bars[i]
             mfe_clr_price[i] = abs(close_arr[last_match_idx] - close_arr[i])
-        # else: remains 0
+        else:
+            mfe_clr_price[i] = -request.reversal_size
 
     df['FX_clr_price'] = pd.Series(mfe_clr_price).round(5).values
 
@@ -1964,6 +1968,26 @@ def get_parquet_stats(filepath: str):
                 "dnTotal": dn_total
             })
 
+    # Raw signal data for client-side filtering and cumulation
+    signal_data = {}
+    if 'FX_clr_RR' in df.columns:
+        for key, col, cond in [
+            ('type1Up', 'Type1', 'pos'),
+            ('type1Dn', 'Type1', 'neg'),
+            ('type2Up', 'Type2', 'pos'),
+            ('type2Dn', 'Type2', 'neg'),
+        ]:
+            if col in df.columns:
+                mask = df[col] > 0 if cond == 'pos' else df[col] < 0
+                subset = df.loc[mask, [col, 'FX_clr_RR']].dropna(subset=['FX_clr_RR'])
+                n_vals = subset[col].abs().astype(int).values
+                rr_vals = subset['FX_clr_RR'].round(2).values
+                idx_vals = subset.index.values
+                signal_data[key] = [
+                    {"n": int(n_vals[i]), "rr": float(rr_vals[i]), "idx": int(idx_vals[i])}
+                    for i in range(len(n_vals))
+                ]
+
     # Extract settings stored in parquet columns
     settings = {}
     for col, key in [
@@ -2008,7 +2032,8 @@ def get_parquet_stats(filepath: str):
             "belowAllDown": beyond_below_all_down
         },
         "emaRrDecay": ema_rr_decay,
-        "wickDist": wick_dist
+        "wickDist": wick_dist,
+        "signalData": signal_data
     }
 
 

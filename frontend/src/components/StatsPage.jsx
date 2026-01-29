@@ -91,6 +91,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   // Type-level on/off toggles
   const [type1Enabled, setType1Enabled] = useState(true)
   const [type2Enabled, setType2Enabled] = useState(true)
+  const [comboMode, setComboMode] = useState(false)
 
   // Collapsible filter panel — persist to localStorage
   const [filtersOpen, setFiltersOpen] = useState(() => {
@@ -149,6 +150,40 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
           hovertemplate: '%{y:.2f} RR<extra>%{fullData.name}</extra>',
         }
       })
+  }, [filteredSignalData])
+
+  // Build combined UP+DN traces (interleaved chronologically by row index)
+  const comboCurveTraces = useMemo(() => {
+    if (!filteredSignalData) return []
+    const combos = [
+      { upKey: 'type1Up', dnKey: 'type1Dn', color: '#facc15', name: 'Type1 Combo' },
+      { upKey: 'type2Up', dnKey: 'type2Dn', color: '#fb923c', name: 'Type2 Combo', dash: 'dot' },
+    ]
+    return combos
+      .map(c => {
+        const ups = filteredSignalData[c.upKey] || []
+        const dns = filteredSignalData[c.dnKey] || []
+        const merged = [...ups, ...dns].sort((a, b) => a.idx - b.idx)
+        if (merged.length === 0) return null
+        let cum = 0
+        const xs = []
+        const ys = []
+        merged.forEach((pt, i) => {
+          cum += pt.rr
+          xs.push(i + 1)
+          ys.push(Math.round(cum * 100) / 100)
+        })
+        return {
+          x: xs,
+          y: ys,
+          type: 'scatter',
+          mode: 'lines',
+          name: c.name,
+          line: { color: c.color, width: 2, dash: c.dash },
+          hovertemplate: '%{y:.2f} RR<extra>%{fullData.name}</extra>',
+        }
+      })
+      .filter(Boolean)
   }, [filteredSignalData])
 
   // Compute signal type stats from filtered data
@@ -398,6 +433,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                 setType1Enabled(false); setType2Enabled(false)
                 setSelectedType1Ns([]); setSelectedType2Ns([])
               }}>Deselect All</button>
+              <button
+                className={`filter-action-btn ${comboMode ? 'active' : ''}`}
+                onClick={() => setComboMode(prev => !prev)}
+              >Combo</button>
             </span>
           </div>
           {filtersOpen && (
@@ -442,9 +481,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               )}
             </div>
           )}
-          {equityCurveTraces.length > 0 && (
+          {(comboMode ? comboCurveTraces : equityCurveTraces).length > 0 && (
             <Plot
-              data={equityCurveTraces}
+              data={comboMode ? comboCurveTraces : equityCurveTraces}
               layout={{
                 height: 300,
                 margin: { t: 8, r: 16, b: 40, l: 50 },

@@ -56,6 +56,12 @@
 
 
 /* Stats Module */
+.signal-modules-row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
 .stats-module {
   margin-bottom: var(--space-3);
 }
@@ -264,6 +270,11 @@
 .filter-action-btn:hover {
   border-color: var(--text-secondary);
   color: var(--text-secondary);
+}
+
+.filter-action-btn.active {
+  border-color: #facc15;
+  color: #facc15;
 }
 
 .collapse-arrow {
