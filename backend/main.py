@@ -1602,6 +1602,30 @@ def get_parquet_stats(filepath: str):
                 "dnPct": round(dn_count / count * 100, 0) if count > 0 else 0
             })
 
+    # Calculate State x Consecutive Bars Heatmap (Module 5)
+    state_conbars_heatmap = None
+    if 'State' in df.columns and 'FX_clr_RR' in df.columns:
+        # Use Con_UP_bars for positive states, Con_DN_bars for negative states
+        # This gives the "with-trend" consecutive bar count for each state
+        heatmap_rows = []
+        max_conbars = 10
+        states = [3, 2, 1, -1, -2, -3]
+        for con in range(1, max_conbars + 1):
+            row = {"conBars": con}
+            for state in states:
+                state_mask = df['State'] == state
+                if state > 0:
+                    con_mask = df['Con_UP_bars'] == con
+                else:
+                    con_mask = df['Con_DN_bars'] == con
+                cell_mask = state_mask & con_mask
+                count = int(cell_mask.sum())
+                avg_rr = round(float(df.loc[cell_mask, 'FX_clr_RR'].mean()), 2) if count > 0 else None
+                row[f"s{state}_count"] = count
+                row[f"s{state}_avgRR"] = avg_rr
+            heatmap_rows.append(row)
+        state_conbars_heatmap = heatmap_rows
+
     # Calculate Chop Regime Stats (Module 3)
     chop_regime_stats = None
     if 'chop(rolling)' in df.columns:
@@ -2105,7 +2129,8 @@ def get_parquet_stats(filepath: str):
         "emaRrDecay": ema_rr_decay,
         "wickDist": wick_dist,
         "signalData": signal_data,
-        "chopRegimeStats": chop_regime_stats
+        "chopRegimeStats": chop_regime_stats,
+        "stateConbarsHeatmap": state_conbars_heatmap
     }
 
 

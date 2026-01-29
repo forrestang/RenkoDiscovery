@@ -293,7 +293,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     )
   }
 
-  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats, emaRrDecay, wickDist, chopRegimeStats } = stats
+  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats, emaRrDecay, wickDist, chopRegimeStats, stateConbarsHeatmap } = stats
 
   const pct = (count, total) => total > 0 ? ((count / total) * 100).toFixed(0) : '0'
 
@@ -1020,6 +1020,65 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               </div>
             </div>
           )}
+
+          {/* Module 5: State x Consecutive Bars Heatmap */}
+          {stateConbarsHeatmap && stateConbarsHeatmap.length > 0 && (() => {
+            const states = [3, 2, 1, -1, -2, -3];
+            const stateLabels = { 3: '+3', 2: '+2', 1: '+1', '-1': '-1', '-2': '-2', '-3': '-3' };
+            // Color scale: green for positive RR, red for negative, white/neutral for zero
+            const cellBg = (avgRR) => {
+              if (avgRR === null || avgRR === undefined) return 'transparent';
+              const clamped = Math.max(-3, Math.min(3, avgRR));
+              if (clamped >= 0) {
+                const intensity = Math.min(clamped / 3, 1);
+                return `rgba(34, 197, 94, ${(intensity * 0.45 + 0.05).toFixed(2)})`;
+              } else {
+                const intensity = Math.min(Math.abs(clamped) / 3, 1);
+                return `rgba(239, 68, 68, ${(intensity * 0.45 + 0.05).toFixed(2)})`;
+              }
+            };
+            const conBarsRange = stateConbarsHeatmap.map(r => r.conBars);
+            return (
+              <div className="stats-module">
+                <table className="stats-table">
+                  <thead>
+                    <tr className="module-title-row">
+                      <th colSpan={conBarsRange.length + 1} className="module-title" data-tooltip="Average FX_clr_RR by State and consecutive bar count. Green = positive RR, Red = negative. Shows sample count in parentheses.">STATE × CONSECUTIVE BARS</th>
+                    </tr>
+                    <tr>
+                      <th>State</th>
+                      {conBarsRange.map(c => (
+                        <th key={c}>{c}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {states.map(s => (
+                      <tr key={s}>
+                        <td className={s > 0 ? 'up' : 'dn'}>{stateLabels[s]}</td>
+                        {stateConbarsHeatmap.map(row => {
+                          const count = row[`s${s}_count`];
+                          const avgRR = row[`s${s}_avgRR`];
+                          return (
+                            <td key={row.conBars} style={{ background: cellBg(avgRR), textAlign: 'center' }}>
+                              {count > 0 ? (
+                                <span>
+                                  <span style={{ fontWeight: 600 }}>{avgRR.toFixed(2)}</span>
+                                  <span style={{ fontSize: '10px', opacity: 0.5, marginLeft: '3px' }}>({count})</span>
+                                </span>
+                              ) : (
+                                <span style={{ opacity: 0.25 }}>—</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
