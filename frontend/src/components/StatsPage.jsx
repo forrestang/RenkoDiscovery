@@ -75,6 +75,174 @@ function computeSignalStats(upArr, dnArr, rrField = 'rr') {
   }
 }
 
+// --- Client-side stat computation helpers for chop filtering ---
+function pick(arr, indices) {
+  if (!indices) return arr
+  return indices.map(i => arr[i])
+}
+
+function computeGeneral(bd, indices) {
+  const open = pick(bd.open, indices)
+  const close = pick(bd.close, indices)
+  const total = open.length
+  let up = 0, dn = 0
+  for (let i = 0; i < total; i++) {
+    if (close[i] > open[i]) up++
+    else if (close[i] < open[i]) dn++
+  }
+  return { totalBars: total, upBars: up, dnBars: dn }
+}
+
+function computeStateDistribution(bd, indices) {
+  const state = pick(bd.state, indices)
+  const open = pick(bd.open, indices)
+  const close = pick(bd.close, indices)
+  const total = state.length
+  const states = [3, 2, 1, -1, -2, -3]
+  return states.map(s => {
+    let count = 0, upCount = 0, dnCount = 0
+    for (let i = 0; i < total; i++) {
+      if (state[i] === s) {
+        count++
+        if (close[i] > open[i]) upCount++
+        else if (close[i] < open[i]) dnCount++
+      }
+    }
+    return {
+      state: s, count,
+      pct: total > 0 ? Math.round(count / total * 1000) / 10 : 0,
+      upCount, upPct: count > 0 ? Math.round(upCount / count * 100) : 0,
+      dnCount, dnPct: count > 0 ? Math.round(dnCount / count * 100) : 0,
+    }
+  })
+}
+
+function computeBarLocation(bd, indices, maPeriods) {
+  const open = pick(bd.open, indices)
+  const close = pick(bd.close, indices)
+  const total = open.length
+  const isUp = close.map((c, i) => c > open[i])
+  const isDn = close.map((c, i) => c < open[i])
+
+  const maStats = []
+  let aboveAllArr = new Array(total).fill(true)
+  let belowAllArr = new Array(total).fill(true)
+
+  for (const period of maPeriods) {
+    const rawKey = `emaRaw${period}`
+    if (!bd[rawKey]) {
+      maStats.push({ period, above: 0, below: 0, aboveUp: 0, aboveDown: 0, belowUp: 0, belowDown: 0 })
+      continue
+    }
+    const raw = pick(bd[rawKey], indices)
+    let above = 0, below = 0, aboveUp = 0, aboveDown = 0, belowUp = 0, belowDown = 0
+    for (let i = 0; i < total; i++) {
+      if (raw[i] == null) { aboveAllArr[i] = false; belowAllArr[i] = false; continue }
+      const isAbove = raw[i] > 0
+      const isBelow = raw[i] < 0
+      if (isAbove) { above++; if (isUp[i]) aboveUp++; if (isDn[i]) aboveDown++ }
+      if (isBelow) { below++; if (isUp[i]) belowUp++; if (isDn[i]) belowDown++ }
+      if (!isAbove) aboveAllArr[i] = false
+      if (!isBelow) belowAllArr[i] = false
+    }
+    maStats.push({ period, above, below, aboveUp, aboveDown, belowUp, belowDown })
+  }
+
+  let aboveAll = 0, belowAll = 0, aboveAllUp = 0, aboveAllDown = 0, belowAllUp = 0, belowAllDown = 0
+  for (let i = 0; i < total; i++) {
+    if (aboveAllArr[i]) { aboveAll++; if (isUp[i]) aboveAllUp++; if (isDn[i]) aboveAllDown++ }
+    if (belowAllArr[i]) { belowAll++; if (isUp[i]) belowAllUp++; if (isDn[i]) belowAllDown++ }
+  }
+  return {
+    maStats,
+    allMaStats: { aboveAll, belowAll, aboveAllUp, aboveAllDown, belowAllUp, belowAllDown }
+  }
+}
+
+function computeBeyondBarLocation(bd, indices, maPeriods) {
+  const open = pick(bd.open, indices)
+  const close = pick(bd.close, indices)
+  const high = pick(bd.high, indices)
+  const low = pick(bd.low, indices)
+  const total = open.length
+  const isUp = close.map((c, i) => c > open[i])
+  const isDn = close.map((c, i) => c < open[i])
+
+  const beyondMaStats = []
+  let aboveAllArr = new Array(total).fill(true)
+  let belowAllArr = new Array(total).fill(true)
+
+  for (const period of maPeriods) {
+    const rawKey = `emaRaw${period}`
+    if (!bd[rawKey]) {
+      beyondMaStats.push({ period, above: 0, below: 0, aboveUp: 0, aboveDown: 0, belowUp: 0, belowDown: 0 })
+      continue
+    }
+    const raw = pick(bd[rawKey], indices)
+    let above = 0, below = 0, aboveUp = 0, aboveDown = 0, belowUp = 0, belowDown = 0
+    for (let i = 0; i < total; i++) {
+      if (raw[i] == null || close[i] == null) { aboveAllArr[i] = false; belowAllArr[i] = false; continue }
+      const ema = close[i] - raw[i]
+      const beyondAbove = low[i] > ema
+      const beyondBelow = high[i] < ema
+      if (beyondAbove) { above++; if (isUp[i]) aboveUp++; if (isDn[i]) aboveDown++ }
+      if (beyondBelow) { below++; if (isUp[i]) belowUp++; if (isDn[i]) belowDown++ }
+      if (!beyondAbove) aboveAllArr[i] = false
+      if (!beyondBelow) belowAllArr[i] = false
+    }
+    beyondMaStats.push({ period, above, below, aboveUp, aboveDown, belowUp, belowDown })
+  }
+
+  let aboveAll = 0, belowAll = 0, aboveAllUp = 0, aboveAllDown = 0, belowAllUp = 0, belowAllDown = 0
+  for (let i = 0; i < total; i++) {
+    if (aboveAllArr[i]) { aboveAll++; if (isUp[i]) aboveAllUp++; if (isDn[i]) aboveAllDown++ }
+    if (belowAllArr[i]) { belowAll++; if (isUp[i]) belowAllUp++; if (isDn[i]) belowAllDown++ }
+  }
+  return {
+    beyondMaStats,
+    beyondAllMaStats: { aboveAll, belowAll, aboveAllUp, aboveAllDown, belowAllUp, belowAllDown }
+  }
+}
+
+function computeWickDist(bd, indices) {
+  const open = pick(bd.open, indices)
+  const close = pick(bd.close, indices)
+  const ddRR = pick(bd.ddRR, indices)
+
+  const upVals = [], dnVals = []
+  for (let i = 0; i < open.length; i++) {
+    if (ddRR[i] == null) continue
+    if (close[i] > open[i]) upVals.push(ddRR[i])
+    else if (close[i] < open[i]) dnVals.push(ddRR[i])
+  }
+
+  const calcWickDist = (values) => {
+    if (values.length === 0) return []
+    const total = values.length
+    const bins = [
+      [0, 0.5, '>0 to <0.5'],
+      [0.5, 1, '0.5 to <1'],
+      [1, 1.5, '1 to <1.5'],
+      [1.5, 2, '1.5 to <2'],
+      [2, 3, '2 to <3'],
+      [3, 5, '3 to <5'],
+      [5, Infinity, '5+'],
+    ]
+    const dist = []
+    const zeroCount = values.filter(v => v === 0).length
+    dist.push({ label: '0', count: zeroCount, pct: Math.round(zeroCount / total * 1000) / 10 })
+    bins.forEach(([low, high, label], idx) => {
+      const count = idx === 0
+        ? values.filter(v => v > low && v < high).length
+        : values.filter(v => v >= low && v < high).length
+      dist.push({ label, count, pct: Math.round(count / total * 1000) / 10 })
+    })
+    return dist
+  }
+
+  return { upDist: calcWickDist(upVals), dnDist: calcWickDist(dnVals) }
+}
+
 function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   const signalData = stats?.signalData
 
@@ -127,23 +295,104 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     localStorage.setItem(`${STORAGE_PREFIX}statsFiltersOpen`, filtersOpen.toString())
   }, [filtersOpen])
 
-  // Filter signal data by per-type N selections and enabled state
+  // Independent chop regime filters per tab, persisted to localStorage
+  const [chopFilterGeneral, setChopFilterGeneral] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}chopFilterGeneral`) || 'all'
+  })
+  const [chopFilterSignals, setChopFilterSignals] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}chopFilterSignals`) || 'all'
+  })
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}chopFilterGeneral`, chopFilterGeneral)
+  }, [chopFilterGeneral])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}chopFilterSignals`, chopFilterSignals)
+  }, [chopFilterSignals])
+
+  // Custom chop range thresholds, persisted to localStorage
+  const [chopLowMax, setChopLowMax] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}chopLowMax`)
+    return saved ? parseFloat(saved) : 0.2
+  })
+  const [chopHighMin, setChopHighMin] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}chopHighMin`)
+    return saved ? parseFloat(saved) : 0.4
+  })
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}chopLowMax`, chopLowMax.toString())
+  }, [chopLowMax])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}chopHighMin`, chopHighMin.toString())
+  }, [chopHighMin])
+
+  // Active chop filter based on current tab
+  const chopFilter = activeTab === 'general' ? chopFilterGeneral : chopFilterSignals
+  const setChopFilter = activeTab === 'general' ? setChopFilterGeneral : setChopFilterSignals
+
+  // Reset chop filters when a new file is loaded
+  useEffect(() => {
+    setChopFilterGeneral('all')
+    setChopFilterSignals('all')
+  }, [filepath])
+
+  const handleChopFilterChange = (value) => {
+    setChopFilter(value)
+  }
+
+  // Chop regime test function using custom thresholds
+  const chopTest = (value, regime) => {
+    if (regime === 'all') return true
+    if (value == null) return false
+    if (regime === 'low') return value < chopLowMax
+    if (regime === 'mid') return value >= chopLowMax && value <= chopHighMin
+    if (regime === 'high') return value > chopHighMin
+    return true
+  }
+
+  // Client-side chop filtering: compute filtered bar indices (General tab)
+  const filteredBarIndices = useMemo(() => {
+    if (!stats?.barData || chopFilterGeneral === 'all') return null
+    const chop = stats.barData.chop
+    if (!chop) return null
+    return chop.reduce((acc, v, i) => {
+      if (chopTest(v, chopFilterGeneral)) acc.push(i)
+      return acc
+    }, [])
+  }, [stats?.barData, chopFilterGeneral, chopLowMax, chopHighMin])
+
+  // Recompute all General Stats tab data when chop filter is active
+  const generalTabData = useMemo(() => {
+    if (!stats?.barData || chopFilterGeneral === 'all') return null
+    const bd = stats.barData
+    const idx = filteredBarIndices
+    const maPeriods = stats.maPeriods || []
+    return {
+      general: computeGeneral(bd, idx),
+      stateStats: bd.state ? computeStateDistribution(bd, idx) : [],
+      barLocation: computeBarLocation(bd, idx, maPeriods),
+      beyondBarLocation: computeBeyondBarLocation(bd, idx, maPeriods),
+      wickDist: bd.ddRR ? computeWickDist(bd, idx) : null,
+    }
+  }, [stats?.barData, stats?.maPeriods, filteredBarIndices, chopFilterGeneral])
+
+  // Filter signal data by per-type N selections, enabled state, and chop regime
   const filteredSignalData = useMemo(() => {
     if (!signalData) return {}
     const t1NsSet = new Set(selectedType1Ns)
     const t2NsSet = new Set(selectedType2Ns)
+    const passesChop = (pt) => chopTest(pt.chop, chopFilterSignals)
     const result = {}
     for (const [key, arr] of Object.entries(signalData)) {
       if (key.startsWith('type1')) {
-        result[key] = type1Enabled && arr ? arr.filter(pt => t1NsSet.has(pt.n)) : []
+        result[key] = type1Enabled && arr ? arr.filter(pt => t1NsSet.has(pt.n) && passesChop(pt)) : []
       } else if (key.startsWith('type2')) {
-        result[key] = type2Enabled && arr ? arr.filter(pt => t2NsSet.has(pt.n)) : []
+        result[key] = type2Enabled && arr ? arr.filter(pt => t2NsSet.has(pt.n) && passesChop(pt)) : []
       } else {
         result[key] = arr || []
       }
     }
     return result
-  }, [signalData, selectedType1Ns, selectedType2Ns, type1Enabled, type2Enabled])
+  }, [signalData, selectedType1Ns, selectedType2Ns, type1Enabled, type2Enabled, chopFilterSignals, chopLowMax, chopHighMin])
 
   const rrLabel = RR_FIELDS.find(f => f.value === selectedRRField)?.label || 'RR'
 
@@ -228,9 +477,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   const chopSignalPerf = useMemo(() => {
     if (!filteredSignalData) return null
     const regimes = [
-      { key: 'low', label: 'Low (<0.2)', test: v => v < 0.2 },
-      { key: 'mid', label: 'Mid (0.2-0.4)', test: v => v >= 0.2 && v <= 0.4 },
-      { key: 'high', label: 'High (>0.4)', test: v => v > 0.4 },
+      { key: 'low', label: `Low (<${chopLowMax})`, test: v => v < chopLowMax },
+      { key: 'mid', label: `Mid (${chopLowMax}-${chopHighMin})`, test: v => v >= chopLowMax && v <= chopHighMin },
+      { key: 'high', label: `High (>${chopHighMin})`, test: v => v > chopHighMin },
     ]
     const getRR = (pt) => pt[selectedRRField] ?? 0
     const result = regimes.map(r => {
@@ -249,7 +498,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       return { ...r, type1: calc(t1), type2: calc(t2) }
     })
     return result
-  }, [filteredSignalData, selectedRRField])
+  }, [filteredSignalData, selectedRRField, chopLowMax, chopHighMin])
 
   const hasSignalData = signalData && Object.values(signalData).some(a => a?.length > 0)
 
@@ -293,13 +542,25 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     )
   }
 
-  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats, emaRrDecay, wickDist, chopRegimeStats, stateConbarsHeatmap, stateTransitionMatrix } = stats
+  // Use client-side filtered data when chop filter is active, otherwise use backend stats
+  const g = generalTabData
+  const totalBars = g ? g.general.totalBars : stats.totalBars
+  const upBars = g ? g.general.upBars : stats.upBars
+  const dnBars = g ? g.general.dnBars : stats.dnBars
+  const _maStats = g ? g.barLocation.maStats : stats.maStats
+  const _allMaStats = g ? g.barLocation.allMaStats : stats.allMaStats
+  const _beyondMaStats = g ? g.beyondBarLocation.beyondMaStats : stats.beyondMaStats
+  const _beyondAllMaStats = g ? g.beyondBarLocation.beyondAllMaStats : stats.beyondAllMaStats
+  const _chopStats = stats.chopStats
+  const _stateStats = g ? g.stateStats : stats.stateStats
+  const _wickDist = g ? g.wickDist : stats.wickDist
+  const { settings, chopRegimeStats } = stats
 
   const pct = (count, total) => total > 0 ? ((count / total) * 100).toFixed(0) : '0'
 
   // Build table data
   const rows = [
-    ...maStats.map((ma, idx) => ({
+    ..._maStats.map((ma, idx) => ({
       label: `MA(${ma.period})`,
       colorClass: `ma-color-${idx + 1}`,
       above: ma.above,
@@ -312,18 +573,18 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     {
       label: 'ALL MAs',
       colorClass: 'ma-color-all',
-      above: allMaStats.aboveAll,
-      below: allMaStats.belowAll,
-      aboveUp: allMaStats.aboveAllUp ?? 0,
-      aboveDown: allMaStats.aboveAllDown ?? 0,
-      belowUp: allMaStats.belowAllUp ?? 0,
-      belowDown: allMaStats.belowAllDown ?? 0,
+      above: _allMaStats.aboveAll,
+      below: _allMaStats.belowAll,
+      aboveUp: _allMaStats.aboveAllUp ?? 0,
+      aboveDown: _allMaStats.aboveAllDown ?? 0,
+      belowUp: _allMaStats.belowAllUp ?? 0,
+      belowDown: _allMaStats.belowAllDown ?? 0,
     }
   ]
 
   // Build beyond table data
-  const beyondRows = beyondMaStats ? [
-    ...beyondMaStats.map((ma, idx) => ({
+  const beyondRows = _beyondMaStats ? [
+    ..._beyondMaStats.map((ma, idx) => ({
       label: `MA(${ma.period})`,
       colorClass: `ma-color-${idx + 1}`,
       above: ma.above,
@@ -336,12 +597,12 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     {
       label: 'ALL MAs',
       colorClass: 'ma-color-all',
-      above: beyondAllMaStats.aboveAll,
-      below: beyondAllMaStats.belowAll,
-      aboveUp: beyondAllMaStats.aboveAllUp ?? 0,
-      aboveDown: beyondAllMaStats.aboveAllDown ?? 0,
-      belowUp: beyondAllMaStats.belowAllUp ?? 0,
-      belowDown: beyondAllMaStats.belowAllDown ?? 0,
+      above: _beyondAllMaStats.aboveAll,
+      below: _beyondAllMaStats.belowAll,
+      aboveUp: _beyondAllMaStats.aboveAllUp ?? 0,
+      aboveDown: _beyondAllMaStats.aboveAllDown ?? 0,
+      belowUp: _beyondAllMaStats.belowAllUp ?? 0,
+      belowDown: _beyondAllMaStats.belowAllDown ?? 0,
     }
   ] : null
 
@@ -460,21 +721,25 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
 
   return (
     <div className="stats-page">
-      {/* Top bar: file header + tabs + settings in one line */}
+      {/* Top bar: tabs left, file header centered, settings right */}
       <div className="stats-top-bar">
-        <div className="stats-file-header">
-          <span className="stats-filename">{filename}</span>
-          <span className="stats-total">{totalBars.toLocaleString()} bars</span>
-        </div>
         <div className="stats-tabs">
           <button
             className={`stats-tab ${activeTab === 'general' ? 'active' : ''}`}
             onClick={() => setActiveTab('general')}
-          >General Stats</button>
+          >General</button>
           <button
             className={`stats-tab ${activeTab === 'signals' ? 'active' : ''}`}
             onClick={() => setActiveTab('signals')}
-          >Type1/Type2 Stats</button>
+          >Type1/Type2</button>
+          <button
+            className={`stats-tab ${activeTab === 'conditional' ? 'active' : ''}`}
+            onClick={() => setActiveTab('conditional')}
+          >Conditional</button>
+        </div>
+        <div className="stats-file-header">
+          <span className="stats-filename">{filename}</span>
+          <span className="stats-total">{totalBars.toLocaleString()} bars</span>
         </div>
         {settings && (
           <div className="settings-inline">
@@ -496,6 +761,52 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
           </div>
         )}
       </div>
+
+      {/* Chop Filter Bar — fixed above scroll, shared UI, independent per-tab state */}
+      {activeTab !== 'conditional' && <div className="chop-filter-bar">
+        <span className="chop-filter-label">Chop:</span>
+        {[
+          { value: 'all', label: 'All' },
+          { value: 'low', label: `Low (<${chopLowMax})` },
+          { value: 'mid', label: `Mid (${chopLowMax}-${chopHighMin})` },
+          { value: 'high', label: `High (>${chopHighMin})` },
+        ].map(opt => (
+          <button
+            key={opt.value}
+            className={`chop-filter-btn${chopFilter === opt.value ? ' active' : ''}`}
+            onClick={() => handleChopFilterChange(opt.value)}
+          >
+            {opt.label}
+          </button>
+        ))}
+        <span className="chop-filter-sep" />
+        <span className="chop-range-label">Low&lt;</span>
+        <input
+          type="number"
+          className="chop-range-input"
+          value={chopLowMax}
+          step="0.05"
+          min="0"
+          max="1"
+          onChange={e => {
+            const v = parseFloat(e.target.value)
+            if (!isNaN(v)) setChopLowMax(v)
+          }}
+        />
+        <span className="chop-range-label">High&gt;</span>
+        <input
+          type="number"
+          className="chop-range-input"
+          value={chopHighMin}
+          step="0.05"
+          min="0"
+          max="1"
+          onChange={e => {
+            const v = parseFloat(e.target.value)
+            if (!isNaN(v)) setChopHighMin(v)
+          }}
+        />
+      </div>}
 
       {/* ==================== Type1/Type2 Stats Tab ==================== */}
       {activeTab === 'signals' && (
@@ -660,9 +971,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                       </tr>
                       <tr>
                         <th>State</th>
-                        <th>Low (&lt;0.2)</th>
-                        <th>Mid (0.2-0.4)</th>
-                        <th>High (&gt;0.4)</th>
+                        <th>Low (&lt;{chopLowMax})</th>
+                        <th>Mid ({chopLowMax}-{chopHighMin})</th>
+                        <th>High (&gt;{chopHighMin})</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -689,9 +1000,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                       </tr>
                       <tr>
                         <th></th>
-                        <th>Low (&lt;0.2)</th>
-                        <th>Mid (0.2-0.4)</th>
-                        <th>High (&gt;0.4)</th>
+                        <th>Low (&lt;{chopLowMax})</th>
+                        <th>Mid ({chopLowMax}-{chopHighMin})</th>
+                        <th>High (&gt;{chopHighMin})</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -737,12 +1048,12 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
           </div>
 
           {/* Global Chop Index */}
-          {chopStats && (
+          {_chopStats && (
             <div className="stats-module chop-module">
               <table className="stats-table">
                 <thead>
                   <tr className="module-title-row">
-                    <th colSpan="3" className="module-title" data-tooltip="Percentage of bars that reverse direction from the prior bar">GLOBAL CHOP INDEX</th>
+                    <th colSpan="3" className="module-title" data-tooltip="Percentage of bars that reverse direction from the prior bar. Not affected by chop filter — requires sequential bar context.">GLOBAL CHOP INDEX</th>
                   </tr>
                   <tr>
                     <th>Reversal Bars</th>
@@ -752,9 +1063,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                 </thead>
                 <tbody>
                   <tr>
-                    <td>{chopStats.reversalBars.toLocaleString()}</td>
+                    <td>{_chopStats.reversalBars.toLocaleString()}</td>
                     <td>{totalBars.toLocaleString()}</td>
-                    <td className="chop-value">{chopStats.chopIndex}%</td>
+                    <td className="chop-value">{_chopStats.chopIndex}%</td>
                   </tr>
                 </tbody>
               </table>
@@ -762,7 +1073,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
           )}
 
           {/* State Distribution */}
-          {stateStats?.length > 0 && (
+          {_stateStats?.length > 0 && (
             <div className="stats-module">
               <table className="stats-table">
                 <thead>
@@ -778,7 +1089,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {stateStats.map(row => (
+                  {_stateStats.map(row => (
                     <tr key={row.state}>
                       <td className={row.state > 0 ? 'state-up' : row.state < 0 ? 'state-dn' : ''}>
                         {row.state > 0 ? `+${row.state}` : row.state}
@@ -872,120 +1183,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
             </div>
           )}
 
-          {/* Run Distribution Stats */}
-          {runStats && (runStats.upDecay?.length > 0 || runStats.dnDecay?.length > 0) && (
-            <div className="stats-module run-distribution">
-              <div className="run-tables-row">
-                <table className="stats-table run-table">
-                  <thead>
-                    <tr className="module-title-row">
-                      <th colSpan="5" className="module-title" data-tooltip="Survival rate of consecutive bar runs at each threshold">RUNS DECAY</th>
-                    </tr>
-                    <tr>
-                      <th>&gt;= Bars</th>
-                      <th>UP Count</th>
-                      <th>UP %</th>
-                      <th>DN Count</th>
-                      <th>DN %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(runStats.upDecay || runStats.dnDecay || []).map((row, i) => {
-                      const upRow = runStats.upDecay?.[i];
-                      const dnRow = runStats.dnDecay?.[i];
-                      return (
-                        <tr key={row.threshold}>
-                          <td>{row.threshold}+</td>
-                          <td>{upRow?.count ?? ''}</td>
-                          <td className="up">{upRow ? `${upRow.pct}%` : ''}</td>
-                          <td>{dnRow?.count ?? ''}</td>
-                          <td className="dn">{dnRow ? `${dnRow.pct}%` : ''}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Run Length Distribution */}
-          {runStats && (runStats.upDist?.length > 0 || runStats.dnDist?.length > 0) && (
-            <div className="stats-module run-distribution">
-              <div className="run-tables-row">
-                <table className="stats-table run-table">
-                  <thead>
-                    <tr className="module-title-row">
-                      <th colSpan="5" className="module-title" data-tooltip="Frequency distribution of consecutive bar run lengths">RUNS DISTRIBUTION</th>
-                    </tr>
-                    <tr>
-                      <th>Bars</th>
-                      <th>UP Count</th>
-                      <th>UP %</th>
-                      <th>DN Count</th>
-                      <th>DN %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(runStats.upDist || runStats.dnDist || []).map((row, i) => {
-                      const upRow = runStats.upDist?.[i];
-                      const dnRow = runStats.dnDist?.[i];
-                      return (
-                        <tr key={row.label}>
-                          <td>{row.label}</td>
-                          <td>{upRow?.count ?? ''}</td>
-                          <td className="up">{upRow ? `${upRow.pct}%` : ''}</td>
-                          <td>{dnRow?.count ?? ''}</td>
-                          <td className="dn">{dnRow ? `${dnRow.pct}%` : ''}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-          {/* EMA RR Distance Decay Tables */}
-          {emaRrDecay && emaRrDecay.map(entry => (
-            (entry.upDecay?.length > 0 || entry.dnDecay?.length > 0) && (
-              <div className="stats-module run-distribution" key={entry.period}>
-                <div className="run-tables-row">
-                  <table className="stats-table run-table">
-                    <thead>
-                      <tr className="module-title-row">
-                        <th colSpan="5" className="module-title" data-tooltip={`Survival rate of EMA RR distance from EMA(${entry.period})`}>EMA RR DISTANCE DECAY ({entry.period})</th>
-                      </tr>
-                      <tr>
-                        <th>&gt;= RR</th>
-                        <th>UP Count</th>
-                        <th>UP %</th>
-                        <th>DN Count</th>
-                        <th>DN %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(entry.upDecay || entry.dnDecay || []).map((row, i) => {
-                        const upRow = entry.upDecay?.[i];
-                        const dnRow = entry.dnDecay?.[i];
-                        return (
-                          <tr key={row.threshold}>
-                            <td>{row.threshold}+</td>
-                            <td>{upRow?.count ?? ''}</td>
-                            <td className="up">{upRow ? `${upRow.pct}%` : ''}</td>
-                            <td>{dnRow?.count ?? ''}</td>
-                            <td className="dn">{dnRow ? `${dnRow.pct}%` : ''}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )
-          ))}
-
           {/* Wick Distribution (DD_RR) */}
-          {wickDist && (wickDist.upDist?.length > 0 || wickDist.dnDist?.length > 0) && (
+          {_wickDist && (_wickDist.upDist?.length > 0 || _wickDist.dnDist?.length > 0) && (
             <div className="stats-module run-distribution">
               <div className="run-tables-row">
                 <table className="stats-table run-table">
@@ -1002,9 +1201,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {(wickDist.upDist || wickDist.dnDist || []).map((row, i) => {
-                      const upRow = wickDist.upDist?.[i];
-                      const dnRow = wickDist.dnDist?.[i];
+                    {(_wickDist.upDist || _wickDist.dnDist || []).map((row, i) => {
+                      const upRow = _wickDist.upDist?.[i];
+                      const dnRow = _wickDist.dnDist?.[i];
                       return (
                         <tr key={row.label}>
                           <td>{row.label}</td>
@@ -1021,11 +1220,16 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
             </div>
           )}
 
-          {/* Module 5: State x Consecutive Bars Heatmap */}
-          {stateConbarsHeatmap && stateConbarsHeatmap.length > 0 && (() => {
+        </div>
+      )}
+
+      {/* ==================== Conditional Tab ==================== */}
+      {activeTab === 'conditional' && (
+        <div className="stats-tab-content">
+          {/* State x Consecutive Bars Heatmap */}
+          {stats.stateConbarsHeatmap && stats.stateConbarsHeatmap.length > 0 && (() => {
             const states = [3, 2, 1, -1, -2, -3];
             const stateLabels = { 3: '+3', 2: '+2', 1: '+1', '-1': '-1', '-2': '-2', '-3': '-3' };
-            // Color scale: green for positive RR, red for negative, white/neutral for zero
             const cellBg = (avgRR) => {
               if (avgRR === null || avgRR === undefined) return 'transparent';
               const clamped = Math.max(-3, Math.min(3, avgRR));
@@ -1037,7 +1241,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                 return `rgba(239, 68, 68, ${(intensity * 0.45 + 0.05).toFixed(2)})`;
               }
             };
-            const conBarsRange = stateConbarsHeatmap.map(r => r.conBars);
+            const conBarsRange = stats.stateConbarsHeatmap.map(r => r.conBars);
             return (
               <div className="stats-module">
                 <table className="stats-table">
@@ -1056,7 +1260,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                     {states.map(s => (
                       <tr key={s}>
                         <td className={s > 0 ? 'up' : 'dn'}>{stateLabels[s]}</td>
-                        {stateConbarsHeatmap.map(row => {
+                        {stats.stateConbarsHeatmap.map(row => {
                           const count = row[`s${s}_count`];
                           const avgRR = row[`s${s}_avgRR`];
                           const dir = s > 0 ? 'up' : 'down';
@@ -1085,8 +1289,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
             );
           })()}
 
-          {/* Module 6: State Transition Matrix */}
-          {stateTransitionMatrix && stateTransitionMatrix.length > 0 && (() => {
+          {/* State Transition Matrix */}
+          {stats.stateTransitionMatrix && stats.stateTransitionMatrix.length > 0 && (() => {
             const states = [3, 2, 1, -1, -2, -3];
             const stateLabels = { 3: '+3', 2: '+2', 1: '+1', '-1': '-1', '-2': '-2', '-3': '-3' };
             const cellBg = (pct, isDiagonal) => {
@@ -1112,7 +1316,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {stateTransitionMatrix.map(row => (
+                    {stats.stateTransitionMatrix.map(row => (
                       <tr key={row.fromState}>
                         <td className={row.fromState > 0 ? 'up' : 'dn'}>{stateLabels[row.fromState]}</td>
                         {states.map(toState => {
