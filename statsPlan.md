@@ -175,18 +175,35 @@ The backend needs to attach EMA distance and DD values to each signal point (cur
 
 ---
 
-## Suggested Implementation Order
+## Module 13: MA Hemisphere Analysis
 
-Each module is independent. Start with table-only modules, then add chart-based ones after installing recharts:
+A single table showing how combinations of MAs affect bar color (UP vs DN). Enumerates all 7 combinations of 3 MAs using a bitmask scheme — 3 single-MA rows, 3 two-MA pair rows, and 1 three-MA row — with horizontal separators grouping each level. For each combination, every bar is classified into one of three zones:
 
-1. Module 6 — State Transition Matrix
-2. Module 8 — Run Length vs Forward Move
-3. Module 9 — Drawdown by Context
-4. Module 3 — Chop Filter Comparison
-5. Module 1 — Cumulative R Curve
-6. Module 2 — Signal Performance Dashboard
-7. Module 4 — Time-of-Day Patterns
-8. Module 5 — State x ConBars Heatmap
-9. Module 10 — EMA Distance Scatterplot
-10. Module 7 — Chop Global Toggle
-11. Module 11 — Multi-Timeframe Alignment
+- **Buy hemisphere**: Close is above all selected MAs and the MAs are in bullish order (faster MA value above slower MA value).
+- **Sell hemisphere**: Close is below all selected MAs and the MAs are in bearish order.
+- **Neutral**: Everything else — price between the MAs, or above/below all but with wrong MA ordering.
+
+For single-MA rows there is no ordering check, just above vs below. The neutral column becomes meaningful for 2-MA and 3-MA combos where "between" and "wrong ordering" bars accumulate. Each zone shows bar count, UP%, and DN%. Reading top-to-bottom reveals whether stacking correctly-ordered MAs progressively strengthens the UP/DN skew in the buy and sell hemispheres. Replaces the existing Bar Location (ALL) and Bar Location (BEYOND) tables.
+
+**Display layout:**
+
+```
+MA HEMISPHERE ANALYSIS
+┌────────────────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┐
+│                │         Buy           │         Sell          │        Neutral        │
+│     Combo      │ Count │  UP%  │  DN%  │ Count │  UP%  │  DN%  │ Count │  UP%  │  DN%  │
+├────────────────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┤
+│ MA(20)         │ 5200  │  54%  │  46%  │ 4800  │  46%  │  54%  │    12 │  50%  │  50%  │
+│ MA(50)         │ 5050  │  53%  │  47%  │ 4930  │  47%  │  53%  │    32 │  50%  │  50%  │
+│ MA(200)        │ 5400  │  52%  │  48%  │ 4590  │  48%  │  52%  │    22 │  50%  │  50%  │
+├────────────────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┤
+│ MA(20+50)      │ 3800  │  56%  │  44%  │ 3400  │  43%  │  57%  │ 2812  │  50%  │  50%  │
+│ MA(20+200)     │ 3500  │  57%  │  43%  │ 3200  │  42%  │  58%  │ 3312  │  50%  │  50%  │
+│ MA(50+200)     │ 3900  │  55%  │  45%  │ 3600  │  44%  │  56%  │ 2512  │  51%  │  49%  │
+├────────────────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┤
+│ MA(20+50+200)  │ 2500  │  58%  │  42%  │ 2200  │  41%  │  59%  │ 5312  │  50%  │  50%  │
+└────────────────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┘
+```
+
+---
+
