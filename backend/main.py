@@ -1626,6 +1626,24 @@ def get_parquet_stats(filepath: str):
             heatmap_rows.append(row)
         state_conbars_heatmap = heatmap_rows
 
+    # Calculate State Transition Matrix (Module 6)
+    state_transition_matrix = None
+    if 'State' in df.columns and 'prState' in df.columns:
+        states = [3, 2, 1, -1, -2, -3]
+        matrix = []
+        for from_state in states:
+            from_mask = df['prState'] == from_state
+            from_total = int(from_mask.sum())
+            row = {"fromState": from_state, "total": from_total}
+            for to_state in states:
+                to_mask = df['State'] == to_state
+                count = int((from_mask & to_mask).sum())
+                pct = round(count / from_total * 100, 1) if from_total > 0 else 0
+                row[f"to_{to_state}_count"] = count
+                row[f"to_{to_state}_pct"] = pct
+            matrix.append(row)
+        state_transition_matrix = matrix
+
     # Calculate Chop Regime Stats (Module 3)
     chop_regime_stats = None
     if 'chop(rolling)' in df.columns:
@@ -2130,7 +2148,8 @@ def get_parquet_stats(filepath: str):
         "wickDist": wick_dist,
         "signalData": signal_data,
         "chopRegimeStats": chop_regime_stats,
-        "stateConbarsHeatmap": state_conbars_heatmap
+        "stateConbarsHeatmap": state_conbars_heatmap,
+        "stateTransitionMatrix": state_transition_matrix
     }
 
 

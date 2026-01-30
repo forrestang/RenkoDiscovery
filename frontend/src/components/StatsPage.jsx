@@ -293,7 +293,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     )
   }
 
-  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats, emaRrDecay, wickDist, chopRegimeStats, stateConbarsHeatmap } = stats
+  const { totalBars, upBars, dnBars, maStats, allMaStats, runStats, chopStats, stateStats, settings, beyondMaStats, beyondAllMaStats, emaRrDecay, wickDist, chopRegimeStats, stateConbarsHeatmap, stateTransitionMatrix } = stats
 
   const pct = (count, total) => total > 0 ? ((count / total) * 100).toFixed(0) : '0'
 
@@ -1074,6 +1074,58 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                               ) : (
                                 <span style={{ opacity: 0.25 }}>—</span>
                               )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+
+          {/* Module 6: State Transition Matrix */}
+          {stateTransitionMatrix && stateTransitionMatrix.length > 0 && (() => {
+            const states = [3, 2, 1, -1, -2, -3];
+            const stateLabels = { 3: '+3', 2: '+2', 1: '+1', '-1': '-1', '-2': '-2', '-3': '-3' };
+            const cellBg = (pct, isDiagonal) => {
+              if (isDiagonal) {
+                const intensity = Math.min(pct / 100, 1);
+                return `rgba(255, 193, 7, ${(intensity * 0.5 + 0.05).toFixed(2)})`;
+              }
+              const intensity = Math.min(pct / 50, 1);
+              return `rgba(147, 130, 220, ${(intensity * 0.4).toFixed(2)})`;
+            };
+            return (
+              <div className="stats-module">
+                <table className="stats-table">
+                  <thead>
+                    <tr className="module-title-row">
+                      <th colSpan={states.length + 1} className="module-title" data-tooltip="Probability of transitioning from one State (row) to another (column). Diagonal = persistence. Color intensity by probability.">STATE TRANSITION MATRIX</th>
+                    </tr>
+                    <tr>
+                      <th data-tooltip="Prior State (row) → Current State (column)">From \ To</th>
+                      {states.map(s => (
+                        <th key={s} className={s > 0 ? 'up' : 'dn'}>{stateLabels[s]}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stateTransitionMatrix.map(row => (
+                      <tr key={row.fromState}>
+                        <td className={row.fromState > 0 ? 'up' : 'dn'}>{stateLabels[row.fromState]}</td>
+                        {states.map(toState => {
+                          const pct = row[`to_${toState}_pct`];
+                          const count = row[`to_${toState}_count`];
+                          const isDiagonal = row.fromState === toState;
+                          return (
+                            <td key={toState} style={{
+                              background: cellBg(pct, isDiagonal),
+                              textAlign: 'center',
+                              fontWeight: isDiagonal ? 700 : 400,
+                            }} title={`From State ${stateLabels[row.fromState]} → State ${stateLabels[toState]}: ${pct}% (${count} bars)`}>
+                              {pct}%
                             </td>
                           );
                         })}
