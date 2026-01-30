@@ -606,113 +606,48 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     }
   ] : null
 
-  // Render a signal type stats module
-  const renderSignalModule = (title, typeStats, tooltip) => {
-    if (!typeStats) return null
-    const { upSummary, dnSummary, upNth, dnNth, upDist, dnDist } = typeStats
-    if (upSummary.count === 0 && dnSummary.count === 0) return null
 
-    // Merge Nth rows: union of all N values from both sides
+  // Render Nth occurrence table for a signal type
+  const renderNthOccurrence = (title, typeStats) => {
+    if (!typeStats) return null
+    const { upSummary, dnSummary, upNth, dnNth } = typeStats
+    if (upSummary.count === 0 && dnSummary.count === 0) return null
     const allNs = new Set([...upNth.map(r => r.n), ...dnNth.map(r => r.n)])
     const nthRows = Array.from(allNs).sort((a, b) => a - b).map(n => ({
       n,
       up: upNth.find(r => r.n === n),
       dn: dnNth.find(r => r.n === n),
     }))
-
+    if (nthRows.length === 0) return null
     return (
       <div className="stats-module">
-        {/* Summary */}
-        <table className="stats-table">
+        <table className="stats-table signal-nth-table">
           <thead>
             <tr className="module-title-row">
-              <th colSpan="3" className="module-title" data-tooltip={tooltip}>{title}</th>
+              <th colSpan="7" className="module-title">{title}</th>
             </tr>
             <tr>
-              <th></th>
-              <th className="up">UP</th>
-              <th className="dn">DN</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Count</td>
-              <td className="up">{upSummary.count}</td>
-              <td className="dn">{dnSummary.count}</td>
-            </tr>
-            <tr>
-              <td>Avg RR</td>
-              <td className="up">{upSummary.avgRR}</td>
-              <td className="dn">{dnSummary.avgRR}</td>
-            </tr>
-            <tr>
-              <td>Win Rate</td>
-              <td className="up">{upSummary.winRate}%</td>
-              <td className="dn">{dnSummary.winRate}%</td>
-            </tr>
-          </tbody>
-        </table>
-
-        {/* Nth Occurrence Breakdown */}
-        {nthRows.length > 0 && (
-          <table className="stats-table signal-nth-table">
-            <thead>
-              <tr className="module-title-row">
-                <th colSpan="7" className="module-title">NTH OCCURRENCE</th>
-              </tr>
-              <tr>
-                <th>N</th>
-                <th className="up">UP Count</th>
-                <th className="up">UP Avg RR</th>
-                <th className="up">UP Win%</th>
-                <th className="dn">DN Count</th>
-                <th className="dn">DN Avg RR</th>
-                <th className="dn">DN Win%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {nthRows.map(row => (
-                <tr key={row.n}>
-                  <td>{row.n}</td>
-                  <td className="up">{row.up?.count ?? ''}</td>
-                  <td className="up">{row.up?.avgRR ?? ''}</td>
-                  <td className="up">{row.up ? `${row.up.winRate}%` : ''}</td>
-                  <td className="dn">{row.dn?.count ?? ''}</td>
-                  <td className="dn">{row.dn?.avgRR ?? ''}</td>
-                  <td className="dn">{row.dn ? `${row.dn.winRate}%` : ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-        {/* RR Distribution */}
-        <table className="stats-table signal-dist-table">
-          <thead>
-            <tr className="module-title-row">
-              <th colSpan="5" className="module-title">RR DISTRIBUTION</th>
-            </tr>
-            <tr>
-              <th>RR</th>
+              <th>N</th>
               <th className="up">UP Count</th>
-              <th className="up">UP %</th>
+              <th className="up">UP Avg RR</th>
+              <th className="up">UP Win%</th>
               <th className="dn">DN Count</th>
-              <th className="dn">DN %</th>
+              <th className="dn">DN Avg RR</th>
+              <th className="dn">DN Win%</th>
             </tr>
           </thead>
           <tbody>
-            {upDist.map((row, i) => {
-              const dnRow = dnDist[i]
-              return (
-                <tr key={row.label}>
-                  <td>{row.label}</td>
-                  <td className="up">{row.count}</td>
-                  <td className="up">{row.pct}%</td>
-                  <td className="dn">{dnRow.count}</td>
-                  <td className="dn">{dnRow.pct}%</td>
-                </tr>
-              )
-            })}
+            {nthRows.map(row => (
+              <tr key={row.n}>
+                <td>{row.n}</td>
+                <td className="up">{row.up?.count ?? ''}</td>
+                <td className="up">{row.up?.avgRR ?? ''}</td>
+                <td className="up">{row.up ? `${row.up.winRate}%` : ''}</td>
+                <td className="dn">{row.dn?.count ?? ''}</td>
+                <td className="dn">{row.dn?.avgRR ?? ''}</td>
+                <td className="dn">{row.dn ? `${row.dn.winRate}%` : ''}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -925,46 +860,114 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
             </div>
           )}
 
-          {/* Module 2: Signal Type Performance */}
-          <div className="signal-modules-row module-box">
-            {renderSignalModule('SIGNAL TYPE 1', type1Stats, 'Type1 pullback signal performance (MA1 touch reversal pattern in +3/-3 state)')}
-            {renderSignalModule('SIGNAL TYPE 2', type2Stats, 'Type2 wick signal performance (wicked bars in +3/-3 state)')}
-          </div>
+          {/* Signal Type Performance + RR Distribution */}
+          {(type1Stats || type2Stats) && (
+            <div className="stats-module">
+              <table className="stats-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="5" className="module-title" data-tooltip="Signal performance summary for Type1 (MA1 touch reversal) and Type2 (wicked bars in +3/-3 state)">SIGNAL PERFORMANCE</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    <th colSpan="2">Type 1</th>
+                    <th colSpan="2">Type 2</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    <th className="up">UP</th>
+                    <th className="dn">DN</th>
+                    <th className="up">UP</th>
+                    <th className="dn">DN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Count</td>
+                    <td className="up">{type1Stats?.upSummary.count ?? '—'}</td>
+                    <td className="dn">{type1Stats?.dnSummary.count ?? '—'}</td>
+                    <td className="up">{type2Stats?.upSummary.count ?? '—'}</td>
+                    <td className="dn">{type2Stats?.dnSummary.count ?? '—'}</td>
+                  </tr>
+                  <tr>
+                    <td>Avg RR</td>
+                    <td className="up">{type1Stats?.upSummary.avgRR ?? '—'}</td>
+                    <td className="dn">{type1Stats?.dnSummary.avgRR ?? '—'}</td>
+                    <td className="up">{type2Stats?.upSummary.avgRR ?? '—'}</td>
+                    <td className="dn">{type2Stats?.dnSummary.avgRR ?? '—'}</td>
+                  </tr>
+                  <tr>
+                    <td>Win Rate</td>
+                    <td className="up">{type1Stats ? `${type1Stats.upSummary.winRate}%` : '—'}</td>
+                    <td className="dn">{type1Stats ? `${type1Stats.dnSummary.winRate}%` : '—'}</td>
+                    <td className="up">{type2Stats ? `${type2Stats.upSummary.winRate}%` : '—'}</td>
+                    <td className="dn">{type2Stats ? `${type2Stats.dnSummary.winRate}%` : '—'}</td>
+                  </tr>
+                </tbody>
+                {/* RR Distribution */}
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="5" className="module-title">RR DISTRIBUTION</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    <th colSpan="2">Type 1</th>
+                    <th colSpan="2">Type 2</th>
+                  </tr>
+                  <tr>
+                    <th>RR</th>
+                    <th className="up">UP</th>
+                    <th className="dn">DN</th>
+                    <th className="up">UP</th>
+                    <th className="dn">DN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {RR_BUCKETS.map((bucket, i) => (
+                    <tr key={bucket.label}>
+                      <td>{bucket.label}</td>
+                      <td className="up">{type1Stats ? `${type1Stats.upDist[i].count} (${type1Stats.upDist[i].pct}%)` : '—'}</td>
+                      <td className="dn">{type1Stats ? `${type1Stats.dnDist[i].count} (${type1Stats.dnDist[i].pct}%)` : '—'}</td>
+                      <td className="up">{type2Stats ? `${type2Stats.upDist[i].count} (${type2Stats.upDist[i].pct}%)` : '—'}</td>
+                      <td className="dn">{type2Stats ? `${type2Stats.dnDist[i].count} (${type2Stats.dnDist[i].pct}%)` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-          {/* Module 3: Chop Regime Stats */}
+          {/* Chop Regime Stats — single combined table */}
           {chopRegimeStats && (
-            <div className="module-box chop-regime-module">
-              <div className="chop-regime-tables">
-                {/* Table 1: Chop Regime Overview */}
-                <table className="stats-table">
-                  <thead>
-                    <tr className="module-title-row">
-                      <th colSpan="4" className="module-title" data-tooltip="Bar count and UP/DN breakdown per chop regime (all bars)">CHOP REGIME OVERVIEW</th>
-                    </tr>
-                    <tr>
-                      <th></th>
-                      {chopRegimeStats.overview.map(r => <th key={r.key}>{r.label}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>Bar count</td>
-                      {chopRegimeStats.overview.map(r => <td key={r.key}>{r.count.toLocaleString()}</td>)}
-                    </tr>
-                    <tr>
-                      <td>UP %</td>
-                      {chopRegimeStats.overview.map(r => <td key={r.key} className="up">{r.upPct}%</td>)}
-                    </tr>
-                    <tr>
-                      <td>DN %</td>
-                      {chopRegimeStats.overview.map(r => <td key={r.key} className="dn">{r.dnPct}%</td>)}
-                    </tr>
-                  </tbody>
-                </table>
-
-                {/* Table 2: State Distribution by Chop Regime */}
+            <div className="stats-module">
+              <table className="stats-table">
+                {/* Section 1: Chop Regime Overview */}
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="4" className="module-title" data-tooltip="Bar count and UP/DN breakdown per chop regime (all bars)">CHOP REGIME OVERVIEW</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    {chopRegimeStats.overview.map(r => <th key={r.key}>{r.label}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Bar count</td>
+                    {chopRegimeStats.overview.map(r => <td key={r.key}>{r.count.toLocaleString()}</td>)}
+                  </tr>
+                  <tr>
+                    <td>UP %</td>
+                    {chopRegimeStats.overview.map(r => <td key={r.key} className="up">{r.upPct}%</td>)}
+                  </tr>
+                  <tr>
+                    <td>DN %</td>
+                    {chopRegimeStats.overview.map(r => <td key={r.key} className="dn">{r.dnPct}%</td>)}
+                  </tr>
+                </tbody>
+                {/* Section 2: State Distribution by Chop */}
                 {chopRegimeStats.stateByChop?.length > 0 && (
-                  <table className="stats-table">
+                  <>
                     <thead>
                       <tr className="module-title-row">
                         <th colSpan="4" className="module-title" data-tooltip="State distribution within each chop regime (all bars)">STATE DISTRIBUTION BY CHOP</th>
@@ -988,12 +991,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </>
                 )}
-
-                {/* Table 3: Signal Performance by Chop Regime */}
+                {/* Section 3: Signal Performance by Chop */}
                 {chopSignalPerf && (
-                  <table className="stats-table">
+                  <>
                     <thead>
                       <tr className="module-title-row">
                         <th colSpan="4" className="module-title" data-tooltip="Signal performance within each chop regime (signal bars only, respects filters)">SIGNAL PERF BY CHOP</th>
@@ -1013,11 +1015,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                       <tr><td>Type2 win %</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.winPct}%</td>)}</tr>
                       <tr><td>Type2 avg RR</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.avgRR}</td>)}</tr>
                     </tbody>
-                  </table>
+                  </>
                 )}
-              </div>
+              </table>
             </div>
           )}
+
+          {/* Nth Occurrence — side by side */}
+          <div className="signal-modules-row">
+            {renderNthOccurrence('TYPE 1 NTH OCCURRENCE', type1Stats)}
+            {renderNthOccurrence('TYPE 2 NTH OCCURRENCE', type2Stats)}
+          </div>
         </div>
       )}
 

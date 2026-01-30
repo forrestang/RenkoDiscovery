@@ -1535,6 +1535,7 @@ def get_parquet_stats(filepath: str):
 
     Returns counts and percentages of bars above/below each MA,
     and bars above/below ALL MAs.
+    Also returns per-bar column arrays (barData) for client-side chop filtering.
     """
     parquet_path = Path(filepath)
 
@@ -2117,6 +2118,32 @@ def get_parquet_stats(filepath: str):
             val = df[col].iloc[0]
             settings[key] = val.item() if hasattr(val, 'item') else val
 
+    # Build per-bar column arrays for client-side chop filtering (Module 7)
+    bar_data_cols = {
+        'open': 'open', 'close': 'close', 'high': 'high', 'low': 'low',
+        'State': 'state', 'prState': 'prState',
+        'Con_UP_bars': 'conUp', 'Con_DN_bars': 'conDn',
+        'FX_clr_RR': 'fxClrRR', 'DD_RR': 'ddRR',
+        'chop(rolling)': 'chop',
+    }
+    bar_data = {}
+    for src_col, dest_key in bar_data_cols.items():
+        if src_col in df.columns:
+            arr = df[src_col].tolist()
+            # Convert NaN to None for JSON serialization
+            bar_data[dest_key] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
+
+    # Add dynamic EMA columns based on detected MA periods
+    for period in ma_periods:
+        raw_col = f'EMA_rawDistance({period})'
+        rr_col = f'EMA_rrDistance({period})'
+        if raw_col in df.columns:
+            arr = df[raw_col].tolist()
+            bar_data[f'emaRaw{period}'] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
+        if rr_col in df.columns:
+            arr = df[rr_col].tolist()
+            bar_data[f'emaRr{period}'] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
+
     return {
         "totalBars": total_bars,
         "upBars": up_bars,
@@ -2149,7 +2176,9 @@ def get_parquet_stats(filepath: str):
         "signalData": signal_data,
         "chopRegimeStats": chop_regime_stats,
         "stateConbarsHeatmap": state_conbars_heatmap,
-        "stateTransitionMatrix": state_transition_matrix
+        "stateTransitionMatrix": state_transition_matrix,
+        "barData": bar_data,
+        "maPeriods": ma_periods
     }
 
 

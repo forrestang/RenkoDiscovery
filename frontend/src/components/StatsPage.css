@@ -3,8 +3,10 @@
 .stats-page {
   padding: var(--space-2);
   background: var(--bg-primary);
-  overflow-y: auto;
+  overflow: hidden;
   height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Loading & Empty States */
@@ -39,10 +41,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  margin-bottom: var(--space-3);
+  margin-bottom: 0;
   font-family: var(--font-mono);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   padding-bottom: var(--space-3);
+  flex-shrink: 0;
 }
 
 /* File Header */
@@ -50,11 +53,12 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-shrink: 0;
+  flex: 1;
+  justify-content: center;
 }
 
 .stats-filename {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent-primary);
 }
@@ -134,6 +138,10 @@
   flex-wrap: wrap;
   gap: var(--space-3);
   align-items: flex-start;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-top: var(--space-3);
 }
 
 
@@ -537,5 +545,80 @@
   text-decoration: underline;
   text-decoration-color: #eab308;
   text-underline-offset: 2px;
+}
+
+/* Module 7: Chop Filter Toggle Bar */
+.chop-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.chop-filter-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-right: 4px;
+}
+
+.chop-filter-btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chop-filter-btn:hover {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+}
+
+.chop-filter-btn.active {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border-color: #f59e0b;
+  font-weight: 600;
+}
+
+.chop-filter-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 0 4px;
+}
+
+.chop-range-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.chop-range-input {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  width: 56px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  text-align: center;
+  outline: none;
+}
+
+.chop-range-input:focus {
+  border-color: #f59e0b;
 }
 

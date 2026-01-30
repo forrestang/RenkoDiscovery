@@ -121,17 +121,19 @@ A 6x6 table showing the probability of moving from one State to another. Rows = 
 
 ---
 
-## Module 7: Chop Filter Toggle (Extension of Module 3)
+## Module 7: Chop Filter Toggle 
 
-Rather than just a comparison table, add a toggle button group (All | Low Chop | Mid | High) to the top of the stats page that re-filters ALL existing stats modules (run decay, Type1 MFE, state distribution, etc.) to only show data from the selected chop regime. This turns chop into a global filter across the entire stats view.
+Rather than just a comparison table, add a toggle button group (All | Low Chop | Mid | High) to the top of the General stats page that re-filters ALL existing stats modules to only show data from the selected chop regime. This turns chop into a global filter across the entire General Stats page.
 
 ---
 
-## Module 8: Run Length vs Forward Move
+## ~~Module 8: Run Length vs Forward Move~~
 
-A table or bar chart showing, for each consecutive bar count (1 through 10), the average and median FX_clr_RR of the next move. Separate UP and DN runs. Answers: "After N bars in a row, how much juice is left?" Shows whether continuation diminishes as runs get longer.
+~~A table or bar chart showing, for each consecutive bar count (1 through 10), the average and median FX_clr_RR of the next move. Separate UP and DN runs. Answers: "After N bars in a row, how much juice is left?" Shows whether continuation diminishes as runs get longer.~~
 
-**Metric**: RR. Directly answers "how many more reversals of continuation can I expect."
+~~**Metric**: RR. Directly answers "how many more reversals of continuation can I expect."~~
+
+*Dropped — subsumed by Module 5 (State x ConBars Heatmap).*
 
 ---
 
@@ -154,6 +156,22 @@ A scatter plot with fast EMA RR distance on the X axis and slow EMA RR distance 
 ## Module 11 (Bonus): Multi-Timeframe Alignment
 
 Compare two parquet files generated with different brick sizes. Align them by datetime and show how signal quality changes when both timeframes agree on state (e.g., both in State +3) vs disagree. Requires a new backend endpoint that loads two parquets and joins them. Defer to last as it's the most complex.
+
+---
+
+## Module 12: Signal Quality Filters (EMA Distance & Wick Size)
+
+A collapsible filter panel on the Type1/Type2 signal tab that lets you filter signals by EMA distance and drawdown/wick size before they feed into the R-Curve and all Module 2 stats. Works the same way as the existing N-value chips and chop filter — signals that don't pass the filter are excluded from all downstream calculations.
+
+The panel exposes 4 filter groups: EMA distance from each of the 3 MAs, plus DD (wick size). A normalization toggle (RR / ADR) switches all sliders between RR-normalized and ADR-normalized values — only one normalization is active at a time. Each filter group has independent UP and DN range sliders, since long and short signals often behave asymmetrically — for example, you might want to filter UP signals to only include those where EMA(20) RR distance is between 0.5 and 2.0, while leaving DN signals unfiltered or using a different range.
+
+Each filter row has a checkbox toggle to activate it. Filters default to inactive (unchecked), meaning no filtering is applied. When enabled, a dual-handle range slider sets the min/max bounds — only signals whose value for that metric falls within the range are included. Slider bounds are auto-derived from the actual data range of each metric. All enabled filters combine with AND logic: a signal must pass every active filter plus the existing N-value and chop filters to be included.
+
+The purpose is signal quality exploration — discovering whether signals fired at certain EMA distances or with certain wick characteristics systematically perform better or worse. For example, you might find that Type1 signals with small wicks (DD_RR < 0.5) and moderate EMA(20) distance (1–3 RR) produce a much steeper equity curve than unfiltered signals. This effectively turns the R-Curve into an interactive signal optimizer.
+
+The backend needs to attach EMA distance and DD values to each signal point (currently not included). The frontend adds the collapsible panel below the existing filter controls, with the filter logic extending the existing `filteredSignalData` pipeline.
+
+**Metric**: 4 filter groups (EMA MA1, EMA MA2, EMA MA3, DD) with a single RR/ADR normalization toggle that applies to all. Backend sends both normalizations per signal point; the frontend switches which values the sliders reference.
 
 ---
 
