@@ -1043,7 +1043,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                 <table className="stats-table">
                   <thead>
                     <tr className="module-title-row">
-                      <th colSpan={conBarsRange.length + 1} className="module-title" data-tooltip="Average FX_clr_RR by State and consecutive bar count. Green = positive RR, Red = negative. Shows sample count in parentheses.">STATE × CONSECUTIVE BARS</th>
+                      <th colSpan={conBarsRange.length + 1} className="module-title" data-tooltip="Average FX_clr_RR by State and consecutive bar count. Green = positive RR, Red = negative. Shows sample count in parentheses.">RR per CONSECUTIVE BAR IN A GIVEN STATE</th>
                     </tr>
                     <tr>
                       <th>State</th>
@@ -1059,8 +1059,13 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                         {stateConbarsHeatmap.map(row => {
                           const count = row[`s${s}_count`];
                           const avgRR = row[`s${s}_avgRR`];
+                          const dir = s > 0 ? 'up' : 'down';
+                          const ordinal = row.conBars === 1 ? '1st' : row.conBars === 2 ? '2nd' : row.conBars === 3 ? '3rd' : `${row.conBars}th`;
+                          const tooltip = count > 0
+                            ? `When I'm on the ${ordinal} consecutive ${dir} bar in State ${stateLabels[s]}, the bars in that situation averaged ${avgRR.toFixed(2)} RR`
+                            : null;
                           return (
-                            <td key={row.conBars} style={{ background: cellBg(avgRR), textAlign: 'center' }}>
+                            <td key={row.conBars} style={{ background: cellBg(avgRR), textAlign: 'center' }} title={tooltip}>
                               {count > 0 ? (
                                 <span>
                                   <span style={{ fontWeight: 600 }}>{avgRR.toFixed(2)}</span>
