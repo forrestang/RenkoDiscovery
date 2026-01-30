@@ -118,12 +118,14 @@
 .settings-inline-label {
   font-size: 11px;
   color: var(--text-secondary);
+  transform: scaleY(1.8);
 }
 
 .settings-inline-val {
   font-size: 11px;
   color: var(--text-primary);
   font-weight: 600;
+  transform: scaleY(1.8);
 }
 
 .settings-inline-sep {
@@ -284,7 +286,7 @@
 /* Equity Curve Module */
 .equity-curve-module {
   margin-bottom: 0;
-  width: 100%;
+  width: 70%;
 }
 
 .equity-curve-header {

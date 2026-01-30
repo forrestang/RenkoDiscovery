@@ -1192,7 +1192,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       {/* ==================== General Stats Tab ==================== */}
       {activeTab === 'general' && (
         <div className="stats-tab-content">
-          {/* General Stats */}
+          {/* General Stats + Global Chop Index */}
           <div className="stats-module">
             <table className="stats-table">
               <thead>
@@ -1212,33 +1212,29 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                   <td className="dn">{(dnBars ?? 0).toLocaleString()} <span className="pct">({pct(dnBars ?? 0, totalBars)}%)</span></td>
                 </tr>
               </tbody>
+              {_chopStats && (
+                <>
+                  <thead>
+                    <tr className="module-title-row">
+                      <th colSpan="3" className="module-title" data-tooltip="Percentage of bars that reverse direction from the prior bar. Not affected by chop filter — requires sequential bar context.">GLOBAL CHOP INDEX</th>
+                    </tr>
+                    <tr>
+                      <th>Reversal Bars</th>
+                      <th>Total</th>
+                      <th>Chop %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>{_chopStats.reversalBars.toLocaleString()}</td>
+                      <td>{totalBars.toLocaleString()}</td>
+                      <td className="chop-value">{_chopStats.chopIndex}%</td>
+                    </tr>
+                  </tbody>
+                </>
+              )}
             </table>
           </div>
-
-          {/* Global Chop Index */}
-          {_chopStats && (
-            <div className="stats-module chop-module">
-              <table className="stats-table">
-                <thead>
-                  <tr className="module-title-row">
-                    <th colSpan="3" className="module-title" data-tooltip="Percentage of bars that reverse direction from the prior bar. Not affected by chop filter — requires sequential bar context.">GLOBAL CHOP INDEX</th>
-                  </tr>
-                  <tr>
-                    <th>Reversal Bars</th>
-                    <th>Total</th>
-                    <th>Chop %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>{_chopStats.reversalBars.toLocaleString()}</td>
-                    <td>{totalBars.toLocaleString()}</td>
-                    <td className="chop-value">{_chopStats.chopIndex}%</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
 
           {/* State Distribution */}
           {_stateStats?.length > 0 && (
@@ -1273,7 +1269,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
             </div>
           )}
 
-          {/* Bar Location Stats */}
+          {/* Bar Location Stats (ALL + BEYOND) */}
           <div className="stats-module">
             <table className="stats-table">
               <thead>
@@ -1308,48 +1304,44 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                   </tr>
                 ))}
               </tbody>
+              {beyondRows && (
+                <>
+                  <thead>
+                    <tr className="module-title-row">
+                      <th colSpan="7" className="module-title" data-tooltip="Bars entirely above or below each MA (no part of the bar touches the MA)">BAR LOCATION(BEYOND)</th>
+                    </tr>
+                    <tr>
+                      <th></th>
+                      <th colSpan="3">Above</th>
+                      <th colSpan="3">Below</th>
+                    </tr>
+                    <tr>
+                      <th>MA</th>
+                      <th>Count</th>
+                      <th className="up">UP%</th>
+                      <th className="dn">DN%</th>
+                      <th>Count</th>
+                      <th className="up">UP%</th>
+                      <th className="dn">DN%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {beyondRows.map(row => (
+                      <tr key={row.label}>
+                        <td className={row.colorClass}>{row.label}</td>
+                        <td>{row.above} <span className="pct">({pct(row.above, totalBars)}%)</span></td>
+                        <td className={`up${row.aboveUp > row.aboveDown ? ' highlight' : ''}`}>{pct(row.aboveUp, row.above)}%</td>
+                        <td className={`dn${row.aboveDown > row.aboveUp ? ' highlight' : ''}`}>{pct(row.aboveDown, row.above)}%</td>
+                        <td>{row.below} <span className="pct">({pct(row.below, totalBars)}%)</span></td>
+                        <td className={`up${row.belowUp > row.belowDown ? ' highlight' : ''}`}>{pct(row.belowUp, row.below)}%</td>
+                        <td className={`dn${row.belowDown > row.belowUp ? ' highlight' : ''}`}>{pct(row.belowDown, row.below)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </>
+              )}
             </table>
           </div>
-
-          {/* Beyond Bar Location Stats */}
-          {beyondRows && (
-            <div className="stats-module">
-              <table className="stats-table">
-                <thead>
-                  <tr className="module-title-row">
-                    <th colSpan="7" className="module-title" data-tooltip="Bars entirely above or below each MA (no part of the bar touches the MA)">BAR LOCATION(BEYOND)</th>
-                  </tr>
-                  <tr>
-                    <th></th>
-                    <th colSpan="3">Above</th>
-                    <th colSpan="3">Below</th>
-                  </tr>
-                  <tr>
-                    <th>MA</th>
-                    <th>Count</th>
-                    <th className="up">UP%</th>
-                    <th className="dn">DN%</th>
-                    <th>Count</th>
-                    <th className="up">UP%</th>
-                    <th className="dn">DN%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {beyondRows.map(row => (
-                    <tr key={row.label}>
-                      <td className={row.colorClass}>{row.label}</td>
-                      <td>{row.above} <span className="pct">({pct(row.above, totalBars)}%)</span></td>
-                      <td className={`up${row.aboveUp > row.aboveDown ? ' highlight' : ''}`}>{pct(row.aboveUp, row.above)}%</td>
-                      <td className={`dn${row.aboveDown > row.aboveUp ? ' highlight' : ''}`}>{pct(row.aboveDown, row.above)}%</td>
-                      <td>{row.below} <span className="pct">({pct(row.below, totalBars)}%)</span></td>
-                      <td className={`up${row.belowUp > row.belowDown ? ' highlight' : ''}`}>{pct(row.belowUp, row.below)}%</td>
-                      <td className={`dn${row.belowDown > row.belowUp ? ' highlight' : ''}`}>{pct(row.belowDown, row.below)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
 
           {/* Wick Distribution (DD_RR) */}
           {_wickDist && (_wickDist.upDist?.length > 0 || _wickDist.dnDist?.length > 0) && (
