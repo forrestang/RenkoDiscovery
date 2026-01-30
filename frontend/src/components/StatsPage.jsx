@@ -325,14 +325,50 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     localStorage.setItem(`${STORAGE_PREFIX}chopHighMin`, chopHighMin.toString())
   }, [chopHighMin])
 
+  // Signal Quality Filter state
+  const SQF_DEFAULTS = { ema1: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, ema2: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, ema3: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, dd: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] } }
+  const [sqfNormMode, setSqfNormMode] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}sqfNormMode`) || 'rr'
+  })
+  const [sqfPanelOpen, setSqfPanelOpen] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}sqfPanelOpen`) === 'true'
+  })
+  const [sqfFilters, setSqfFilters] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}sqfFilters`)
+      return saved ? JSON.parse(saved) : SQF_DEFAULTS
+    } catch { return SQF_DEFAULTS }
+  })
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}sqfNormMode`, sqfNormMode)
+  }, [sqfNormMode])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}sqfPanelOpen`, sqfPanelOpen.toString())
+  }, [sqfPanelOpen])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}sqfFilters`, JSON.stringify(sqfFilters))
+  }, [sqfFilters])
+
+  const updateSqfFilter = (group, field, value) => {
+    setSqfFilters(prev => ({ ...prev, [group]: { ...prev[group], [field]: value } }))
+  }
+  const updateSqfRange = (group, rangeKey, idx, value) => {
+    setSqfFilters(prev => {
+      const range = [...prev[group][rangeKey]]
+      range[idx] = value === '' ? null : parseFloat(value)
+      return { ...prev, [group]: { ...prev[group], [rangeKey]: range } }
+    })
+  }
+
   // Active chop filter based on current tab
   const chopFilter = activeTab === 'general' ? chopFilterGeneral : chopFilterSignals
   const setChopFilter = activeTab === 'general' ? setChopFilterGeneral : setChopFilterSignals
 
-  // Reset chop filters when a new file is loaded
+  // Reset chop filters and SQF filters when a new file is loaded
   useEffect(() => {
     setChopFilterGeneral('all')
     setChopFilterSignals('all')
+    setSqfFilters(SQF_DEFAULTS)
   }, [filepath])
 
   const handleChopFilterChange = (value) => {
@@ -375,7 +411,55 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     }
   }, [stats?.barData, stats?.maPeriods, filteredBarIndices, chopFilterGeneral])
 
-  // Filter signal data by per-type N selections, enabled state, and chop regime
+  // Compute SQF bounds from raw signal data (not filtered), split by UP/DN
+  const sqfBounds = useMemo(() => {
+    if (!signalData) return null
+    const suffix = sqfNormMode === 'adr' ? '_adr' : '_rr'
+    const groups = [
+      { key: 'ema1', field: 'ema1Dist' },
+      { key: 'ema2', field: 'ema2Dist' },
+      { key: 'ema3', field: 'ema3Dist' },
+      { key: 'dd', field: 'dd' },
+    ]
+    const bounds = {}
+    for (const { key, field } of groups) {
+      const fld = field + suffix
+      const upPts = [...(signalData.type1Up || []), ...(signalData.type2Up || [])]
+      const dnPts = [...(signalData.type1Dn || []), ...(signalData.type2Dn || [])]
+      const upVals = upPts.map(p => p[fld]).filter(v => v != null)
+      const dnVals = dnPts.map(p => p[fld]).filter(v => v != null)
+      bounds[key] = {
+        up: upVals.length > 0 ? [Math.min(...upVals), Math.max(...upVals)] : [0, 0],
+        dn: dnVals.length > 0 ? [Math.min(...dnVals), Math.max(...dnVals)] : [0, 0],
+        available: upVals.length > 0 || dnVals.length > 0,
+      }
+    }
+    return bounds
+  }, [signalData, sqfNormMode])
+
+  // SQF pass test: check if a signal point passes all enabled SQF filters
+  const passesSqf = (pt, dir) => {
+    const suffix = sqfNormMode === 'adr' ? '_adr' : '_rr'
+    const groups = [
+      { key: 'ema1', field: 'ema1Dist' },
+      { key: 'ema2', field: 'ema2Dist' },
+      { key: 'ema3', field: 'ema3Dist' },
+      { key: 'dd', field: 'dd' },
+    ]
+    for (const { key, field } of groups) {
+      const cfg = sqfFilters[key]
+      const enabled = dir === 'up' ? cfg.upEnabled : cfg.dnEnabled
+      if (!enabled) continue
+      const val = pt[field + suffix]
+      if (val == null) return false
+      const range = dir === 'up' ? cfg.upRange : cfg.dnRange
+      if (range[0] != null && val < range[0]) return false
+      if (range[1] != null && val > range[1]) return false
+    }
+    return true
+  }
+
+  // Filter signal data by per-type N selections, enabled state, chop regime, and SQF
   const filteredSignalData = useMemo(() => {
     if (!signalData) return {}
     const t1NsSet = new Set(selectedType1Ns)
@@ -383,16 +467,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     const passesChop = (pt) => chopTest(pt.chop, chopFilterSignals)
     const result = {}
     for (const [key, arr] of Object.entries(signalData)) {
+      const dir = key.endsWith('Up') ? 'up' : 'dn'
       if (key.startsWith('type1')) {
-        result[key] = type1Enabled && arr ? arr.filter(pt => t1NsSet.has(pt.n) && passesChop(pt)) : []
+        result[key] = type1Enabled && arr ? arr.filter(pt => t1NsSet.has(pt.n) && passesChop(pt) && passesSqf(pt, dir)) : []
       } else if (key.startsWith('type2')) {
-        result[key] = type2Enabled && arr ? arr.filter(pt => t2NsSet.has(pt.n) && passesChop(pt)) : []
+        result[key] = type2Enabled && arr ? arr.filter(pt => t2NsSet.has(pt.n) && passesChop(pt) && passesSqf(pt, dir)) : []
       } else {
         result[key] = arr || []
       }
     }
     return result
-  }, [signalData, selectedType1Ns, selectedType2Ns, type1Enabled, type2Enabled, chopFilterSignals, chopLowMax, chopHighMin])
+  }, [signalData, selectedType1Ns, selectedType2Ns, type1Enabled, type2Enabled, chopFilterSignals, chopLowMax, chopHighMin, sqfFilters, sqfNormMode])
 
   const rrLabel = RR_FIELDS.find(f => f.value === selectedRRField)?.label || 'RR'
 
@@ -819,6 +904,81 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                           onClick={() => toggleType2N(n)}
                         >{n}</button>
                       ))}
+                    </div>
+                  )}
+                  {/* Signal Quality Filters */}
+                  {sqfBounds && (
+                    <div className="sqf-filters-panel">
+                      <div className="sqf-header-row">
+                        <span className="sqf-label" onClick={() => setSqfPanelOpen(prev => !prev)}>
+                          <span className={`collapse-arrow ${sqfPanelOpen ? 'open' : ''}`}>&#9654;</span>
+                          Signal Quality
+                        </span>
+                        <span className="sqf-norm-toggle">
+                          {['rr', 'adr'].map(mode => (
+                            <button
+                              key={mode}
+                              className={`sqf-norm-btn${sqfNormMode === mode ? ' active' : ''}`}
+                              onClick={() => {
+                                setSqfNormMode(mode)
+                                setSqfFilters(SQF_DEFAULTS)
+                              }}
+                            >{mode.toUpperCase()}</button>
+                          ))}
+                        </span>
+                      </div>
+                      {sqfPanelOpen && (
+                        <div className="sqf-groups">
+                          {[
+                            { key: 'ema1', label: `EMA(${stats?.settings?.ma1Period ?? stats?.maPeriods?.[0] ?? '?'})`, tooltip: 'Distance from MA for entry bar' },
+                            { key: 'ema2', label: `EMA(${stats?.settings?.ma2Period ?? stats?.maPeriods?.[1] ?? '?'})`, tooltip: 'Distance from MA for entry bar' },
+                            { key: 'ema3', label: `EMA(${stats?.settings?.ma3Period ?? stats?.maPeriods?.[2] ?? '?'})`, tooltip: 'Distance from MA for entry bar' },
+                            { key: 'dd', label: 'DD', tooltip: 'Wick size of entry bar' },
+                          ].filter(g => sqfBounds[g.key]?.available).map(({ key, label, tooltip }) => (
+                            <div key={key} className="sqf-filter-group">
+                              <div className="sqf-filter-label" title={tooltip}>{label}</div>
+                              {['up', 'dn'].map(dir => {
+                                const enabledKey = dir === 'up' ? 'upEnabled' : 'dnEnabled'
+                                const rangeKey = dir === 'up' ? 'upRange' : 'dnRange'
+                                const bounds = sqfBounds[key][dir]
+                                const cfg = sqfFilters[key]
+                                const enabled = cfg[enabledKey]
+                                return (
+                                  <div key={dir} className="sqf-slider-row">
+                                    <label className="sqf-checkbox-label">
+                                      <input
+                                        type="checkbox"
+                                        checked={enabled}
+                                        onChange={e => updateSqfFilter(key, enabledKey, e.target.checked)}
+                                      />
+                                      <span className={`sqf-dir-label ${dir}`}>{dir.toUpperCase()}</span>
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step="0.1"
+                                      className="sqf-range-input"
+                                      disabled={!enabled}
+                                      placeholder={bounds[0]?.toFixed(1) ?? ''}
+                                      value={cfg[rangeKey][0] ?? ''}
+                                      onChange={e => updateSqfRange(key, rangeKey, 0, e.target.value)}
+                                    />
+                                    <span className="sqf-range-sep">to</span>
+                                    <input
+                                      type="number"
+                                      step="0.1"
+                                      className="sqf-range-input"
+                                      disabled={!enabled}
+                                      placeholder={bounds[1]?.toFixed(1) ?? ''}
+                                      value={cfg[rangeKey][1] ?? ''}
+                                      onChange={e => updateSqfRange(key, rangeKey, 1, e.target.value)}
+                                    />
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -2075,6 +2075,18 @@ def get_parquet_stats(filepath: str):
         if col_name in df.columns:
             extra_metric_cols.append((col_name, field_name))
 
+    # EMA distance per MA (RR + ADR normalizations)
+    for idx_i, period in enumerate(ma_periods, start=1):
+        for col_sfx, fld_sfx in [('rrDistance', 'rr'), ('adrDistance', 'adr')]:
+            col = f'EMA_{col_sfx}({period})'
+            fld = f'ema{idx_i}Dist_{fld_sfx}'
+            if col in df.columns:
+                extra_metric_cols.append((col, fld))
+    # DD (wick size) in RR and ADR
+    for col, fld in [('DD_RR', 'dd_rr'), ('DD_ADR', 'dd_adr')]:
+        if col in df.columns:
+            extra_metric_cols.append((col, fld))
+
     if 'FX_clr_RR' in df.columns:
         # Columns to pull from the subset
         needed_cols_base = ['FX_clr_RR'] + [c for c, _ in extra_metric_cols] + (['chop(rolling)'] if 'chop(rolling)' in df.columns else [])
