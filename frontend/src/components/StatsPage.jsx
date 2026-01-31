@@ -330,33 +330,61 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   const [sqfNormMode, setSqfNormMode] = useState(() => {
     return localStorage.getItem(`${STORAGE_PREFIX}sqfNormMode`) || 'rr'
   })
-  const [sqfPanelOpen, setSqfPanelOpen] = useState(() => {
-    return localStorage.getItem(`${STORAGE_PREFIX}sqfPanelOpen`) === 'true'
+  const [sqfPanelOpenT1, setSqfPanelOpenT1] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}sqfPanelOpenT1`) === 'true'
+  })
+  const [sqfPanelOpenT2, setSqfPanelOpenT2] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}sqfPanelOpenT2`) === 'true'
   })
   const [sqfFilters, setSqfFilters] = useState(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_PREFIX}sqfFilters`)
-      return saved ? JSON.parse(saved) : SQF_DEFAULTS
-    } catch { return SQF_DEFAULTS }
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        // Migration: old flat shape → new nested shape
+        if (parsed.ema1 && !parsed.t1) return { t1: parsed, t2: SQF_DEFAULTS }
+        return parsed
+      }
+      return { t1: SQF_DEFAULTS, t2: SQF_DEFAULTS }
+    } catch { return { t1: SQF_DEFAULTS, t2: SQF_DEFAULTS } }
   })
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}sqfNormMode`, sqfNormMode)
   }, [sqfNormMode])
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_PREFIX}sqfPanelOpen`, sqfPanelOpen.toString())
-  }, [sqfPanelOpen])
+    localStorage.setItem(`${STORAGE_PREFIX}sqfPanelOpenT1`, sqfPanelOpenT1.toString())
+  }, [sqfPanelOpenT1])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}sqfPanelOpenT2`, sqfPanelOpenT2.toString())
+  }, [sqfPanelOpenT2])
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}sqfFilters`, JSON.stringify(sqfFilters))
   }, [sqfFilters])
 
-  const updateSqfFilter = (group, field, value) => {
-    setSqfFilters(prev => ({ ...prev, [group]: { ...prev[group], [field]: value } }))
-  }
-  const updateSqfRange = (group, rangeKey, idx, value) => {
+  const updateSqfFilter = (type, group, field, value) => {
     setSqfFilters(prev => {
-      const range = [...prev[group][rangeKey]]
+      const updated = { ...prev[type][group], [field]: value }
+      // When enabling, seed null range values from data bounds
+      if (value === true && sqfBounds?.[type]?.[group]) {
+        const dir = field === 'upEnabled' ? 'up' : 'dn'
+        const rangeKey = field === 'upEnabled' ? 'upRange' : 'dnRange'
+        const bounds = sqfBounds[type][group][dir]
+        const range = updated[rangeKey]
+        if (range[0] == null || range[1] == null) {
+          updated[rangeKey] = [
+            range[0] ?? bounds[0],
+            range[1] ?? bounds[1],
+          ]
+        }
+      }
+      return { ...prev, [type]: { ...prev[type], [group]: updated } }
+    })
+  }
+  const updateSqfRange = (type, group, rangeKey, idx, value) => {
+    setSqfFilters(prev => {
+      const range = [...prev[type][group][rangeKey]]
       range[idx] = value === '' ? null : parseFloat(value)
-      return { ...prev, [group]: { ...prev[group], [rangeKey]: range } }
+      return { ...prev, [type]: { ...prev[type], [group]: { ...prev[type][group], [rangeKey]: range } } }
     })
   }
 
@@ -368,7 +396,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   useEffect(() => {
     setChopFilterGeneral('all')
     setChopFilterSignals('all')
-    setSqfFilters(SQF_DEFAULTS)
+    setSqfFilters({ t1: SQF_DEFAULTS, t2: SQF_DEFAULTS })
   }, [filepath])
 
   const handleChopFilterChange = (value) => {
@@ -411,7 +439,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     }
   }, [stats?.barData, stats?.maPeriods, filteredBarIndices, chopFilterGeneral])
 
-  // Compute SQF bounds from raw signal data (not filtered), split by UP/DN
+  // Compute SQF bounds from raw signal data (not filtered), split by type and UP/DN
   const sqfBounds = useMemo(() => {
     if (!signalData) return null
     const suffix = sqfNormMode === 'adr' ? '_adr' : '_rr'
@@ -421,24 +449,31 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       { key: 'ema3', field: 'ema3Dist' },
       { key: 'dd', field: 'dd' },
     ]
-    const bounds = {}
-    for (const { key, field } of groups) {
-      const fld = field + suffix
-      const upPts = [...(signalData.type1Up || []), ...(signalData.type2Up || [])]
-      const dnPts = [...(signalData.type1Dn || []), ...(signalData.type2Dn || [])]
-      const upVals = upPts.map(p => p[fld]).filter(v => v != null)
-      const dnVals = dnPts.map(p => p[fld]).filter(v => v != null)
-      bounds[key] = {
-        up: upVals.length > 0 ? [Math.min(...upVals), Math.max(...upVals)] : [0, 0],
-        dn: dnVals.length > 0 ? [Math.min(...dnVals), Math.max(...dnVals)] : [0, 0],
-        available: upVals.length > 0 || dnVals.length > 0,
+    const result = {}
+    for (const [type, upKey, dnKey] of [['t1', 'type1Up', 'type1Dn'], ['t2', 'type2Up', 'type2Dn']]) {
+      const bounds = {}
+      for (const { key, field } of groups) {
+        const fld = field + suffix
+        const upVals = (signalData[upKey] || []).map(p => p[fld]).filter(v => v != null)
+        const dnVals = (signalData[dnKey] || []).map(p => p[fld]).filter(v => v != null)
+        const round1 = v => Math.round(v * 10) / 10
+        bounds[key] = {
+          up: upVals.length > 0
+            ? [round1(Math.min(...upVals) - 0.1), round1(Math.max(...upVals) + 0.1)]
+            : [0, 0],
+          dn: dnVals.length > 0
+            ? [round1(Math.max(...dnVals) + 0.1), round1(Math.min(...dnVals) - 0.1)]
+            : [0, 0],
+          available: upVals.length > 0 || dnVals.length > 0,
+        }
       }
+      result[type] = bounds
     }
-    return bounds
+    return result
   }, [signalData, sqfNormMode])
 
   // SQF pass test: check if a signal point passes all enabled SQF filters
-  const passesSqf = (pt, dir) => {
+  const passesSqf = (pt, dir, type) => {
     const suffix = sqfNormMode === 'adr' ? '_adr' : '_rr'
     const groups = [
       { key: 'ema1', field: 'ema1Dist' },
@@ -447,14 +482,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       { key: 'dd', field: 'dd' },
     ]
     for (const { key, field } of groups) {
-      const cfg = sqfFilters[key]
+      const cfg = sqfFilters[type][key]
       const enabled = dir === 'up' ? cfg.upEnabled : cfg.dnEnabled
       if (!enabled) continue
       const val = pt[field + suffix]
       if (val == null) return false
       const range = dir === 'up' ? cfg.upRange : cfg.dnRange
-      if (range[0] != null && val < range[0]) return false
-      if (range[1] != null && val > range[1]) return false
+      const [a, b] = range
+      const lo = (a != null && b != null) ? Math.min(a, b) : a
+      const hi = (a != null && b != null) ? Math.max(a, b) : b
+      if (lo != null && val < lo) return false
+      if (hi != null && val > hi) return false
     }
     return true
   }
@@ -469,9 +507,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
     for (const [key, arr] of Object.entries(signalData)) {
       const dir = key.endsWith('Up') ? 'up' : 'dn'
       if (key.startsWith('type1')) {
-        result[key] = type1Enabled && arr ? arr.filter(pt => t1NsSet.has(pt.n) && passesChop(pt) && passesSqf(pt, dir)) : []
+        result[key] = type1Enabled && arr ? arr.filter(pt => t1NsSet.has(pt.n) && passesChop(pt) && passesSqf(pt, dir, 't1')) : []
       } else if (key.startsWith('type2')) {
-        result[key] = type2Enabled && arr ? arr.filter(pt => t2NsSet.has(pt.n) && passesChop(pt) && passesSqf(pt, dir)) : []
+        result[key] = type2Enabled && arr ? arr.filter(pt => t2NsSet.has(pt.n) && passesChop(pt) && passesSqf(pt, dir, 't2')) : []
       } else {
         result[key] = arr || []
       }
@@ -494,8 +532,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       .map(s => {
         const arr = filteredSignalData[s.key]
         let cum = 0
-        const xs = []
-        const ys = []
+        const xs = [0]
+        const ys = [0]
         arr.forEach((pt, i) => {
           cum += (pt[selectedRRField] ?? 0)
           xs.push(i + 1)
@@ -527,8 +565,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
         const merged = [...ups, ...dns].sort((a, b) => a.idx - b.idx)
         if (merged.length === 0) return null
         let cum = 0
-        const xs = []
-        const ys = []
+        const xs = [0]
+        const ys = [0]
         merged.forEach((pt, i) => {
           cum += (pt[selectedRRField] ?? 0)
           xs.push(i + 1)
@@ -906,13 +944,16 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                       ))}
                     </div>
                   )}
-                  {/* Signal Quality Filters */}
-                  {sqfBounds && (
-                    <div className="sqf-filters-panel">
+                  {/* Signal Quality Filters — separate T1 and T2 panels */}
+                  {[
+                    { type: 't1', label: 'Signal Quality-T1', open: sqfPanelOpenT1, setOpen: setSqfPanelOpenT1 },
+                    { type: 't2', label: 'Signal Quality-T2', open: sqfPanelOpenT2, setOpen: setSqfPanelOpenT2 },
+                  ].filter(({ type }) => sqfBounds?.[type]).map(({ type, label, open, setOpen }) => (
+                    <div key={type} className="sqf-filters-panel">
                       <div className="sqf-header-row">
-                        <span className="sqf-label" onClick={() => setSqfPanelOpen(prev => !prev)}>
-                          <span className={`collapse-arrow ${sqfPanelOpen ? 'open' : ''}`}>&#9654;</span>
-                          Signal Quality
+                        <span className="sqf-label" onClick={() => setOpen(prev => !prev)}>
+                          <span className={`collapse-arrow ${open ? 'open' : ''}`}>&#9654;</span>
+                          {label}
                         </span>
                         <span className="sqf-norm-toggle">
                           {['rr', 'adr'].map(mode => (
@@ -921,27 +962,27 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                               className={`sqf-norm-btn${sqfNormMode === mode ? ' active' : ''}`}
                               onClick={() => {
                                 setSqfNormMode(mode)
-                                setSqfFilters(SQF_DEFAULTS)
+                                setSqfFilters({ t1: SQF_DEFAULTS, t2: SQF_DEFAULTS })
                               }}
                             >{mode.toUpperCase()}</button>
                           ))}
                         </span>
                       </div>
-                      {sqfPanelOpen && (
+                      {open && (
                         <div className="sqf-groups">
                           {[
                             { key: 'ema1', label: `EMA(${stats?.settings?.ma1Period ?? stats?.maPeriods?.[0] ?? '?'})`, tooltip: 'Distance from MA for entry bar' },
                             { key: 'ema2', label: `EMA(${stats?.settings?.ma2Period ?? stats?.maPeriods?.[1] ?? '?'})`, tooltip: 'Distance from MA for entry bar' },
                             { key: 'ema3', label: `EMA(${stats?.settings?.ma3Period ?? stats?.maPeriods?.[2] ?? '?'})`, tooltip: 'Distance from MA for entry bar' },
                             { key: 'dd', label: 'DD', tooltip: 'Wick size of entry bar' },
-                          ].filter(g => sqfBounds[g.key]?.available).map(({ key, label, tooltip }) => (
+                          ].filter(g => sqfBounds[type][g.key]?.available).map(({ key, label: groupLabel, tooltip }) => (
                             <div key={key} className="sqf-filter-group">
-                              <div className="sqf-filter-label" title={tooltip}>{label}</div>
+                              <div className="sqf-filter-label" title={tooltip}>{groupLabel}</div>
                               {['up', 'dn'].map(dir => {
                                 const enabledKey = dir === 'up' ? 'upEnabled' : 'dnEnabled'
                                 const rangeKey = dir === 'up' ? 'upRange' : 'dnRange'
-                                const bounds = sqfBounds[key][dir]
-                                const cfg = sqfFilters[key]
+                                const bounds = sqfBounds[type][key][dir]
+                                const cfg = sqfFilters[type][key]
                                 const enabled = cfg[enabledKey]
                                 return (
                                   <div key={dir} className="sqf-slider-row">
@@ -949,7 +990,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                                       <input
                                         type="checkbox"
                                         checked={enabled}
-                                        onChange={e => updateSqfFilter(key, enabledKey, e.target.checked)}
+                                        onChange={e => updateSqfFilter(type, key, enabledKey, e.target.checked)}
                                       />
                                       <span className={`sqf-dir-label ${dir}`}>{dir.toUpperCase()}</span>
                                     </label>
@@ -960,7 +1001,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                                       disabled={!enabled}
                                       placeholder={bounds[0]?.toFixed(1) ?? ''}
                                       value={cfg[rangeKey][0] ?? ''}
-                                      onChange={e => updateSqfRange(key, rangeKey, 0, e.target.value)}
+                                      onChange={e => updateSqfRange(type, key, rangeKey, 0, e.target.value)}
                                     />
                                     <span className="sqf-range-sep">to</span>
                                     <input
@@ -970,7 +1011,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                                       disabled={!enabled}
                                       placeholder={bounds[1]?.toFixed(1) ?? ''}
                                       value={cfg[rangeKey][1] ?? ''}
-                                      onChange={e => updateSqfRange(key, rangeKey, 1, e.target.value)}
+                                      onChange={e => updateSqfRange(type, key, rangeKey, 1, e.target.value)}
                                     />
                                   </div>
                                 )
@@ -980,7 +1021,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                         </div>
                       )}
                     </div>
-                  )}
+                  ))}
                 </div>
               )}
               {(comboMode ? comboCurveTraces : equityCurveTraces).length > 0 && (
