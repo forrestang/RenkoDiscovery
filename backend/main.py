@@ -198,7 +198,7 @@ def list_files(working_dir: Optional[str] = None):
 def list_cache(working_dir: Optional[str] = None):
     """List all cached feather files with metadata."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache_performant"
+    cache_dir = base_dir / "cache"
 
     if not cache_dir.exists():
         return []
@@ -270,7 +270,7 @@ def list_stats_files(working_dir: Optional[str] = None):
 def delete_cache_instrument(instrument: str, working_dir: Optional[str] = None):
     """Delete a specific cached feather file and its metadata."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache_performant"
+    cache_dir = base_dir / "cache"
     feather_path = cache_dir / f"{instrument}.feather"
 
     if not feather_path.exists():
@@ -290,7 +290,7 @@ def delete_cache_instrument(instrument: str, working_dir: Optional[str] = None):
 def delete_cache_all(working_dir: Optional[str] = None):
     """Delete all cached feather and metadata files."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache_performant"
+    cache_dir = base_dir / "cache"
 
     if not cache_dir.exists():
         return {"status": "ok", "deleted": 0}
@@ -499,7 +499,7 @@ def process_files(request: ProcessRequest):
     - low: min bid price
     """
     base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache_performant"
+    cache_dir = base_dir / "cache"
     cache_dir.mkdir(exist_ok=True)
 
     data_format = request.data_format
@@ -610,7 +610,7 @@ def process_files(request: ProcessRequest):
 def get_chart_data(instrument: str, working_dir: Optional[str] = None, limit: Optional[int] = None):
     """Get OHLC data for charting."""
     base_dir = Path(working_dir) if working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache_performant"
+    cache_dir = base_dir / "cache"
     feather_path = cache_dir / f"{instrument}.feather"
 
     if not feather_path.exists():
@@ -1004,7 +1004,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 def get_renko_data(instrument: str, request: RenkoRequest):
     """Generate Renko chart data with wicks."""
     base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
-    cache_dir = base_dir / "cache_performant"
+    cache_dir = base_dir / "cache"
     feather_path = cache_dir / f"{instrument}.feather"
 
     if not feather_path.exists():
@@ -1149,7 +1149,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
 
     # Calculate currentADR (Average Daily Range) from RAW price data
     # Load raw OHLC data for accurate daily range calculation
-    cache_dir = base_dir / "cache_performant"
+    cache_dir = base_dir / "cache"
     feather_path = cache_dir / f"{instrument}.feather"
     raw_df = pd.read_feather(feather_path)
     raw_df['utc_date'] = raw_df['datetime'].dt.date
