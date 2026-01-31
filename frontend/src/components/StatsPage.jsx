@@ -5,16 +5,16 @@ import './StatsPage.css'
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
 const RR_FIELDS = [
-  { value: 'rr', label: 'FX_clr_RR', desc: 'MFE to color change, reversal-normalized' },
-  { value: 'rr_adj', label: 'FX_clr_RR (adj)', desc: 'FX_clr_RR - 1, subtracts one reversal for a more realistic exit estimate' },
-  { value: 'clr_adr', label: 'FX_clr_ADR', desc: 'MFE to color change, ADR-normalized' },
-  { value: 'clr_adr_adj', label: 'FX_clr_ADR (adj)', desc: 'FX_clr_ADR minus one reversal in ADR units (reversal_size / currentADR), for a more realistic exit estimate' },
-  { value: 'ma1_rr', label: 'FX_MA1_RR', desc: 'Move until price closes beyond MA1, reversal-normalized' },
-  { value: 'ma1_adr', label: 'FX_MA1_ADR', desc: 'Move until price closes beyond MA1, ADR-normalized' },
-  { value: 'ma2_rr', label: 'FX_MA2_RR', desc: 'Move until price closes beyond MA2, reversal-normalized' },
-  { value: 'ma2_adr', label: 'FX_MA2_ADR', desc: 'Move until price closes beyond MA2, ADR-normalized' },
-  { value: 'ma3_rr', label: 'FX_MA3_RR', desc: 'Move until price closes beyond MA3, reversal-normalized' },
-  { value: 'ma3_adr', label: 'FX_MA3_ADR', desc: 'Move until price closes beyond MA3, ADR-normalized' },
+  { value: 'rr', label: 'MFE_clr_RR', desc: 'MFE to color change, reversal-normalized (always >= 0)' },
+  { value: 'rr_adj', label: 'REAL_clr_RR', desc: 'MFE_clr_price minus reversal_size, reversal-normalized. Realistic exit estimate (can be negative)' },
+  { value: 'clr_adr', label: 'MFE_clr_ADR', desc: 'MFE to color change, ADR-normalized (always >= 0)' },
+  { value: 'clr_adr_adj', label: 'REAL_clr_ADR', desc: 'MFE_clr_price minus reversal_size, ADR-normalized. Realistic exit estimate (can be negative)' },
+  { value: 'ma1_rr', label: 'REAL_MA1_RR', desc: 'Move until price closes beyond MA1, reversal-normalized' },
+  { value: 'ma1_adr', label: 'REAL_MA1_ADR', desc: 'Move until price closes beyond MA1, ADR-normalized' },
+  { value: 'ma2_rr', label: 'REAL_MA2_RR', desc: 'Move until price closes beyond MA2, reversal-normalized' },
+  { value: 'ma2_adr', label: 'REAL_MA2_ADR', desc: 'Move until price closes beyond MA2, ADR-normalized' },
+  { value: 'ma3_rr', label: 'REAL_MA3_RR', desc: 'Move until price closes beyond MA3, reversal-normalized' },
+  { value: 'ma3_adr', label: 'REAL_MA3_ADR', desc: 'Move until price closes beyond MA3, ADR-normalized' },
 ]
 
 const RR_BUCKETS = [
@@ -1524,7 +1524,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                 <table className="stats-table">
                   <thead>
                     <tr className="module-title-row">
-                      <th colSpan={conBarsRange.length + 1} className="module-title" data-tooltip="Average FX_clr_RR by State and consecutive bar count. Green = positive RR, Red = negative. Shows sample count in parentheses.">RR per CONSECUTIVE BAR IN A GIVEN STATE</th>
+                      <th colSpan={conBarsRange.length + 1} className="module-title" data-tooltip="Average REAL_clr_RR by State and consecutive bar count. Green = positive RR, Red = negative. Shows sample count in parentheses.">FWD REAL RR PER CONSECUTIVE BAR BY STATE</th>
                     </tr>
                     <tr>
                       <th>State</th>

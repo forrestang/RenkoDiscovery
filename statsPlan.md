@@ -25,21 +25,21 @@ The stats page has two categories of modules, each in its own tab:
 
 ## Module 1: Cumulative R Curve (Equity Curve)
 
-A line chart showing cumulative FX_clr_RR gained over time for each signal type (Type1 UP, Type1 DN, Type2 UP, Type2 DN). Each signal occurrence adds its FX_clr_RR to a running total. A rising line means the signal has a real edge; a flat or declining line means it doesn't. This is the single most important "does this work?" visualization. Should respect the signal filter checkboxes (see Signal filter note above) so you can isolate specific occurrence numbers and compare them.
+A line chart showing cumulative MFE_clr_RR gained over time for each signal type (Type1 UP, Type1 DN, Type2 UP, Type2 DN). Each signal occurrence adds its MFE_clr_RR to a running total. A rising line means the signal has a real edge; a flat or declining line means it doesn't. This is the single most important "does this work?" visualization. Should respect the signal filter checkboxes (see Signal filter note above) so you can isolate specific occurrence numbers and compare them.
 
 **Metric**: RR. This is the natural "trade unit" — each signal earns or loses X reversals. Already built with Plotly (was LWC, migrated). Includes a combo mode toggle that merges UP+DN signals per type into a single net-performance line.
 
 **FX Column Dropdown (applies to Modules 1 and 2)**: A single flat dropdown selector above the equity curve that controls which metric column drives the chart and all Module 2 stats. Options:
-- `FX_clr_RR` (default) — MFE to color change, reversal-normalized
-- `FX_clr_RR (adjusted)` — `FX_clr_RR - 1`, subtracts one reversal for a more realistic exit estimate
-- `FX_clr_ADR` — MFE to color change, ADR-normalized
-- `FX_clr_ADR (adjusted)` — `FX_clr_ADR - (reversal_size / currentADR)`, subtracts one reversal in ADR units for a more realistic exit estimate
-- `FX_MA1_RR` — move until price closes beyond MA1, reversal-normalized
-- `FX_MA1_ADR` — move until price closes beyond MA1, ADR-normalized
-- `FX_MA2_RR` — move until price closes beyond MA2, reversal-normalized
-- `FX_MA2_ADR` — move until price closes beyond MA2, ADR-normalized
-- `FX_MA3_RR` — move until price closes beyond MA3, reversal-normalized
-- `FX_MA3_ADR` — move until price closes beyond MA3, ADR-normalized
+- `MFE_clr_RR` (default) — MFE to color change, reversal-normalized (always >= 0)
+- `REAL_clr_RR` — MFE minus reversal_size, reversal-normalized. Realistic exit estimate (can be negative)
+- `MFE_clr_ADR` — MFE to color change, ADR-normalized (always >= 0)
+- `REAL_clr_ADR` — MFE minus reversal_size, ADR-normalized. Realistic exit estimate (can be negative)
+- `REAL_MA1_RR` — move until price closes beyond MA1, reversal-normalized
+- `REAL_MA1_ADR` — move until price closes beyond MA1, ADR-normalized
+- `REAL_MA2_RR` — move until price closes beyond MA2, reversal-normalized
+- `REAL_MA2_ADR` — move until price closes beyond MA2, ADR-normalized
+- `REAL_MA3_RR` — move until price closes beyond MA3, reversal-normalized
+- `REAL_MA3_ADR` — move until price closes beyond MA3, ADR-normalized
 
 The selected column affects: equity curve traces (individual + combo), Module 2 summary stats (avg, win rate), Nth occurrence breakdown, and distribution histogram bins. The backend should send all 9 metric values per signal point in the signal data so the frontend can switch without re-fetching.
 
@@ -47,7 +47,7 @@ The selected column affects: equity curve traces (individual + combo), Module 2 
 
 ## Module 2: Type1/Type2 Performance Dashboard
 
-A dedicated section for each signal type showing: total signal count, average FX_clr_RR, and win rate (% where FX_clr_RR > 0). Also includes a breakdown by Nth occurrence and an RR distribution histogram showing how many signals landed in each outcome bucket (0, 0-1, 1-2, 2-3, 3-5, 5+ RR). Should respect the signal filter checkboxes (see Signal filter note above) — all summary stats, histograms, and occurrence breakdowns should only include the selected signal types and occurrence numbers.
+A dedicated section for each signal type showing: total signal count, average REAL_clr_RR, and win rate (% where REAL_clr_RR > 0). Also includes a breakdown by Nth occurrence and an RR distribution histogram showing how many signals landed in each outcome bucket (0, 0-1, 1-2, 2-3, 3-5, 5+ RR). Should respect the signal filter checkboxes (see Signal filter note above) — all summary stats, histograms, and occurrence breakdowns should only include the selected signal types and occurrence numbers.
 
 **Key detail about Type1/Type2 columns**: These are NOT binary flags. They are sequential counters that increment within each State +3 or -3 regime. The first Type1 pullback in a +3 run has value `1`, the second is `2`, the third is `3`, etc. Negative values (-1, -2, -3...) for State -3. They reset to 0 when the state changes. The "by Nth occurrence" breakdown uses these counter values directly — e.g., compare performance of the 1st Type1 signal in a state vs the 3rd. Type2 works the same way.
 
@@ -101,15 +101,15 @@ Type2 avg ADR  |   0.33     |     0.04       |   -0.10
 
 ## Module 4: Time-of-Day / Session Patterns -shit, not using
 
-Extract the hour from each bar's `datetime` and compute per-hour stats: bar count (when does the market move?), average barDuration, average FX_clr_ADR (which hours trend best?), and average chop. Display as a bar chart by hour, optionally color-coded by trading session (Asia 0-9 UTC-yellow, London 8-17-red, NY 13-22-blue).  
+Extract the hour from each bar's `datetime` and compute per-hour stats: bar count (when does the market move?), average barDuration, average MFE_clr_ADR (which hours trend best?), and average chop. Display as a bar chart by hour, optionally color-coded by trading session (Asia 0-9 UTC-yellow, London 8-17-red, NY 13-22-blue).  
 
-**Metric**: `FX_clr_ADR`. Volatility varies by session, so ADR-normalized moves give a fairer comparison across hours.
+**Metric**: `MFE_clr_ADR`. Volatility varies by session, so ADR-normalized moves give a fairer comparison across hours.
 
 ---
 
 ## Module 5: State x Consecutive Bars Heatmap
 
-A 2D grid where rows are State values (-3 to +3), columns are consecutive bar counts (1 through 10), and each cell shows the average FX_clr_RR and sample count. Color cells on a green-to-red scale by outcome quality. Answers: "If I enter on the Nth consecutive bar in State X, what's the expected forward move?"
+A 2D grid where rows are State values (-3 to +3), columns are consecutive bar counts (1 through 10), and each cell shows the average REAL_clr_RR and sample count. Color cells on a green-to-red scale by outcome quality. Answers: "If I enter on the Nth consecutive bar in State X, what's the expected forward move?"
 
 **Metric**: RR. You're evaluating trade setups, so the "how many reversals" framing is most actionable.
 
@@ -129,7 +129,7 @@ Rather than just a comparison table, add a toggle button group (All | Low Chop |
 
 ## ~~Module 8: Run Length vs Forward Move~~
 
-~~A table or bar chart showing, for each consecutive bar count (1 through 10), the average and median FX_clr_RR of the next move. Separate UP and DN runs. Answers: "After N bars in a row, how much juice is left?" Shows whether continuation diminishes as runs get longer.~~
+~~A table or bar chart showing, for each consecutive bar count (1 through 10), the average and median REAL_clr_RR of the next move. Separate UP and DN runs. Answers: "After N bars in a row, how much juice is left?" Shows whether continuation diminishes as runs get longer.~~
 
 ~~**Metric**: RR. Directly answers "how many more reversals of continuation can I expect."~~
 
@@ -147,7 +147,7 @@ Two tables showing DD_RR (wick size) statistics broken down by context. First ta
 
 ## Module 10: EMA Distance Scatterplot
 
-A scatter plot with fast EMA RR distance on the X axis and slow EMA RR distance on the Y axis. Each dot represents a bar, colored green if FX_clr_RR > 0 (favorable outcome) or red if negative. Sample to ~500 points for performance. Reveals "sweet spot" zones where price distance from both MAs predicts good moves, and overextension zones where mean-reversion is likely.
+A scatter plot with fast EMA RR distance on the X axis and slow EMA RR distance on the Y axis. Each dot represents a bar, colored green if REAL_clr_RR > 0 (favorable outcome) or red if negative. Sample to ~500 points for performance. Reveals "sweet spot" zones where price distance from both MAs predicts good moves, and overextension zones where mean-reversion is likely.
 
 **Metric**: RR for the axes (uses `EMA_rrDistance` columns). Comparable across configs. Could also offer an ADR toggle since ADR-normalized distance accounts for changing volatility over the dataset's time range.
 

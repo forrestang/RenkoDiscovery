@@ -1433,11 +1433,11 @@ async def generate_stats(instrument: str, request: StatsRequest):
             else:
                 break
         if count == 0:
-            mfe_clr_bars[i] = -int(request.reversal_size / request.brick_size)
+            mfe_clr_bars[i] = 0
         else:
             mfe_clr_bars[i] = count
 
-    df['FX_clr_Bars'] = mfe_clr_bars
+    df['MFE_clr_Bars'] = mfe_clr_bars
 
     # Calculate FX_clr_price (price move during consecutive same-color run)
     # For each bar, find price difference to the last consecutive same-color bar
@@ -1449,21 +1449,21 @@ async def generate_stats(instrument: str, request: StatsRequest):
             last_match_idx = i + mfe_clr_bars[i]
             mfe_clr_price[i] = abs(close_arr[last_match_idx] - close_arr[i])
         else:
-            mfe_clr_price[i] = -request.reversal_size
+            mfe_clr_price[i] = 0
 
-    df['FX_clr_price'] = pd.Series(mfe_clr_price).round(5).values
+    df['MFE_clr_price'] = pd.Series(mfe_clr_price).round(5).values
 
-    # Calculate FX_clr_ADR (ADR-normalized version)
-    df['FX_clr_ADR'] = (df['FX_clr_price'] / df['currentADR']).round(2)
+    # Calculate MFE_clr_ADR (ADR-normalized version)
+    df['MFE_clr_ADR'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
 
-    # Calculate FX_clr_ADR(adj) (subtract 1RR in ADR units for realistic exit)
-    df['FX_clr_ADR(adj)'] = (df['FX_clr_ADR'] - (df['reversal_size'] / df['currentADR'])).round(2)
+    # Calculate REAL_clr_ADR (subtract reversal_size for realistic exit)
+    df['REAL_clr_ADR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['currentADR']).round(2)
 
-    # Calculate FX_clr_RR (Reversal-normalized version)
-    df['FX_clr_RR'] = (df['FX_clr_price'] / df['reversal_size']).round(2)
+    # Calculate MFE_clr_RR (Reversal-normalized version)
+    df['MFE_clr_RR'] = (df['MFE_clr_price'] / df['reversal_size']).round(2)
 
-    # Calculate FX_clr_RR(adj) (subtract 1RR for realistic exit)
-    df['FX_clr_RR(adj)'] = (df['FX_clr_RR'] - 1).round(2)
+    # Calculate REAL_clr_RR (subtract reversal_size for realistic exit)
+    df['REAL_clr_RR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['reversal_size']).round(2)
 
     # Calculate FX_MA columns (price move until first opposite-color bar closes beyond MA)
     for idx, period in enumerate(ma_periods, start=1):
@@ -1492,12 +1492,12 @@ async def generate_stats(instrument: str, request: StatsRequest):
                             break
             # If no qualifying bar found, remains NaN
 
-        df[f'FX_MA{idx}_Price'] = pd.Series(mfe_ma_price).round(5).values
-        df[f'FX_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
-        df[f'FX_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
+        df[f'REAL_MA{idx}_Price'] = pd.Series(mfe_ma_price).round(5).values
+        df[f'REAL_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
+        df[f'REAL_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
 
     # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
-    required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods] + [f'FX_MA{idx}_Price' for idx in range(1, len(ma_periods) + 1)]
+    required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods] + [f'REAL_MA{idx}_Price' for idx in range(1, len(ma_periods) + 1)]
     df = df.dropna(subset=required_columns)
 
     # Clean up helper column
@@ -1618,7 +1618,7 @@ def get_parquet_stats(filepath: str):
 
     # Calculate State x Consecutive Bars Heatmap (Module 5)
     state_conbars_heatmap = None
-    if 'State' in df.columns and 'FX_clr_RR' in df.columns:
+    if 'State' in df.columns and 'REAL_clr_RR' in df.columns:
         # Use Con_UP_bars for positive states, Con_DN_bars for negative states
         # This gives the "with-trend" consecutive bar count for each state
         heatmap_rows = []
@@ -1634,7 +1634,7 @@ def get_parquet_stats(filepath: str):
                     con_mask = df['Con_DN_bars'] == con
                 cell_mask = state_mask & con_mask
                 count = int(cell_mask.sum())
-                avg_rr = round(float(df.loc[cell_mask, 'FX_clr_RR'].mean()), 2) if count > 0 else None
+                avg_rr = round(float(df.loc[cell_mask, 'REAL_clr_RR'].mean()), 2) if count > 0 else None
                 row[f"s{state}_count"] = count
                 row[f"s{state}_avgRR"] = avg_rr
             heatmap_rows.append(row)
@@ -1894,14 +1894,14 @@ def get_parquet_stats(filepath: str):
         "upMa2RrDist": [], "dnMa2RrDist": [],
         "upMa3RrDist": [], "dnMa3RrDist": []
     }
-    if 'Type1' in df.columns and 'FX_clr_Bars' in df.columns:
+    if 'Type1' in df.columns and 'MFE_clr_Bars' in df.columns:
         # UP Type1: Type1 > 0 (UP bars in State +3 transitions)
         up_type1_mask = df['Type1'] > 0
         # DN Type1: Type1 < 0 (DN bars in State -3 transitions)
         dn_type1_mask = df['Type1'] < 0
 
-        up_type1_mfe = df.loc[up_type1_mask, 'FX_clr_Bars'].tolist()
-        dn_type1_mfe = df.loc[dn_type1_mask, 'FX_clr_Bars'].tolist()
+        up_type1_mfe = df.loc[up_type1_mask, 'MFE_clr_Bars'].tolist()
+        dn_type1_mfe = df.loc[dn_type1_mask, 'MFE_clr_Bars'].tolist()
 
         type1_mfe_stats["upTotal"] = len(up_type1_mfe)
         type1_mfe_stats["dnTotal"] = len(dn_type1_mfe)
@@ -1976,34 +1976,34 @@ def get_parquet_stats(filepath: str):
             return distribution
 
         # Get ADR and RR values for Type1 signals
-        if 'FX_clr_ADR' in df.columns:
-            up_adr = df.loc[up_type1_mask, 'FX_clr_ADR'].tolist()
-            dn_adr = df.loc[dn_type1_mask, 'FX_clr_ADR'].tolist()
+        if 'MFE_clr_ADR' in df.columns:
+            up_adr = df.loc[up_type1_mask, 'MFE_clr_ADR'].tolist()
+            dn_adr = df.loc[dn_type1_mask, 'MFE_clr_ADR'].tolist()
             type1_mfe_stats["upAdrDist"] = calc_decimal_dist(up_adr)
             type1_mfe_stats["dnAdrDist"] = calc_decimal_dist(dn_adr, use_abs=True)
 
-        if 'FX_clr_RR' in df.columns:
-            up_rr = df.loc[up_type1_mask, 'FX_clr_RR'].tolist()
-            dn_rr = df.loc[dn_type1_mask, 'FX_clr_RR'].tolist()
+        if 'MFE_clr_RR' in df.columns:
+            up_rr = df.loc[up_type1_mask, 'MFE_clr_RR'].tolist()
+            dn_rr = df.loc[dn_type1_mask, 'MFE_clr_RR'].tolist()
             type1_mfe_stats["upRrDist"] = calc_decimal_dist(up_rr)
             type1_mfe_stats["dnRrDist"] = calc_decimal_dist(dn_rr, use_abs=True)
 
         # MA RR distributions
-        if 'FX_MA1_RR' in df.columns:
-            up_ma1_rr = df.loc[up_type1_mask, 'FX_MA1_RR'].tolist()
-            dn_ma1_rr = df.loc[dn_type1_mask, 'FX_MA1_RR'].tolist()
+        if 'REAL_MA1_RR' in df.columns:
+            up_ma1_rr = df.loc[up_type1_mask, 'REAL_MA1_RR'].tolist()
+            dn_ma1_rr = df.loc[dn_type1_mask, 'REAL_MA1_RR'].tolist()
             type1_mfe_stats["upMa1RrDist"] = calc_decimal_dist(up_ma1_rr)
             type1_mfe_stats["dnMa1RrDist"] = calc_decimal_dist(dn_ma1_rr, use_abs=True)
 
-        if 'FX_MA2_RR' in df.columns:
-            up_ma2_rr = df.loc[up_type1_mask, 'FX_MA2_RR'].tolist()
-            dn_ma2_rr = df.loc[dn_type1_mask, 'FX_MA2_RR'].tolist()
+        if 'REAL_MA2_RR' in df.columns:
+            up_ma2_rr = df.loc[up_type1_mask, 'REAL_MA2_RR'].tolist()
+            dn_ma2_rr = df.loc[dn_type1_mask, 'REAL_MA2_RR'].tolist()
             type1_mfe_stats["upMa2RrDist"] = calc_decimal_dist(up_ma2_rr)
             type1_mfe_stats["dnMa2RrDist"] = calc_decimal_dist(dn_ma2_rr, use_abs=True)
 
-        if 'FX_MA3_RR' in df.columns:
-            up_ma3_rr = df.loc[up_type1_mask, 'FX_MA3_RR'].tolist()
-            dn_ma3_rr = df.loc[dn_type1_mask, 'FX_MA3_RR'].tolist()
+        if 'REAL_MA3_RR' in df.columns:
+            up_ma3_rr = df.loc[up_type1_mask, 'REAL_MA3_RR'].tolist()
+            dn_ma3_rr = df.loc[dn_type1_mask, 'REAL_MA3_RR'].tolist()
             type1_mfe_stats["upMa3RrDist"] = calc_decimal_dist(up_ma3_rr)
             type1_mfe_stats["dnMa3RrDist"] = calc_decimal_dist(dn_ma3_rr, use_abs=True)
 
@@ -2075,15 +2075,15 @@ def get_parquet_stats(filepath: str):
     # Determine which extra metric columns are available
     extra_metric_cols = []
     for col_name, field_name in [
-        ('FX_clr_ADR', 'clr_adr'),
-        ('FX_clr_ADR(adj)', 'clr_adr_adj'),
-        ('FX_clr_RR(adj)', 'rr_adj'),
-        ('FX_MA1_RR', 'ma1_rr'),
-        ('FX_MA1_ADR', 'ma1_adr'),
-        ('FX_MA2_RR', 'ma2_rr'),
-        ('FX_MA2_ADR', 'ma2_adr'),
-        ('FX_MA3_RR', 'ma3_rr'),
-        ('FX_MA3_ADR', 'ma3_adr'),
+        ('MFE_clr_ADR', 'clr_adr'),
+        ('REAL_clr_ADR', 'clr_adr_adj'),
+        ('REAL_clr_RR', 'rr_adj'),
+        ('REAL_MA1_RR', 'ma1_rr'),
+        ('REAL_MA1_ADR', 'ma1_adr'),
+        ('REAL_MA2_RR', 'ma2_rr'),
+        ('REAL_MA2_ADR', 'ma2_adr'),
+        ('REAL_MA3_RR', 'ma3_rr'),
+        ('REAL_MA3_ADR', 'ma3_adr'),
     ]:
         if col_name in df.columns:
             extra_metric_cols.append((col_name, field_name))
@@ -2100,9 +2100,9 @@ def get_parquet_stats(filepath: str):
         if col in df.columns:
             extra_metric_cols.append((col, fld))
 
-    if 'FX_clr_RR' in df.columns:
+    if 'MFE_clr_RR' in df.columns:
         # Columns to pull from the subset
-        needed_cols_base = ['FX_clr_RR'] + [c for c, _ in extra_metric_cols] + (['chop(rolling)'] if 'chop(rolling)' in df.columns else [])
+        needed_cols_base = ['MFE_clr_RR'] + [c for c, _ in extra_metric_cols] + (['chop(rolling)'] if 'chop(rolling)' in df.columns else [])
         for key, col, cond in [
             ('type1Up', 'Type1', 'pos'),
             ('type1Dn', 'Type1', 'neg'),
@@ -2112,9 +2112,9 @@ def get_parquet_stats(filepath: str):
             if col in df.columns:
                 mask = df[col] > 0 if cond == 'pos' else df[col] < 0
                 needed_cols = [col] + [c for c in needed_cols_base if c in df.columns]
-                subset = df.loc[mask, needed_cols].dropna(subset=['FX_clr_RR'])
+                subset = df.loc[mask, needed_cols].dropna(subset=['MFE_clr_RR'])
                 n_vals = subset[col].abs().astype(int).values
-                rr_vals = subset['FX_clr_RR'].round(2).values
+                rr_vals = subset['MFE_clr_RR'].round(2).values
                 idx_vals = subset.index.values
                 points = []
                 for i in range(len(n_vals)):
@@ -2148,7 +2148,7 @@ def get_parquet_stats(filepath: str):
         'open': 'open', 'close': 'close', 'high': 'high', 'low': 'low',
         'State': 'state', 'prState': 'prState',
         'Con_UP_bars': 'conUp', 'Con_DN_bars': 'conDn',
-        'FX_clr_RR': 'fxClrRR', 'DD_RR': 'ddRR',
+        'MFE_clr_RR': 'mfeClrRR', 'DD_RR': 'ddRR',
         'chop(rolling)': 'chop',
     }
     bar_data = {}
