@@ -1335,6 +1335,19 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['Con_UP_bars'] = con_up
     df['Con_DN_bars'] = con_dn
 
+    # direction: +1 for UP bar, -1 for DN bar
+    df['direction'] = is_up.map({True: 1, False: -1}).astype(int)
+
+    # priorRunCount: length of the consecutive run that just ended (prior direction)
+    prior_run = [0] * len(is_up)
+    last_run_length = 0
+    is_up_list = is_up.tolist()
+    for i in range(1, len(is_up_list)):
+        if is_up_list[i] != is_up_list[i - 1]:
+            last_run_length = con_up[i - 1] if is_up_list[i - 1] else con_dn[i - 1]
+        prior_run[i] = last_run_length
+    df['priorRunCount'] = prior_run
+
     # Con_UP_bars(state) and Con_DN_bars(state) - reset on state change OR direction change
     state_values = df['State'].tolist()
     con_up_state = []
