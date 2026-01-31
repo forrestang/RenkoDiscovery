@@ -107,6 +107,7 @@
   gap: 6px;
   margin-left: auto;
   flex-shrink: 0;
+  line-height: 1;
 }
 
 .settings-inline-item {
@@ -116,16 +117,14 @@
 }
 
 .settings-inline-label {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-secondary);
-  transform: scaleY(1.8);
 }
 
 .settings-inline-val {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-primary);
   font-weight: 600;
-  transform: scaleY(1.8);
 }
 
 .settings-inline-sep {

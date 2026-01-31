@@ -204,6 +204,81 @@ function computeBeyondBarLocation(bd, indices, maPeriods) {
   }
 }
 
+function computeHemisphere(bd, indices, maPeriods) {
+  const open = pick(bd.open, indices)
+  const close = pick(bd.close, indices)
+  const total = open.length
+  const isUp = close.map((c, i) => c > open[i])
+  const isDn = close.map((c, i) => c < open[i])
+
+  // Load raw distance arrays for each MA
+  const rawArrays = maPeriods.map(period => {
+    const key = `emaRaw${period}`
+    return bd[key] ? pick(bd[key], indices) : null
+  })
+
+  // All 7 combos: indices into maPeriods
+  const combos = [
+    { idxs: [0], label: `MA(${maPeriods[0]})` },
+    { idxs: [1], label: `MA(${maPeriods[1]})` },
+    { idxs: [2], label: `MA(${maPeriods[2]})` },
+    'sep',
+    { idxs: [0, 1], label: `MA(${maPeriods[0]}+${maPeriods[1]})` },
+    { idxs: [0, 2], label: `MA(${maPeriods[0]}+${maPeriods[2]})` },
+    { idxs: [1, 2], label: `MA(${maPeriods[1]}+${maPeriods[2]})` },
+    'sep',
+    { idxs: [0, 1, 2], label: `MA(${maPeriods[0]}+${maPeriods[1]}+${maPeriods[2]})` },
+  ]
+
+  return combos.map(combo => {
+    if (combo === 'sep') return 'sep'
+    const { idxs, label } = combo
+    const buy = { count: 0, up: 0, dn: 0 }
+    const sell = { count: 0, up: 0, dn: 0 }
+    const neutral = { count: 0, up: 0, dn: 0 }
+
+    // Check if all required raw arrays exist
+    const comboRaws = idxs.map(j => rawArrays[j])
+    if (comboRaws.some(r => r === null)) return { label, idxs, buy, sell, neutral }
+
+    for (let i = 0; i < total; i++) {
+      // Get raw distances for this bar
+      const dists = comboRaws.map(r => r[i])
+      if (dists.some(d => d == null)) continue
+
+      const allAbove = dists.every(d => d > 0)
+      const allBelow = dists.every(d => d < 0)
+
+      let zone = neutral
+      if (allAbove && idxs.length === 1) {
+        zone = buy
+      } else if (allBelow && idxs.length === 1) {
+        zone = sell
+      } else if (allAbove && idxs.length > 1) {
+        // Check bullish stacking: for each pair (faster, slower), rawDist_faster < rawDist_slower
+        let stacked = true
+        for (let p = 0; p < idxs.length - 1 && stacked; p++) {
+          if (dists[p] >= dists[p + 1]) stacked = false
+        }
+        zone = stacked ? buy : neutral
+      } else if (allBelow && idxs.length > 1) {
+        // Check bearish stacking: for each pair (faster, slower), rawDist_faster > rawDist_slower
+        let stacked = true
+        for (let p = 0; p < idxs.length - 1 && stacked; p++) {
+          if (dists[p] <= dists[p + 1]) stacked = false
+        }
+        zone = stacked ? sell : neutral
+      }
+
+      zone.count++
+      if (isUp[i]) zone.up++
+      if (isDn[i]) zone.dn++
+    }
+
+    return { label, idxs, buy, sell, neutral }
+  })
+}
+
 function computeWickDist(bd, indices) {
   const open = pick(bd.open, indices)
   const close = pick(bd.close, indices)
@@ -677,6 +752,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   const _chopStats = stats.chopStats
   const _stateStats = g ? g.stateStats : stats.stateStats
   const _wickDist = g ? g.wickDist : stats.wickDist
+  const _hemisphere = stats.barData ? computeHemisphere(stats.barData, null, stats.maPeriods || []) : []
   const { settings, chopRegimeStats } = stats
 
   const pct = (count, total) => total > 0 ? ((count / total) * 100).toFixed(0) : '0'
@@ -1541,6 +1617,80 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
               </div>
             );
           })()}
+
+          {/* MA Hemisphere Analysis */}
+          {_hemisphere && _hemisphere.length > 0 && (
+            <div className="stats-module">
+              <table className="stats-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="10" className="module-title" data-tooltip="Classifies bars into Buy (above MAs with bullish stacking), Sell (below MAs with bearish stacking), or Neutral zones for each MA combination">MA HEMISPHERE ANALYSIS</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    <th colSpan="3">Buy</th>
+                    <th colSpan="3">Sell</th>
+                    <th colSpan="3">Neutral</th>
+                  </tr>
+                  <tr>
+                    <th>Combo</th>
+                    <th>Count</th><th className="up">UP%</th><th className="dn">DN%</th>
+                    <th>Count</th><th className="up">UP%</th><th className="dn">DN%</th>
+                    <th>Count</th><th className="up">UP%</th><th className="dn">DN%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const maColors = ['#f59e0b', '#3b82f6', '#a855f7']
+                    const maPeriods = stats.maPeriods || []
+                    const zoneLabels = { buy: 'Buy Hemisphere', sell: 'Sell Hemisphere', neutral: 'Neutral zone' }
+                    return _hemisphere.map((row, i) => {
+                      if (row === 'sep') return <tr key={`sep-${i}`} className="separator-row"><td colSpan="10"></td></tr>
+                      const isSingle = row.idxs.length === 1
+                      const comboLabel = isSingle
+                        ? <td className={`ma-color-${row.idxs[0] + 1}`}>{row.label}</td>
+                        : <td style={{ fontWeight: 600 }}>
+                            <span>MA(</span>
+                            {row.idxs.map((idx, j) => (
+                              <React.Fragment key={idx}>
+                                {j > 0 && <span>+</span>}
+                                <span style={{ color: maColors[idx] }}>{maPeriods[idx]}</span>
+                              </React.Fragment>
+                            ))}
+                            <span>)</span>
+                          </td>
+                      return (
+                        <tr key={row.label}>
+                          {comboLabel}
+                          {['buy','sell','neutral'].map(zone => {
+                            const zName = zoneLabels[zone]
+                            const countPct = pct(row[zone].count, stats.totalBars)
+                            const upPct = pct(row[zone].up, row[zone].count)
+                            const dnPct = pct(row[zone].dn, row[zone].count)
+                            return (
+                              <React.Fragment key={zone}>
+                                <td title={`${row[zone].count} bars (${countPct}% of total) are in the ${zName} for ${row.label}`}>
+                                  {row[zone].count} <span className="pct">({countPct}%)</span>
+                                </td>
+                                <td className={`up${row[zone].up > row[zone].dn ? ' highlight' : ''}`}
+                                    title={`${upPct}% of the bars in the ${zName} are UP bars`}>
+                                  {upPct}%
+                                </td>
+                                <td className={`dn${row[zone].dn > row[zone].up ? ' highlight' : ''}`}
+                                    title={`${dnPct}% of the bars in the ${zName} are DN bars`}>
+                                  {dnPct}%
+                                </td>
+                              </React.Fragment>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
