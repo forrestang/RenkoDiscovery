@@ -5,3 +5,5 @@ pyarrow
 python-multipart
 pydantic
 renkodf
+catboost
+scikit-learn

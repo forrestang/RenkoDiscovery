@@ -5,6 +5,7 @@ import RenkoControls from './components/RenkoControls'
 import MAControls from './components/MAControls'
 import StatsPage from './components/StatsPage'
 import ParquetPage from './components/ParquetPage'
+import MLResultsPage from './components/MLResultsPage'
 import './styles/App.css'
 
 const DEFAULT_API_BASE = 'http://localhost:8000'
@@ -128,6 +129,28 @@ function App() {
     return saved === 'true'
   })
 
+  // ML state
+  const [mlColumns, setMlColumns] = useState(null)
+  const [mlSelectedFeatures, setMlSelectedFeatures] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}mlSelectedFeatures`)
+    return saved ? JSON.parse(saved) : []
+  })
+  const [mlTargetColumn, setMlTargetColumn] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}mlTargetColumn`) || ''
+  })
+  const [mlWinThreshold, setMlWinThreshold] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}mlWinThreshold`)
+    return saved ? parseFloat(saved) : 1.0
+  })
+  const [mlFilterExpr, setMlFilterExpr] = useState('')
+  const [mlModelName, setMlModelName] = useState('')
+  const [mlSourceParquet, setMlSourceParquet] = useState('')
+  const [isTrainingML, setIsTrainingML] = useState(false)
+  const [mlReport, setMlReport] = useState(null)
+  const [mlModels, setMlModels] = useState([])
+  const [mlError, setMlError] = useState('')
+  const [mlTrainProgress, setMlTrainProgress] = useState(null)
+
   // Dynamic API base for Electron support
   const [apiBase, setApiBase] = useState(DEFAULT_API_BASE)
   const [apiReady, setApiReady] = useState(!window.electronAPI)
@@ -180,6 +203,18 @@ function App() {
   }, [showIndicatorPane])
 
   useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}mlSelectedFeatures`, JSON.stringify(mlSelectedFeatures))
+  }, [mlSelectedFeatures])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}mlTargetColumn`, mlTargetColumn)
+  }, [mlTargetColumn])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}mlWinThreshold`, mlWinThreshold.toString())
+  }, [mlWinThreshold])
+
+  useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}workingDir`, workingDir)
   }, [workingDir])
 
@@ -189,6 +224,7 @@ function App() {
     fetchFiles()
     fetchCache()
     fetchStatsFiles()
+    fetchMLModels()
     // Clear current data when directory changes
     setActiveInstrument(null)
     setChartData(null)
@@ -228,6 +264,117 @@ function App() {
       }
     } catch (err) {
       console.error('Failed to fetch stats files:', err)
+    }
+  }
+
+  const fetchMLColumns = async (filepath) => {
+    setMlError('')
+    try {
+      const res = await fetch(`${apiBase}/ml/columns?filepath=${encodeURIComponent(filepath)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setMlColumns(data)
+        // Restore saved selection if it overlaps with available features, otherwise select all
+        const saved = mlSelectedFeatures.filter(f => data.features.includes(f))
+        setMlSelectedFeatures(saved.length > 0 ? saved : data.features)
+        if (data.targets.length > 0 && !mlTargetColumn) {
+          setMlTargetColumn(data.targets[0])
+        }
+      } else {
+        const error = await res.json()
+        setMlError(error.detail || 'Failed to load columns')
+      }
+    } catch (err) {
+      setMlError('Failed to load columns: ' + err.message)
+    }
+  }
+
+  const handleMLTrain = async () => {
+    if (!mlSourceParquet || mlSelectedFeatures.length === 0 || !mlTargetColumn || !mlModelName) return
+    setIsTrainingML(true)
+    setMlError('')
+    setMlReport(null)
+    setMlTrainProgress(null)
+
+    try {
+      const res = await fetch(`${apiBase}/ml/train`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          working_dir: workingDir,
+          source_parquet: mlSourceParquet,
+          features: mlSelectedFeatures,
+          target_column: mlTargetColumn,
+          win_threshold: mlWinThreshold,
+          filter_expr: mlFilterExpr || null,
+          model_name: mlModelName,
+          n_splits: 5,
+        })
+      })
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop()
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6))
+              setMlTrainProgress(event)
+
+              if (event.phase === 'done') {
+                setMlReport(event.report)
+                fetchMLModels()
+              } else if (event.phase === 'error') {
+                setMlError(event.message)
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE event:', e)
+            }
+          }
+        }
+      }
+    } catch (err) {
+      setMlError('Training failed: ' + err.message)
+    } finally {
+      setIsTrainingML(false)
+      setMlTrainProgress(null)
+    }
+  }
+
+  const fetchMLModels = async () => {
+    try {
+      const res = await fetch(`${apiBase}/ml/models?working_dir=${encodeURIComponent(workingDir)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setMlModels(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch ML models:', err)
+    }
+  }
+
+  const loadMLReport = async (filepath) => {
+    setMlError('')
+    try {
+      const res = await fetch(`${apiBase}/ml/report?filepath=${encodeURIComponent(filepath)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setMlReport(data)
+      } else {
+        const error = await res.json()
+        setMlError(error.detail || 'Failed to load report')
+      }
+    } catch (err) {
+      setMlError('Failed to load report: ' + err.message)
     }
   }
 
@@ -729,6 +876,26 @@ function App() {
             onDeleteStatsFile={handleDeleteStatsFile}
             onDeleteAllStatsFiles={handleDeleteAllStatsFiles}
             isLoading={isLoading}
+            // ML props
+            mlColumns={mlColumns}
+            mlSelectedFeatures={mlSelectedFeatures}
+            onMlSelectedFeaturesChange={setMlSelectedFeatures}
+            mlTargetColumn={mlTargetColumn}
+            onMlTargetColumnChange={setMlTargetColumn}
+            mlWinThreshold={mlWinThreshold}
+            onMlWinThresholdChange={setMlWinThreshold}
+            mlFilterExpr={mlFilterExpr}
+            onMlFilterExprChange={setMlFilterExpr}
+            mlModelName={mlModelName}
+            onMlModelNameChange={setMlModelName}
+            mlSourceParquet={mlSourceParquet}
+            onMlSourceParquetChange={setMlSourceParquet}
+            onFetchMLColumns={fetchMLColumns}
+            onMLTrain={handleMLTrain}
+            isTrainingML={isTrainingML}
+            mlModels={mlModels}
+            onLoadMLReport={loadMLReport}
+            mlError={mlError}
           />
 
           {!sidebarCollapsed && (
@@ -737,7 +904,14 @@ function App() {
         </aside>
 
         <main className="main-content">
-          {activeTab === 'stats' && statsView === 'parquet' ? (
+          {activeTab === 'ml' ? (
+            <MLResultsPage
+              report={mlReport}
+              isTraining={isTrainingML}
+              error={mlError}
+              progress={mlTrainProgress}
+            />
+          ) : activeTab === 'stats' && statsView === 'parquet' ? (
             <ParquetPage
               data={parquetData}
               filename={parquetFilename}

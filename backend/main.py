@@ -15,6 +15,7 @@ import pandas.core.arrays.arrow.extension_types  # Force early pyarrow registrat
 import pyarrow as pa
 import pyarrow.parquet as pq
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -92,6 +93,17 @@ class StatsRequest(BaseModel):
     ma2_period: int = 50
     ma3_period: int = 200
     renko_data: dict  # Contains datetime, open, high, low, close arrays
+
+
+class MLTrainRequest(BaseModel):
+    working_dir: Optional[str] = None
+    source_parquet: str        # filepath to stats parquet
+    features: list[str]        # selected feature columns
+    target_column: str         # e.g. "REAL_clr_RR"
+    win_threshold: float       # target >= threshold => class 1
+    filter_expr: Optional[str] = None  # pandas query string
+    model_name: str            # output name stem
+    n_splits: int = 5          # time-series CV folds
 
 
 def extract_instrument(filename: str) -> Optional[str]:
@@ -2253,6 +2265,305 @@ def delete_all_stats_files(working_dir: Optional[str] = None):
         return {"message": f"Deleted {deleted_count} files with {len(errors)} errors", "deleted": deleted_count, "errors": errors}
 
     return {"message": f"Deleted {deleted_count} parquet files", "deleted": deleted_count}
+
+
+# ── ML Endpoints ──────────────────────────────────────────────────────────────
+
+# Columns that must never be used as features (leakage / non-predictive)
+ML_FEATURE_BLOCKLIST_PREFIXES = ("MFE_", "REAL_")
+ML_FEATURE_BLOCKLIST_EXACT = {
+    "close", "open", "high", "low", "datetime", "date", "time",
+    "brick_size", "reversal_size", "wick_mode", "instrument",
+    "ma1_period", "ma2_period", "ma3_period", "adr_period", "chop_period",
+}
+
+
+def _is_blocked_feature(col: str) -> bool:
+    """Check if a column name is blocked from being used as a feature."""
+    col_lower = col.lower()
+    if col_lower in ML_FEATURE_BLOCKLIST_EXACT:
+        return True
+    for prefix in ML_FEATURE_BLOCKLIST_PREFIXES:
+        if col.startswith(prefix):
+            return True
+    return False
+
+
+@app.get("/ml/columns")
+def get_ml_columns(filepath: str):
+    """Read parquet schema and return columns split into features vs targets."""
+    path = Path(filepath)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filepath}")
+
+    try:
+        schema = pq.read_schema(path)
+        all_columns = [field.name for field in schema]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read parquet schema: {str(e)}")
+
+    features = []
+    targets = []
+
+    for col in all_columns:
+        if col.startswith("MFE_") or col.startswith("REAL_"):
+            targets.append(col)
+        elif not _is_blocked_feature(col):
+            features.append(col)
+
+    return {"features": sorted(features), "targets": sorted(targets), "all_columns": all_columns}
+
+
+def _sse_event(data: dict) -> str:
+    """Format a dict as an SSE data line."""
+    return f"data: {json.dumps(data)}\n\n"
+
+
+@app.post("/ml/train")
+def train_ml_model(req: MLTrainRequest):
+    """Full CatBoost training pipeline with SSE progress streaming."""
+
+    def generate():
+        from catboost import CatBoostClassifier
+        from sklearn.model_selection import TimeSeriesSplit
+        from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+
+        yield _sse_event({"phase": "loading", "message": "Loading data...", "progress": 0})
+
+        base_dir = Path(req.working_dir) if req.working_dir else WORKING_DIR
+        ml_dir = base_dir / "ML"
+        models_dir = ml_dir / "models"
+        data_dir = ml_dir / "training_data"
+        reports_dir = ml_dir / "reports"
+
+        for d in [models_dir, data_dir, reports_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+
+        source_path = Path(req.source_parquet)
+        if not source_path.exists():
+            yield _sse_event({"phase": "error", "message": f"Source parquet not found: {req.source_parquet}"})
+            return
+
+        try:
+            df = pd.read_parquet(source_path)
+        except Exception as e:
+            yield _sse_event({"phase": "error", "message": f"Failed to read parquet: {str(e)}"})
+            return
+
+        # Apply filter expression
+        if req.filter_expr and req.filter_expr.strip():
+            yield _sse_event({"phase": "filtering", "message": "Applying filter...", "progress": 2})
+            try:
+                df = df.query(req.filter_expr)
+            except Exception as e:
+                yield _sse_event({"phase": "error", "message": f"Invalid filter expression: {str(e)}"})
+                return
+
+        # Server-side leakage prevention
+        safe_features = [f for f in req.features if not _is_blocked_feature(f)]
+        if not safe_features:
+            yield _sse_event({"phase": "error", "message": "No valid features selected after leakage filtering"})
+            return
+
+        missing = [f for f in safe_features if f not in df.columns]
+        if missing:
+            yield _sse_event({"phase": "error", "message": f"Missing feature columns: {missing}"})
+            return
+
+        if req.target_column not in df.columns:
+            yield _sse_event({"phase": "error", "message": f"Target column not found: {req.target_column}"})
+            return
+
+        # Build binary target
+        y = (df[req.target_column] >= req.win_threshold).astype(int)
+        X = df[safe_features].copy()
+
+        valid_mask = X.notna().all(axis=1) & y.notna()
+        X = X[valid_mask].reset_index(drop=True)
+        y = y[valid_mask].reset_index(drop=True)
+
+        if len(X) < 10:
+            yield _sse_event({"phase": "error", "message": f"Only {len(X)} valid rows after cleaning. Need at least 10."})
+            return
+
+        win_rate = float(y.mean())
+
+        yield _sse_event({"phase": "preparing", "message": f"Prepared {len(X)} rows, starting CV...", "progress": 5})
+
+        # Time-series cross-validation
+        n_splits = min(req.n_splits, len(X) // 20)  # ensure reasonable fold size
+        if n_splits < 2:
+            n_splits = 2
+
+        tscv = TimeSeriesSplit(n_splits=n_splits)
+        fold_metrics = []
+        all_val_preds = np.full(len(y), -1, dtype=int)
+        all_val_true = np.full(len(y), -1, dtype=int)
+
+        fold_pct_each = 80.0 / n_splits  # 5-85% range for folds
+
+        for fold_idx, (train_idx, val_idx) in enumerate(tscv.split(X)):
+            pct_start = 5 + fold_idx * fold_pct_each
+            yield _sse_event({
+                "phase": "fold",
+                "message": f"Training fold {fold_idx + 1}/{n_splits}...",
+                "progress": round(pct_start),
+                "fold": fold_idx + 1,
+                "total_folds": n_splits,
+            })
+
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+            model = CatBoostClassifier(
+                iterations=500,
+                depth=6,
+                learning_rate=0.05,
+                early_stopping_rounds=50,
+                auto_class_weights="Balanced",
+                verbose=0,
+                random_seed=42 + fold_idx,
+            )
+            model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=0)
+
+            preds = model.predict(X_val).flatten().astype(int)
+            acc = float(accuracy_score(y_val, preds))
+            fold_metrics.append({
+                "fold": fold_idx + 1,
+                "train_size": len(train_idx),
+                "val_size": len(val_idx),
+                "accuracy": round(acc, 4),
+                "val_win_rate": round(float(y_val.mean()), 4),
+            })
+
+            all_val_preds[val_idx] = preds
+            all_val_true[val_idx] = y_val.values
+
+            pct_done = 5 + (fold_idx + 1) * fold_pct_each
+            yield _sse_event({
+                "phase": "fold_done",
+                "message": f"Fold {fold_idx + 1}/{n_splits} complete",
+                "progress": round(pct_done),
+                "fold": fold_idx + 1,
+                "fold_accuracy": round(acc, 4),
+            })
+
+        # Aggregate CV metrics
+        validated_mask = all_val_preds >= 0
+        cv_preds = all_val_preds[validated_mask]
+        cv_true = all_val_true[validated_mask]
+        cv_accuracy = float(accuracy_score(cv_true, cv_preds))
+        cv_report = classification_report(cv_true, cv_preds, output_dict=True, zero_division=0)
+        cv_cm = confusion_matrix(cv_true, cv_preds).tolist()
+
+        yield _sse_event({"phase": "final", "message": "Training final model on all data...", "progress": 85})
+
+        final_model = CatBoostClassifier(
+            iterations=500,
+            depth=6,
+            learning_rate=0.05,
+            auto_class_weights="Balanced",
+            verbose=0,
+            random_seed=42,
+        )
+        final_model.fit(X, y, verbose=0)
+
+        # Feature importance
+        importance = final_model.get_feature_importance()
+        feature_importance = sorted(
+            [{"feature": f, "importance": round(float(imp), 4)} for f, imp in zip(safe_features, importance)],
+            key=lambda x: x["importance"],
+            reverse=True,
+        )
+
+        yield _sse_event({"phase": "saving", "message": "Saving model & report...", "progress": 95})
+
+        model_path = models_dir / f"{req.model_name}.cbm"
+        final_model.save_model(str(model_path))
+
+        train_snapshot = df[valid_mask].reset_index(drop=True)
+        snapshot_path = data_dir / f"{req.model_name}_data.parquet"
+        train_snapshot.to_parquet(str(snapshot_path))
+
+        report = {
+            "model_name": req.model_name,
+            "source_parquet": req.source_parquet,
+            "target_column": req.target_column,
+            "win_threshold": req.win_threshold,
+            "filter_expr": req.filter_expr,
+            "features": safe_features,
+            "n_rows": len(X),
+            "win_rate": round(win_rate, 4),
+            "cv_accuracy": round(cv_accuracy, 4),
+            "n_splits": n_splits,
+            "classification_report": cv_report,
+            "confusion_matrix": cv_cm,
+            "feature_importance": feature_importance,
+            "fold_metrics": fold_metrics,
+            "model_path": str(model_path),
+            "data_path": str(snapshot_path),
+            "created_at": datetime.now().isoformat(),
+        }
+
+        report_path = reports_dir / f"{req.model_name}_report.json"
+        with open(report_path, "w") as f:
+            json.dump(report, f, indent=2)
+
+        yield _sse_event({"phase": "done", "message": "Complete", "progress": 100, "report": report})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/ml/models")
+def list_ml_models(working_dir: Optional[str] = None):
+    """List saved .cbm models with metadata from corresponding report JSONs."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    models_dir = base_dir / "ML" / "models"
+    reports_dir = base_dir / "ML" / "reports"
+
+    if not models_dir.exists():
+        return []
+
+    models = []
+    for model_file in sorted(models_dir.glob("*.cbm")):
+        name = model_file.stem
+        report_path = reports_dir / f"{name}_report.json"
+
+        entry = {
+            "name": name,
+            "model_path": str(model_file),
+            "report_path": str(report_path) if report_path.exists() else None,
+            "size_bytes": model_file.stat().st_size,
+            "modified": datetime.fromtimestamp(model_file.stat().st_mtime).isoformat(),
+        }
+
+        if report_path.exists():
+            try:
+                with open(report_path) as f:
+                    rpt = json.load(f)
+                entry["cv_accuracy"] = rpt.get("cv_accuracy")
+                entry["n_rows"] = rpt.get("n_rows")
+                entry["target_column"] = rpt.get("target_column")
+            except Exception:
+                pass
+
+        models.append(entry)
+
+    return models
+
+
+@app.get("/ml/report")
+def get_ml_report(filepath: str):
+    """Return a saved JSON report."""
+    path = Path(filepath)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Report not found: {filepath}")
+
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read report: {str(e)}")
 
 
 if __name__ == "__main__":

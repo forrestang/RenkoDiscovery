@@ -45,7 +45,27 @@ function Sidebar({
   isLoadingParquet,
   onDeleteStatsFile,
   onDeleteAllStatsFiles,
-  isLoading
+  isLoading,
+  // ML props
+  mlColumns,
+  mlSelectedFeatures,
+  onMlSelectedFeaturesChange,
+  mlTargetColumn,
+  onMlTargetColumnChange,
+  mlWinThreshold,
+  onMlWinThresholdChange,
+  mlFilterExpr,
+  onMlFilterExprChange,
+  mlModelName,
+  onMlModelNameChange,
+  mlSourceParquet,
+  onMlSourceParquetChange,
+  onFetchMLColumns,
+  onMLTrain,
+  isTrainingML,
+  mlModels,
+  onLoadMLReport,
+  mlError
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -749,14 +769,205 @@ function Sidebar({
 
       {activeTab === 'ml' && (
         <div className="tab-content ml-tab">
+          {/* Source Data */}
           <div className="section">
             <div className="section-header">
-              <span className="section-title">Machine Learning</span>
+              <span className="section-title">Source Data</span>
             </div>
-            <div className="ml-placeholder">
-              <span className="placeholder-text">ML features coming soon</span>
+            <div className="ml-source-list">
+              {statsFiles.length === 0 ? (
+                <div className="empty-state">
+                  <span className="empty-text">No stats files</span>
+                </div>
+              ) : (
+                statsFiles.map(file => (
+                  <label key={file.filepath} className={`ml-radio-item ${mlSourceParquet === file.filepath ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="ml-source"
+                      checked={mlSourceParquet === file.filepath}
+                      onChange={() => onMlSourceParquetChange(file.filepath)}
+                    />
+                    <span className="ml-radio-name">{file.filename}</span>
+                  </label>
+                ))
+              )}
             </div>
+            {mlSourceParquet && (
+              <button
+                className="ml-load-cols-btn"
+                onClick={() => onFetchMLColumns(mlSourceParquet)}
+              >
+                Load Columns
+              </button>
+            )}
           </div>
+
+          {/* Features */}
+          {mlColumns && (
+            <div className="section ml-features-section">
+              <div className="section-header">
+                <span className="section-title">
+                  Features
+                  <span className="ml-count-badge">
+                    {mlSelectedFeatures.length}/{mlColumns.features.length}
+                  </span>
+                </span>
+                <button
+                  className="ml-toggle-all-btn"
+                  onClick={() => {
+                    if (mlSelectedFeatures.length === mlColumns.features.length) {
+                      onMlSelectedFeaturesChange([])
+                    } else {
+                      onMlSelectedFeaturesChange([...mlColumns.features])
+                    }
+                  }}
+                >
+                  {mlSelectedFeatures.length === mlColumns.features.length ? 'None' : 'All'}
+                </button>
+              </div>
+              <div className="ml-features-list">
+                {mlColumns.features.map(col => (
+                  <label key={col} className="ml-checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={mlSelectedFeatures.includes(col)}
+                      onChange={() => {
+                        if (mlSelectedFeatures.includes(col)) {
+                          onMlSelectedFeaturesChange(mlSelectedFeatures.filter(f => f !== col))
+                        } else {
+                          onMlSelectedFeaturesChange([...mlSelectedFeatures, col])
+                        }
+                      }}
+                    />
+                    <span className="ml-checkbox-name">{col}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Target */}
+          {mlColumns && (
+            <div className="section">
+              <div className="section-header">
+                <span className="section-title">Target</span>
+              </div>
+              <div className="ml-target-group">
+                <select
+                  className="form-select"
+                  value={mlTargetColumn}
+                  onChange={e => onMlTargetColumnChange(e.target.value)}
+                >
+                  <option value="">Select target...</option>
+                  {mlColumns.targets.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+                <div className="ml-threshold-row">
+                  <label className="form-label">Win threshold</label>
+                  <input
+                    type="number"
+                    className="stats-input"
+                    value={mlWinThreshold}
+                    onChange={e => onMlWinThresholdChange(parseFloat(e.target.value) || 0)}
+                    step="0.1"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Row Filter */}
+          {mlColumns && (
+            <div className="section">
+              <div className="section-header">
+                <span className="section-title">Row Filter</span>
+              </div>
+              <input
+                type="text"
+                className="stats-input"
+                placeholder="e.g. Type1 == 1"
+                value={mlFilterExpr}
+                onChange={e => onMlFilterExprChange(e.target.value)}
+              />
+            </div>
+          )}
+
+          {/* Model Name */}
+          {mlColumns && (
+            <div className="section">
+              <div className="section-header">
+                <span className="section-title">Model Name</span>
+              </div>
+              <input
+                type="text"
+                className="stats-input"
+                placeholder="my_model"
+                value={mlModelName}
+                onChange={e => onMlModelNameChange(e.target.value)}
+              />
+            </div>
+          )}
+
+          {/* Error display */}
+          {mlError && (
+            <div className="ml-error-banner">{mlError}</div>
+          )}
+
+          {/* Train Button */}
+          {mlColumns && (
+            <div className="ml-train-bar">
+              <button
+                className="ml-train-btn"
+                disabled={isTrainingML || !mlTargetColumn || mlSelectedFeatures.length === 0 || !mlModelName}
+                onClick={onMLTrain}
+              >
+                {isTrainingML ? (
+                  <>
+                    <span className="ml-btn-spinner" />
+                    Training...
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    Train Model
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Trained Models */}
+          {mlModels.length > 0 && (
+            <div className="section ml-models-section">
+              <div className="section-header">
+                <span className="section-title">Trained Models</span>
+              </div>
+              <div className="ml-models-list">
+                {mlModels.map(model => (
+                  <div key={model.name} className="ml-model-item">
+                    <div className="ml-model-info">
+                      <span className="ml-model-name">{model.name}</span>
+                      {model.cv_accuracy != null && (
+                        <span className="ml-model-acc">{(model.cv_accuracy * 100).toFixed(1)}%</span>
+                      )}
+                    </div>
+                    {model.report_path && (
+                      <button
+                        className="ml-view-report-btn"
+                        onClick={() => onLoadMLReport(model.report_path)}
+                      >
+                        View
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
