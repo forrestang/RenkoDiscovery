@@ -23,7 +23,7 @@ app = FastAPI(title="RenkoDiscovery API", version="1.0.0")
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2243,5 +2243,13 @@ def delete_all_stats_files(working_dir: Optional[str] = None):
 
 
 if __name__ == "__main__":
+    import sys
+    import argparse
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+
+    is_frozen = getattr(sys, 'frozen', False)
+    uvicorn.run("main:app", host="127.0.0.1", port=args.port, reload=not is_frozen)

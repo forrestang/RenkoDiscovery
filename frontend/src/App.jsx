@@ -7,7 +7,7 @@ import StatsPage from './components/StatsPage'
 import ParquetPage from './components/ParquetPage'
 import './styles/App.css'
 
-const API_BASE = 'http://localhost:8000'
+const DEFAULT_API_BASE = 'http://localhost:8000'
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
 const PRICE_PRECISION_OPTIONS = [
@@ -43,7 +43,7 @@ function App() {
     return localStorage.getItem(`${STORAGE_PREFIX}activeTab`) || 'data'
   })
   const [workingDir, setWorkingDir] = useState(() => {
-    return localStorage.getItem(`${STORAGE_PREFIX}workingDir`) || 'C:\\Users\\lawfp\\Desktop\\Data_renko'
+    return localStorage.getItem(`${STORAGE_PREFIX}workingDir`) || ''
   })
   const [files, setFiles] = useState([])
   const [selectedFiles, setSelectedFiles] = useState([])
@@ -128,6 +128,28 @@ function App() {
     return saved === 'true'
   })
 
+  // Dynamic API base for Electron support
+  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE)
+  const [apiReady, setApiReady] = useState(!window.electronAPI)
+
+  useEffect(() => {
+    if (window.electronAPI) {
+      window.electronAPI.getBackendPort().then((port) => {
+        setApiBase(`http://localhost:${port}`)
+        setApiReady(true)
+      })
+    }
+  }, [])
+
+  // Auto-prompt folder selection on first launch in Electron
+  useEffect(() => {
+    if (apiReady && !workingDir && window.electronAPI) {
+      window.electronAPI.selectFolder().then((dir) => {
+        if (dir) setWorkingDir(dir)
+      })
+    }
+  }, [apiReady])
+
   // Persist UI settings to localStorage
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}sidebarWidth`, sidebarWidth.toString())
@@ -163,6 +185,7 @@ function App() {
 
   // Refetch files and cache when working directory changes
   useEffect(() => {
+    if (!apiReady) return
     fetchFiles()
     fetchCache()
     fetchStatsFiles()
@@ -170,11 +193,11 @@ function App() {
     setActiveInstrument(null)
     setChartData(null)
     setRenkoData(null)
-  }, [workingDir])
+  }, [workingDir, apiReady])
 
   const fetchFiles = async () => {
     try {
-      const res = await fetch(`${API_BASE}/files?working_dir=${encodeURIComponent(workingDir)}`)
+      const res = await fetch(`${apiBase}/files?working_dir=${encodeURIComponent(workingDir)}`)
       if (res.ok) {
         const data = await res.json()
         setFiles(data)
@@ -186,7 +209,7 @@ function App() {
 
   const fetchCache = async () => {
     try {
-      const res = await fetch(`${API_BASE}/cache?working_dir=${encodeURIComponent(workingDir)}`)
+      const res = await fetch(`${apiBase}/cache?working_dir=${encodeURIComponent(workingDir)}`)
       if (res.ok) {
         const data = await res.json()
         setCachedInstruments(data)
@@ -198,7 +221,7 @@ function App() {
 
   const fetchStatsFiles = async () => {
     try {
-      const res = await fetch(`${API_BASE}/stats-files?working_dir=${encodeURIComponent(workingDir)}`)
+      const res = await fetch(`${apiBase}/stats-files?working_dir=${encodeURIComponent(workingDir)}`)
       if (res.ok) {
         const data = await res.json()
         setStatsFiles(data)
@@ -231,7 +254,7 @@ function App() {
     setStatsFilename(filename)
 
     try {
-      const res = await fetch(`${API_BASE}/parquet-stats?filepath=${encodeURIComponent(filepath)}`)
+      const res = await fetch(`${apiBase}/parquet-stats?filepath=${encodeURIComponent(filepath)}`)
       if (res.ok) {
         const data = await res.json()
         setStatsData(data)
@@ -255,7 +278,7 @@ function App() {
     setParquetFilename(filename)
 
     try {
-      const res = await fetch(`${API_BASE}/parquet-data?filepath=${encodeURIComponent(filepath)}`)
+      const res = await fetch(`${apiBase}/parquet-data?filepath=${encodeURIComponent(filepath)}`)
       if (res.ok) {
         const data = await res.json()
         setParquetData(data)
@@ -274,7 +297,7 @@ function App() {
 
   const handleDeleteStatsFile = async (filepath) => {
     try {
-      const res = await fetch(`${API_BASE}/stats-file?filepath=${encodeURIComponent(filepath)}`, {
+      const res = await fetch(`${apiBase}/stats-file?filepath=${encodeURIComponent(filepath)}`, {
         method: 'DELETE'
       })
       if (res.ok) {
@@ -298,7 +321,7 @@ function App() {
 
   const handleDeleteAllStatsFiles = async () => {
     try {
-      const res = await fetch(`${API_BASE}/stats-files?working_dir=${encodeURIComponent(workingDir)}`, {
+      const res = await fetch(`${apiBase}/stats-files?working_dir=${encodeURIComponent(workingDir)}`, {
         method: 'DELETE'
       })
       if (res.ok) {
@@ -344,7 +367,7 @@ function App() {
     setProcessingResults(null)
 
     try {
-      const res = await fetch(`${API_BASE}/process`, {
+      const res = await fetch(`${apiBase}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -379,7 +402,7 @@ function App() {
     setIsRunningStats(true)
 
     try {
-      const res = await fetch(`${API_BASE}/stats/${activeInstrument}`, {
+      const res = await fetch(`${apiBase}/stats/${activeInstrument}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -419,7 +442,7 @@ function App() {
     setIsLoading(true)
 
     try {
-      const res = await fetch(`${API_BASE}/chart/${instrument}?working_dir=${encodeURIComponent(workingDir)}`)
+      const res = await fetch(`${apiBase}/chart/${instrument}?working_dir=${encodeURIComponent(workingDir)}`)
       if (res.ok) {
         const data = await res.json()
         setChartData(data)
@@ -454,7 +477,7 @@ function App() {
 
     setIsLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/renko/${instrument}`, {
+      const res = await fetch(`${apiBase}/renko/${instrument}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -495,7 +518,7 @@ function App() {
 
   const deleteCache = async (instrument) => {
     try {
-      const res = await fetch(`${API_BASE}/cache/${instrument}?working_dir=${encodeURIComponent(workingDir)}`, {
+      const res = await fetch(`${apiBase}/cache/${instrument}?working_dir=${encodeURIComponent(workingDir)}`, {
         method: 'DELETE'
       })
       if (res.ok) {
@@ -513,7 +536,7 @@ function App() {
 
   const deleteAllCache = async () => {
     try {
-      const res = await fetch(`${API_BASE}/cache?working_dir=${encodeURIComponent(workingDir)}`, {
+      const res = await fetch(`${apiBase}/cache?working_dir=${encodeURIComponent(workingDir)}`, {
         method: 'DELETE'
       })
       if (res.ok) {

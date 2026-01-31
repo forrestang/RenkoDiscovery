@@ -1,0 +1,17 @@
+{
+  "name": "renko-discovery",
+  "version": "1.0.0",
+  "description": "RenkoDiscovery Desktop Application",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "py -m PyInstaller backend/main.spec",
+    "build:electron": "electron-builder",
+    "build": "npm run build:frontend && npm run build:backend && npm run build:electron"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

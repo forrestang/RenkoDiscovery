@@ -1117,7 +1117,7 @@
 }
 
 .stats-spacer {
-  flex: 1;
+  flex: 0;
 }
 
 .stats-actions {
