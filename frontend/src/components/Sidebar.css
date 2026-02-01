@@ -1316,6 +1316,15 @@
   white-space: nowrap;
 }
 
+.ml-feature-tip {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  padding: var(--space-1) var(--space-2);
+  margin-top: var(--space-1);
+  border-left: 2px solid var(--border-subtle);
+}
+
 /* ML Target */
 .ml-target-group {
   display: flex;

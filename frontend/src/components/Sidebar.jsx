@@ -844,6 +844,9 @@ function Sidebar({
                   </label>
                 ))}
               </div>
+              <div className="ml-feature-tip">
+                Tip: Keep at least 20 rows per feature to avoid the model finding coincidental patterns. Including extras is fine — unused features are ignored automatically.
+              </div>
             </div>
           )}
 
