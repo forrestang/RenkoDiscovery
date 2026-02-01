@@ -24,22 +24,86 @@ function formatTickMark(isoString) {
   return `${month}-${day}`
 }
 
-// Find indices where day changes (first bar after 00:00 UTC)
-function findDayBoundaryIndices(datetimes) {
+// Parse a datetime string as UTC
+function parseUTC(dtStr) {
+  if (!dtStr.endsWith('Z') && !dtStr.includes('+') && !dtStr.includes('-', 10)) {
+    dtStr = dtStr.replace(' ', 'T') + 'Z'
+  }
+  return new Date(dtStr)
+}
+
+// Day-of-week keys matching the schedule object (0=Sun..6=Sat)
+const DOW_TO_KEY = [null, 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', null]
+
+// Get the session boundary time (in minutes since midnight UTC) for a given weekday
+function getBoundaryMinutes(schedule, dow) {
+  // dow: 0=Sun..6=Sat. Trading days are Mon(1)-Fri(5).
+  const key = DOW_TO_KEY[dow]
+  if (!key || !schedule[key]) return null
+  return schedule[key].hour * 60 + schedule[key].minute
+}
+
+// Determine the session identifier for a given UTC timestamp using per-day schedule.
+// Returns a string like "2024-01-15" (the close-date of the session this bar belongs to).
+// The boundary for each trading day occurs at that day's configured hour:minute UTC.
+// A bar at or after Monday's boundary but before Tuesday's boundary belongs to Tuesday's session.
+function getSessionId(dt, schedule) {
+  const dow = dt.getUTCDay() // 0=Sun..6=Sat
+  const minuteOfDay = dt.getUTCHours() * 60 + dt.getUTCMinutes()
+
+  // Weekend bars (Sat/Sun): assign to Monday session
+  if (dow === 0 || dow === 6) {
+    // Find next Monday
+    const daysToMon = dow === 0 ? 1 : 2
+    const mon = new Date(dt.getTime())
+    mon.setUTCDate(mon.getUTCDate() + daysToMon)
+    return mon.toISOString().split('T')[0]
+  }
+
+  // Trading day (Mon-Fri)
+  const boundaryMin = getBoundaryMinutes(schedule, dow)
+  if (boundaryMin === null) return dt.toISOString().split('T')[0]
+
+  if (minuteOfDay < boundaryMin) {
+    // Before today's boundary → belongs to today's session (today is the close day)
+    return dt.toISOString().split('T')[0]
+  } else {
+    // At or after today's boundary → belongs to next trading day's session
+    let nextDate = new Date(dt.getTime())
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1)
+    // Skip weekend
+    if (nextDate.getUTCDay() === 6) nextDate.setUTCDate(nextDate.getUTCDate() + 2)
+    if (nextDate.getUTCDay() === 0) nextDate.setUTCDate(nextDate.getUTCDate() + 1)
+    return nextDate.toISOString().split('T')[0]
+  }
+}
+
+// Find indices where session changes (index-based, for renko mode)
+function findSessionBoundaryIndices(datetimes, schedule) {
   const boundaries = []
-  let lastDate = null
+  let lastSessionId = null
   for (let i = 0; i < datetimes.length; i++) {
-    // Ensure datetime is parsed as UTC (append Z if no timezone indicator)
-    let dtStr = datetimes[i]
-    if (!dtStr.endsWith('Z') && !dtStr.includes('+') && !dtStr.includes('-', 10)) {
-      dtStr = dtStr.replace(' ', 'T') + 'Z'
+    const dt = parseUTC(datetimes[i])
+    const sid = getSessionId(dt, schedule)
+    if (lastSessionId !== null && sid !== lastSessionId) {
+      boundaries.push(i)
     }
-    const dt = new Date(dtStr)
-    const dateStr = dt.toISOString().split('T')[0]  // YYYY-MM-DD in UTC
-    if (lastDate !== null && dateStr !== lastDate) {
-      boundaries.push(i)  // First bar of new day
+    lastSessionId = sid
+  }
+  return boundaries
+}
+
+// Find timestamps where session changes (for raw/overlay modes using time-based x-axis)
+function findSessionBoundaryTimestamps(datetimes, schedule) {
+  const boundaries = []
+  let lastSessionId = null
+  for (let i = 0; i < datetimes.length; i++) {
+    const dt = parseUTC(datetimes[i])
+    const sid = getSessionId(dt, schedule)
+    if (lastSessionId !== null && sid !== lastSessionId) {
+      boundaries.push(Math.floor(dt.getTime() / 1000))
     }
-    lastDate = dateStr
+    lastSessionId = sid
   }
   return boundaries
 }
@@ -267,12 +331,13 @@ class TypeMarkersRenderer {
   }
 }
 
-// Custom primitive for drawing vertical grid lines at day boundaries
+// Custom primitive for drawing vertical grid lines at session boundaries
 class DayBoundaryGridPrimitive {
-  constructor() {
-    this._boundaries = []  // Array of bar indices where day changes
+  constructor(useTimestamps = false) {
+    this._boundaries = []  // Array of bar indices or timestamps where session changes
     this._chart = null
     this._series = null
+    this._useTimestamps = useTimestamps
   }
 
   setBoundaries(boundaries) {
@@ -320,6 +385,7 @@ class DayBoundaryGridRenderer {
   draw(target, priceConverter) {
     const boundaries = this._source._boundaries
     const chart = this._source._chart
+    const useTimestamps = this._source._useTimestamps
 
     if (!boundaries.length || !chart) return
 
@@ -334,8 +400,10 @@ class DayBoundaryGridRenderer {
       ctx.strokeStyle = '#27272a'
       ctx.lineWidth = 1 * hRatio
 
-      for (const boundaryIndex of boundaries) {
-        const x = timeScale.logicalToCoordinate(boundaryIndex)
+      for (const boundary of boundaries) {
+        const x = useTimestamps
+          ? timeScale.timeToCoordinate(boundary)
+          : timeScale.logicalToCoordinate(boundary)
         if (x === null) continue
 
         const xPx = Math.round(x * hRatio)
@@ -470,7 +538,7 @@ function calculateEMA(data, period) {
   return result
 }
 
-function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002 }) {
+function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002, renkoPerBrickSizes = null, renkoPerReversalSizes = null, sessionSchedule = null }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)  // Candlestick series for OHLC data
@@ -514,7 +582,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         fontFamily: "'JetBrains Mono', monospace",
       },
       grid: {
-        vertLines: { color: '#27272a', visible: chartType !== 'renko' },  // Disable in Renko mode, use custom day boundaries
+        vertLines: { color: '#27272a', visible: false },  // Use custom session boundary lines instead
         horzLines: { color: '#27272a', visible: chartType !== 'renko' },  // Disable in Renko mode for indicator pane
       },
       crosshair: {
@@ -551,10 +619,10 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
             const dt = datetimesRef.current[time]
             return dt ? formatTickMark(dt) : String(time)
           }
-          // Timestamp-based data: format Unix timestamp
+          // Timestamp-based data: format Unix timestamp as UTC
           const date = new Date(time * 1000)
-          const month = String(date.getMonth() + 1).padStart(2, '0')
-          const day = String(date.getDate()).padStart(2, '0')
+          const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+          const day = String(date.getUTCDate()).padStart(2, '0')
           return `${month}-${day}`
         },
       },
@@ -565,13 +633,13 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
             const dt = datetimesRef.current[time]
             return dt ? formatTimestamp(dt) : `${label} ${time}`
           }
-          // Timestamp-based data: format Unix timestamp
+          // Timestamp-based data: format Unix timestamp as UTC
           const date = new Date(time * 1000)
-          const year = date.getFullYear()
-          const month = String(date.getMonth() + 1).padStart(2, '0')
-          const day = String(date.getDate()).padStart(2, '0')
-          const hours = String(date.getHours()).padStart(2, '0')
-          const minutes = String(date.getMinutes()).padStart(2, '0')
+          const year = date.getUTCFullYear()
+          const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+          const day = String(date.getUTCDate()).padStart(2, '0')
+          const hours = String(date.getUTCHours()).padStart(2, '0')
+          const minutes = String(date.getUTCMinutes()).padStart(2, '0')
           return `${year}-${month}-${day} ${hours}:${minutes}`
         },
       },
@@ -624,9 +692,10 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       primitiveRef.current = primitive
     }
 
-    // Create day boundary primitive for Renko mode (vertical lines at day changes)
-    if (chartType === 'renko') {
-      const dayBoundaryPrimitive = new DayBoundaryGridPrimitive()
+    // Create session boundary primitive for all chart types
+    {
+      const useTimestamps = chartType !== 'renko'
+      const dayBoundaryPrimitive = new DayBoundaryGridPrimitive(useTimestamps)
       candleSeries.attachPrimitive(dayBoundaryPrimitive)
       dayBoundaryPrimitiveRef.current = dayBoundaryPrimitive
     }
@@ -688,7 +757,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
             // Find the M1 bar index that matches this timestamp
             let m1Index = -1
             for (let i = 0; i < m1Datetimes.length; i++) {
-              const barTimestamp = Math.floor(new Date(m1Datetimes[i]).getTime() / 1000)
+              const barTimestamp = Math.floor(parseUTC(m1Datetimes[i]).getTime() / 1000)
               if (barTimestamp === hoverTime) {
                 m1Index = i
                 break
@@ -819,7 +888,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       const candleData = open.map((_, i) => {
         if (chartType !== 'renko' && datetime[i]) {
           // Convert to Unix timestamp (seconds) for lightweight-charts
-          const timestamp = Math.floor(new Date(datetime[i]).getTime() / 1000)
+          const timestamp = Math.floor(parseUTC(datetime[i]).getTime() / 1000)
           return { time: timestamp, open: open[i], high: high[i], low: low[i], close: close[i] }
         }
         // Use sequential indices for Renko mode
@@ -846,18 +915,23 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         })
       } else if (datetime[fromIndex] && datetime[toIndex]) {
         chartRef.current.timeScale().setVisibleRange({
-          from: Math.floor(new Date(datetime[fromIndex]).getTime() / 1000),
-          to: Math.floor(new Date(datetime[toIndex]).getTime() / 1000),
+          from: Math.floor(parseUTC(datetime[fromIndex]).getTime() / 1000),
+          to: Math.floor(parseUTC(datetime[toIndex]).getTime() / 1000),
         })
       }
     }
 
-    // Update day boundary lines for Renko mode
-    if (chartType === 'renko' && dayBoundaryPrimitiveRef.current && datetime) {
-      const boundaries = findDayBoundaryIndices(datetime)
-      dayBoundaryPrimitiveRef.current.setBoundaries(boundaries)
+    // Update session boundary lines for all modes
+    if (dayBoundaryPrimitiveRef.current && datetime && sessionSchedule) {
+      if (chartType === 'renko') {
+        const boundaries = findSessionBoundaryIndices(datetime, sessionSchedule)
+        dayBoundaryPrimitiveRef.current.setBoundaries(boundaries)
+      } else {
+        const boundaries = findSessionBoundaryTimestamps(datetime, sessionSchedule)
+        dayBoundaryPrimitiveRef.current.setBoundaries(boundaries)
+      }
     }
-  }, [chartData, chartType, pricePrecision])
+  }, [chartData, chartType, pricePrecision, sessionSchedule])
 
   // Update Renko overlay when renkoData changes
   useEffect(() => {
@@ -960,7 +1034,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
             // M1 mode: use timestamps from M1 data
             const dt = dataSource.data.datetime[i]
             if (dt) {
-              return { time: Math.floor(new Date(dt).getTime() / 1000), value }
+              return { time: Math.floor(parseUTC(dt).getTime() / 1000), value }
             }
             return null
           } else if (chartType === 'overlay') {
@@ -975,7 +1049,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
             // M1 data uses timestamps
             const m1Datetime = chartData.data.datetime[dataIndex]
             if (m1Datetime) {
-              return { time: Math.floor(new Date(m1Datetime).getTime() / 1000), value }
+              return { time: Math.floor(parseUTC(m1Datetime).getTime() / 1000), value }
             }
             return null
           } else {
@@ -1092,7 +1166,9 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       // - reversal > brick: 3-bar pattern (DOWN, UP, UP or UP, DOWN, DOWN)
       // - reversal == brick: 2-bar pattern (DOWN, UP or UP, DOWN)
       // MA1 touch can be on ANY bar in the pattern
-      const use3bar = reversalSize > brickSize
+      const use3bar = renkoPerReversalSizes && renkoPerBrickSizes
+        ? renkoPerReversalSizes[i] > renkoPerBrickSizes[i]
+        : reversalSize > brickSize
       const currMa1 = ma1Values[i]
 
       if (use3bar && i > 1) {
@@ -1208,16 +1284,16 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       typeMarkersPrimitiveRef.current.setMarkers(typeMarkers)
     }
 
-    // Update day boundary lines in indicator pane
-    if (indicatorDayBoundaryPrimitiveRef.current && chartData.data.datetime) {
-      const boundaries = findDayBoundaryIndices(chartData.data.datetime)
+    // Update session boundary lines in indicator pane
+    if (indicatorDayBoundaryPrimitiveRef.current && chartData.data.datetime && sessionSchedule) {
+      const boundaries = findSessionBoundaryIndices(chartData.data.datetime, sessionSchedule)
       indicatorDayBoundaryPrimitiveRef.current.setBoundaries(boundaries)
     }
 
     // Force redraw
     chart.timeScale().applyOptions({})
 
-  }, [chartData, chartType, showIndicatorPane, maSettings])
+  }, [chartData, chartType, showIndicatorPane, maSettings, sessionSchedule])
 
   if (!chartData && !isLoading) {
     return (

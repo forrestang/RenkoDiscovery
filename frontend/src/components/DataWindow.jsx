@@ -97,6 +97,22 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
             <span className="data-label">C</span>
             <span className="data-value mono">{formatPrice(renkoC)}</span>
           </div>
+          {renkoData?.adr_period && renkoDataSource?.adr_value && (
+            <>
+              <div className="data-row">
+                <span className="data-label">ADR({renkoData.adr_period})</span>
+                <span className="data-value mono">{formatPrice(renkoDataSource.adr_value?.[renkoIndex])}</span>
+              </div>
+              <div className="data-row">
+                <span className="data-label">Brick</span>
+                <span className="data-value mono">{formatPrice(renkoDataSource.brick_size?.[renkoIndex])}</span>
+              </div>
+              <div className="data-row">
+                <span className="data-label">Rev</span>
+                <span className="data-value mono">{formatPrice(renkoDataSource.reversal_size?.[renkoIndex])}</span>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>

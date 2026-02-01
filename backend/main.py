@@ -79,6 +79,11 @@ class RenkoRequest(BaseModel):
     wick_mode: str = "all"  # "all" | "big" | "none"
     limit: Optional[int] = None  # limit M1 data to last N bars (for overlay mode alignment)
     working_dir: Optional[str] = None
+    sizing_mode: str = "price"  # "price" | "adr"
+    brick_pct: float = 5.0  # brick as % of ADR
+    reversal_pct: float = 10.0  # reversal as % of ADR
+    adr_period: int = 14  # rolling lookback
+    session_schedule: Optional[dict] = None  # Per-day schedule: {"monday": {"hour": 22, "minute": 0}, ...}
 
 
 class StatsRequest(BaseModel):
@@ -93,6 +98,7 @@ class StatsRequest(BaseModel):
     ma2_period: int = 50
     ma3_period: int = 200
     renko_data: dict  # Contains datetime, open, high, low, close arrays
+    session_schedule: Optional[dict] = None  # Per-day schedule: {"monday": {"hour": 22, "minute": 0}, ...}
 
 
 class MLTrainRequest(BaseModel):
@@ -669,12 +675,84 @@ def get_pip_value(instrument: str) -> float:
     return 0.0001
 
 
-def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0, wick_mode: str = "all") -> tuple[pd.DataFrame, dict]:
+def _get_session_date(dt, schedule):
+    """Assign a session date (close-day) to a UTC datetime using per-day schedule.
+
+    The boundary for each trading day occurs at that day's configured hour:minute UTC.
+    A bar before Monday's boundary belongs to Monday's session.
+    A bar at or after Monday's boundary belongs to Tuesday's session.
+    """
+    dow = dt.weekday()  # 0=Mon..6=Sun
+    dow_keys = [None] * 7
+    dow_keys[0] = 'monday'
+    dow_keys[1] = 'tuesday'
+    dow_keys[2] = 'wednesday'
+    dow_keys[3] = 'thursday'
+    dow_keys[4] = 'friday'
+
+    # Weekend: assign to Monday
+    if dow in (5, 6):  # Sat, Sun
+        days_to_mon = 7 - dow if dow == 5 else 0 + 1
+        return (dt + pd.Timedelta(days=days_to_mon)).date()
+
+    key = dow_keys[dow]
+    if key and key in schedule:
+        boundary_h = schedule[key].get('hour', 22)
+        boundary_m = schedule[key].get('minute', 0)
+    else:
+        boundary_h, boundary_m = 22, 0
+
+    minute_of_day = dt.hour * 60 + dt.minute
+    boundary_min = boundary_h * 60 + boundary_m
+
+    if minute_of_day < boundary_min:
+        # Before boundary → today's session
+        return dt.date()
+    else:
+        # At or after boundary → next trading day's session
+        next_dt = dt + pd.Timedelta(days=1)
+        # Skip weekend
+        if next_dt.weekday() == 5:  # Sat
+            next_dt += pd.Timedelta(days=2)
+        elif next_dt.weekday() == 6:  # Sun
+            next_dt += pd.Timedelta(days=1)
+        return next_dt.date()
+
+
+def _default_schedule():
+    return {
+        'monday': {'hour': 22, 'minute': 0},
+        'tuesday': {'hour': 22, 'minute': 0},
+        'wednesday': {'hour': 22, 'minute': 0},
+        'thursday': {'hour': 22, 'minute': 0},
+        'friday': {'hour': 22, 'minute': 0},
+    }
+
+
+def compute_adr_lookup(raw_df: pd.DataFrame, adr_period: int, session_schedule: dict = None) -> pd.Series:
+    """Date-keyed Series of ADR values from raw M1 OHLC data."""
+    schedule = session_schedule or _default_schedule()
+    tmp = raw_df.copy()
+    tmp['utc_date'] = tmp['datetime'].apply(lambda dt: _get_session_date(dt, schedule))
+    daily_stats = tmp.groupby('utc_date').agg(
+        day_high=('high', 'max'), day_low=('low', 'min')
+    )
+    daily_stats['daily_range'] = daily_stats['day_high'] - daily_stats['day_low']
+    daily_stats['adr'] = daily_stats['daily_range'].shift(1).rolling(
+        window=adr_period, min_periods=adr_period
+    ).mean()
+    return daily_stats['adr']
+
+
+def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0, wick_mode: str = "all", size_schedule=None) -> tuple[pd.DataFrame, dict]:
     """
     Generate Renko bricks with configurable reversal multiplier using threshold-based logic.
 
     Standard Renko uses reversal_multiplier=2 (need 2x brick size to reverse).
     This implementation allows custom reversal thresholds.
+
+    size_schedule: optional list of (m1_index, brick_size, reversal_size, adr_value) tuples.
+        When provided, brick/reversal sizes change dynamically per session (lock-at-start).
 
     wick_mode options:
         - "all": Show all wicks (any retracement)
@@ -684,7 +762,18 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
     Returns:
         tuple: (completed_bricks_df, pending_brick_dict)
     """
-    def find_threshold_crossings(closes, start_idx, end_idx, start_threshold, brick_size, direction):
+    def get_schedule_values(m1_idx):
+        if size_schedule is None:
+            return brick_size, brick_size * reversal_multiplier, None
+        best = size_schedule[0]
+        for entry in size_schedule:
+            if entry[0] <= m1_idx:
+                best = entry
+            else:
+                break
+        return best[1], best[2], best[3]
+
+    def find_threshold_crossings(closes, start_idx, end_idx, start_threshold, brick_sz, direction):
         """
         Find M1 bar indices where each brick threshold was crossed.
 
@@ -704,17 +793,17 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 while price >= current_threshold:
                     crossings.append((current_open, j))
                     current_open = j
-                    current_threshold += brick_size
+                    current_threshold += brick_sz
             elif direction == -1 and price <= current_threshold:
                 # Find all thresholds crossed by this bar
                 while price <= current_threshold:
                     crossings.append((current_open, j))
                     current_open = j
-                    current_threshold -= brick_size
+                    current_threshold -= brick_sz
 
         return crossings
 
-    def calc_up_brick_low(pending_low_val, brick_open, apply_wick=True):
+    def calc_up_brick_low(pending_low_val, brick_open, brick_sz, apply_wick=True):
         """Calculate low for up brick based on wick mode."""
         if wick_mode == "none":
             return brick_open
@@ -724,12 +813,12 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             if not apply_wick:
                 return brick_open
             retracement = brick_open - pending_low_val
-            if retracement > brick_size:
+            if retracement > brick_sz:
                 return pending_low_val
             return brick_open
         return brick_open
 
-    def calc_down_brick_high(pending_high_val, brick_open, apply_wick=True):
+    def calc_down_brick_high(pending_high_val, brick_open, brick_sz, apply_wick=True):
         """Calculate high for down brick based on wick mode."""
         if wick_mode == "none":
             return brick_open
@@ -739,7 +828,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             if not apply_wick:
                 return brick_open
             retracement = pending_high_val - brick_open
-            if retracement > brick_size:
+            if retracement > brick_sz:
                 return pending_high_val
             return brick_open
         return brick_open
@@ -753,22 +842,32 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
     if len(close_prices) < 2:
         return pd.DataFrame(), None
 
-    reversal_size = brick_size * reversal_multiplier
+    # Initialize active/pending size tracking
+    if size_schedule is None:
+        reversal_size = brick_size * reversal_multiplier
+        active_bs, active_rs, active_adr = brick_size, reversal_size, None
+    else:
+        active_bs, active_rs, active_adr = get_schedule_values(0)
+    pending_bs, pending_rs, pending_adr = active_bs, active_rs, active_adr
+
     bricks = []
 
     # Initialize with first M1 bar's OPEN rounded to brick boundary
-    ref_price = np.floor(open_prices[0] / brick_size) * brick_size
+    ref_price = np.floor(open_prices[0] / active_bs) * active_bs
 
     # State variables
     last_brick_close = ref_price
     direction = 0  # 0 = undetermined, 1 = up, -1 = down
-    up_threshold = ref_price + brick_size
-    down_threshold = ref_price - brick_size
+    up_threshold = ref_price + active_bs
+    down_threshold = ref_price - active_bs
     pending_high = high_prices[0]
     pending_low = low_prices[0]
     tick_idx_open = 0
 
     for i in range(len(close_prices)):
+        # Update pending schedule values for this M1 bar
+        pending_bs, pending_rs, pending_adr = get_schedule_values(i)
+
         # Update pending high/low with current bar's high/low
         pending_high = max(pending_high, high_prices[i])
         pending_low = min(pending_low, low_prices[i])
@@ -779,24 +878,28 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             if price >= up_threshold:
                 # Create UP brick
                 brick_open = last_brick_close
-                brick_close = brick_open + brick_size
+                brick_close = brick_open + active_bs
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
                     'high': brick_close,
-                    'low': calc_up_brick_low(pending_low, brick_open),
+                    'low': calc_up_brick_low(pending_low, brick_open, active_bs),
                     'close': brick_close,
                     'direction': 1,
                     'is_reversal': 0,
                     'tick_index_open': tick_idx_open,
                     'tick_index_close': i,
-                    'brick_size': brick_size
+                    'brick_size': active_bs,
+                    'reversal_size': active_rs,
+                    'adr_value': active_adr
                 })
                 last_brick_close = brick_close
                 direction = 1
-                # Update thresholds after UP brick
-                up_threshold = brick_close + brick_size
-                down_threshold = brick_close - reversal_size
+                # Promote pending -> active
+                active_bs, active_rs, active_adr = pending_bs, pending_rs, pending_adr
+                # Update thresholds with NEW active values
+                up_threshold = brick_close + active_bs
+                down_threshold = brick_close - active_rs
                 # Reset pending values
                 pending_high = high_prices[i]
                 pending_low = low_prices[i]
@@ -805,24 +908,28 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             elif price <= down_threshold:
                 # Create DOWN brick
                 brick_open = last_brick_close
-                brick_close = brick_open - brick_size
+                brick_close = brick_open - active_bs
                 bricks.append({
                     'datetime': timestamps[tick_idx_open],
                     'open': brick_open,
-                    'high': calc_down_brick_high(pending_high, brick_open),
+                    'high': calc_down_brick_high(pending_high, brick_open, active_bs),
                     'low': brick_close,
                     'close': brick_close,
                     'direction': -1,
                     'is_reversal': 0,
                     'tick_index_open': tick_idx_open,
                     'tick_index_close': i,
-                    'brick_size': brick_size
+                    'brick_size': active_bs,
+                    'reversal_size': active_rs,
+                    'adr_value': active_adr
                 })
                 last_brick_close = brick_close
                 direction = -1
-                # Update thresholds after DOWN brick
-                down_threshold = brick_close - brick_size
-                up_threshold = brick_close + reversal_size
+                # Promote pending -> active
+                active_bs, active_rs, active_adr = pending_bs, pending_rs, pending_adr
+                # Update thresholds with NEW active values
+                down_threshold = brick_close - active_bs
+                up_threshold = brick_close + active_rs
                 # Reset pending values
                 pending_high = high_prices[i]
                 pending_low = low_prices[i]
@@ -832,32 +939,34 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             # Uptrend - check for continuation or reversal
             if price >= up_threshold:
                 # Create UP brick(s) - continuation
-                # Find where each threshold was crossed
-                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, up_threshold, brick_size, 1)
+                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, up_threshold, active_bs, 1)
 
                 for idx, (cross_open, cross_close) in enumerate(crossings):
                     brick_open = last_brick_close
-                    brick_close = brick_open + brick_size
+                    brick_close = brick_open + active_bs
                     first_brick = (idx == 0)
-                    # For "all" wick mode, calculate per-brick min; otherwise use global pending
                     brick_pending_low = low_prices[cross_open:cross_close+1].min() if wick_mode == "all" and not first_brick else pending_low
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': brick_close,
-                        'low': calc_up_brick_low(brick_pending_low, brick_open, apply_wick=first_brick),
+                        'low': calc_up_brick_low(brick_pending_low, brick_open, active_bs, apply_wick=first_brick),
                         'close': brick_close,
                         'direction': 1,
                         'is_reversal': 0,
                         'tick_index_open': cross_open,
                         'tick_index_close': cross_close,
-                        'brick_size': brick_size
+                        'brick_size': active_bs,
+                        'reversal_size': active_rs,
+                        'adr_value': active_adr
                     })
                     last_brick_close = brick_close
 
-                # Update thresholds after all UP bricks
-                up_threshold = last_brick_close + brick_size
-                down_threshold = last_brick_close - reversal_size
+                # Promote pending -> active AFTER batch
+                active_bs, active_rs, active_adr = pending_bs, pending_rs, pending_adr
+                # Update thresholds with NEW active values
+                up_threshold = last_brick_close + active_bs
+                down_threshold = last_brick_close - active_rs
 
                 # Reset pending values after all bricks created
                 pending_high = high_prices[i]
@@ -866,35 +975,36 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
             elif price <= down_threshold:
                 # Reversal to DOWN
-                # Find where each threshold was crossed
-                # Start from first brick threshold (1 brick away), not reversal threshold (2 bricks away)
-                first_brick_threshold = last_brick_close - brick_size
-                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, first_brick_threshold, brick_size, -1)
+                first_brick_threshold = last_brick_close - active_bs
+                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, first_brick_threshold, active_bs, -1)
 
                 for idx, (cross_open, cross_close) in enumerate(crossings):
                     brick_open = last_brick_close
-                    brick_close = brick_open - brick_size
+                    brick_close = brick_open - active_bs
                     first_brick = (idx == 0)
-                    # For "all" wick mode, calculate per-brick max; otherwise use global pending
                     brick_pending_high = high_prices[cross_open:cross_close+1].max() if wick_mode == "all" and not first_brick else pending_high
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
-                        'high': calc_down_brick_high(brick_pending_high, brick_open, apply_wick=first_brick),
+                        'high': calc_down_brick_high(brick_pending_high, brick_open, active_bs, apply_wick=first_brick),
                         'low': brick_close,
                         'close': brick_close,
                         'direction': -1,
                         'is_reversal': 1 if first_brick else 0,
                         'tick_index_open': cross_open,
                         'tick_index_close': cross_close,
-                        'brick_size': brick_size
+                        'brick_size': active_bs,
+                        'reversal_size': active_rs,
+                        'adr_value': active_adr
                     })
                     last_brick_close = brick_close
 
                 direction = -1
-                # Update thresholds after all DOWN bricks
-                down_threshold = last_brick_close - brick_size
-                up_threshold = last_brick_close + reversal_size
+                # Promote pending -> active AFTER batch
+                active_bs, active_rs, active_adr = pending_bs, pending_rs, pending_adr
+                # Update thresholds with NEW active values
+                down_threshold = last_brick_close - active_bs
+                up_threshold = last_brick_close + active_rs
 
                 # Reset pending values after all bricks created
                 pending_high = high_prices[i]
@@ -905,32 +1015,34 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             # Downtrend - check for continuation or reversal
             if price <= down_threshold:
                 # Create DOWN brick(s) - continuation
-                # Find where each threshold was crossed
-                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, down_threshold, brick_size, -1)
+                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, down_threshold, active_bs, -1)
 
                 for idx, (cross_open, cross_close) in enumerate(crossings):
                     brick_open = last_brick_close
-                    brick_close = brick_open - brick_size
+                    brick_close = brick_open - active_bs
                     first_brick = (idx == 0)
-                    # For "all" wick mode, calculate per-brick max; otherwise use global pending
                     brick_pending_high = high_prices[cross_open:cross_close+1].max() if wick_mode == "all" and not first_brick else pending_high
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
-                        'high': calc_down_brick_high(brick_pending_high, brick_open, apply_wick=first_brick),
+                        'high': calc_down_brick_high(brick_pending_high, brick_open, active_bs, apply_wick=first_brick),
                         'low': brick_close,
                         'close': brick_close,
                         'direction': -1,
                         'is_reversal': 0,
                         'tick_index_open': cross_open,
                         'tick_index_close': cross_close,
-                        'brick_size': brick_size
+                        'brick_size': active_bs,
+                        'reversal_size': active_rs,
+                        'adr_value': active_adr
                     })
                     last_brick_close = brick_close
 
-                # Update thresholds after all DOWN bricks
-                down_threshold = last_brick_close - brick_size
-                up_threshold = last_brick_close + reversal_size
+                # Promote pending -> active AFTER batch
+                active_bs, active_rs, active_adr = pending_bs, pending_rs, pending_adr
+                # Update thresholds with NEW active values
+                down_threshold = last_brick_close - active_bs
+                up_threshold = last_brick_close + active_rs
 
                 # Reset pending values after all bricks created
                 pending_high = high_prices[i]
@@ -939,35 +1051,36 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
             elif price >= up_threshold:
                 # Reversal to UP
-                # Find where each threshold was crossed
-                # Start from first brick threshold (1 brick away), not reversal threshold (2 bricks away)
-                first_brick_threshold = last_brick_close + brick_size
-                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, first_brick_threshold, brick_size, 1)
+                first_brick_threshold = last_brick_close + active_bs
+                crossings = find_threshold_crossings(close_prices, tick_idx_open, i, first_brick_threshold, active_bs, 1)
 
                 for idx, (cross_open, cross_close) in enumerate(crossings):
                     brick_open = last_brick_close
-                    brick_close = brick_open + brick_size
+                    brick_close = brick_open + active_bs
                     first_brick = (idx == 0)
-                    # For "all" wick mode, calculate per-brick min; otherwise use global pending
                     brick_pending_low = low_prices[cross_open:cross_close+1].min() if wick_mode == "all" and not first_brick else pending_low
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': brick_close,
-                        'low': calc_up_brick_low(brick_pending_low, brick_open, apply_wick=first_brick),
+                        'low': calc_up_brick_low(brick_pending_low, brick_open, active_bs, apply_wick=first_brick),
                         'close': brick_close,
                         'direction': 1,
                         'is_reversal': 1 if first_brick else 0,
                         'tick_index_open': cross_open,
                         'tick_index_close': cross_close,
-                        'brick_size': brick_size
+                        'brick_size': active_bs,
+                        'reversal_size': active_rs,
+                        'adr_value': active_adr
                     })
                     last_brick_close = brick_close
 
                 direction = 1
-                # Update thresholds after all UP bricks
-                up_threshold = last_brick_close + brick_size
-                down_threshold = last_brick_close - reversal_size
+                # Promote pending -> active AFTER batch
+                active_bs, active_rs, active_adr = pending_bs, pending_rs, pending_adr
+                # Update thresholds with NEW active values
+                up_threshold = last_brick_close + active_bs
+                down_threshold = last_brick_close - active_rs
 
                 # Reset pending values after all bricks created
                 pending_high = high_prices[i]
@@ -986,22 +1099,28 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
             pending_brick = {
                 'open': brick_open,
                 'high': max(current_price, brick_open),
-                'low': calc_up_brick_low(pending_low, brick_open),
+                'low': calc_up_brick_low(pending_low, brick_open, active_bs),
                 'close': current_price,
                 'direction': direction,
                 'tick_index_open': tick_idx_open,
-                'tick_index_close': last_idx
+                'tick_index_close': last_idx,
+                'brick_size': active_bs,
+                'reversal_size': active_rs,
+                'adr_value': active_adr
             }
         else:
             # Pending down brick
             pending_brick = {
                 'open': brick_open,
-                'high': calc_down_brick_high(pending_high, brick_open),
+                'high': calc_down_brick_high(pending_high, brick_open, active_bs),
                 'low': min(current_price, brick_open),
                 'close': current_price,
                 'direction': direction,
                 'tick_index_open': tick_idx_open,
-                'tick_index_close': last_idx
+                'tick_index_close': last_idx,
+                'brick_size': active_bs,
+                'reversal_size': active_rs,
+                'adr_value': active_adr
             }
 
     if not bricks:
@@ -1038,9 +1157,42 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     if request.limit and len(df) > request.limit:
         df = df.tail(request.limit)
 
-    # Use direct price values
-    brick_size = request.brick_size
-    reversal_size = request.reversal_size
+    # Build size_schedule for ADR mode, or use price mode defaults
+    size_schedule = None
+    if request.sizing_mode == "adr":
+        # Load raw data for ADR computation
+        raw_df = pd.read_feather(feather_path)
+        raw_df = raw_df.set_index('datetime')
+        raw_df = raw_df.dropna()
+        raw_df = raw_df.sort_index()
+        raw_df = raw_df.reset_index()  # compute_adr_lookup expects 'datetime' column
+        session_sched = request.session_schedule or _default_schedule()
+        adr_series = compute_adr_lookup(raw_df, request.adr_period, session_sched)
+
+        # Build schedule by walking M1 dates
+        size_schedule = []
+        prev_date_adr = None
+        for idx in range(len(df)):
+            dt = _get_session_date(df.index[idx], session_sched)
+            adr_val = adr_series.get(dt)
+            if adr_val is not None and not np.isnan(adr_val) and adr_val != prev_date_adr:
+                bs = round(adr_val * request.brick_pct / 100, 6)
+                rs = round(adr_val * request.reversal_pct / 100, 6)
+                size_schedule.append((idx, bs, rs, round(adr_val, 6)))
+                prev_date_adr = adr_val
+
+        if not size_schedule:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient history for ADR({request.adr_period}). Need at least {request.adr_period + 1} trading sessions."
+            )
+
+        brick_size = size_schedule[0][1]
+        reversal_size = size_schedule[0][2]
+    else:
+        # Price mode - use direct price values
+        brick_size = request.brick_size
+        reversal_size = request.reversal_size
 
     # Validate brick size (check for NaN and <= 0)
     if brick_size is None or np.isnan(brick_size) or brick_size <= 0:
@@ -1067,7 +1219,7 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         reversal_mult = reversal_size / brick_size
 
         renko_df, pending_brick = generate_renko_custom(
-            df, brick_size, reversal_mult, request.wick_mode
+            df, brick_size, reversal_mult, request.wick_mode, size_schedule=size_schedule
         )
 
         if renko_df.empty:
@@ -1105,6 +1257,8 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         "instrument": instrument,
         "brick_size": brick_size,
         "reversal_size": reversal_size,
+        "sizing_mode": request.sizing_mode,
+        "adr_period": request.adr_period if request.sizing_mode == "adr" else None,
         "data": {
             "datetime": datetime_list,
             "open": renko_df['open'].tolist(),
@@ -1114,6 +1268,9 @@ def get_renko_data(instrument: str, request: RenkoRequest):
             "volume": renko_df['volume'].tolist() if 'volume' in renko_df.columns else [1] * len(renko_df),
             "tick_index_open": renko_df['tick_index_open'].tolist() if 'tick_index_open' in renko_df.columns else None,
             "tick_index_close": renko_df['tick_index_close'].tolist() if 'tick_index_close' in renko_df.columns else None,
+            "brick_size": renko_df['brick_size'].tolist() if 'brick_size' in renko_df.columns else None,
+            "reversal_size": renko_df['reversal_size'].tolist() if 'reversal_size' in renko_df.columns else None,
+            "adr_value": renko_df['adr_value'].tolist() if 'adr_value' in renko_df.columns else None,
         },
         "pending_brick": pending_brick,
         "total_bricks": len(renko_df)
@@ -1149,10 +1306,14 @@ async def generate_stats(instrument: str, request: StatsRequest):
     for col in ['open', 'high', 'low', 'close']:
         df[col] = df[col].round(5)
 
-    # Add settings columns
+    # Add settings columns - use per-brick arrays if available (ADR mode)
     df['adr_period'] = request.adr_period
-    df['brick_size'] = request.brick_size
-    df['reversal_size'] = request.reversal_size
+    if 'brick_size' in renko_data and isinstance(renko_data['brick_size'], list):
+        df['brick_size'] = renko_data['brick_size']
+        df['reversal_size'] = renko_data['reversal_size']
+    else:
+        df['brick_size'] = request.brick_size
+        df['reversal_size'] = request.reversal_size
     df['wick_mode'] = request.wick_mode
     df['ma1_period'] = request.ma1_period
     df['ma2_period'] = request.ma2_period
@@ -1160,29 +1321,17 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['chopPeriod'] = request.chop_period
 
     # Calculate currentADR (Average Daily Range) from RAW price data
-    # Load raw OHLC data for accurate daily range calculation
     cache_dir = base_dir / "cache"
     feather_path = cache_dir / f"{instrument}.feather"
     raw_df = pd.read_feather(feather_path)
-    raw_df['utc_date'] = raw_df['datetime'].dt.date
 
-    # Calculate daily range from raw data (max high - min low per day)
-    daily_stats = raw_df.groupby('utc_date').agg(
-        day_high=('high', 'max'),
-        day_low=('low', 'min')
-    )
-    daily_stats['daily_range'] = daily_stats['day_high'] - daily_stats['day_low']
+    session_sched = request.session_schedule or _default_schedule()
+    adr_series = compute_adr_lookup(raw_df, request.adr_period, session_sched)
 
-    # Calculate rolling ADR (average of previous N days, excluding current)
-    daily_stats['current_adr'] = daily_stats['daily_range'].shift(1).rolling(
-        window=request.adr_period,
-        min_periods=request.adr_period
-    ).mean()
-
-    # Map currentADR back to renko bars based on their UTC date
+    # Map currentADR back to renko bars based on their session date
     df['datetime'] = pd.to_datetime(df['datetime'])
-    df['utc_date'] = df['datetime'].dt.date
-    df['currentADR'] = df['utc_date'].map(daily_stats['current_adr']).round(5)
+    df['utc_date'] = df['datetime'].apply(lambda dt: _get_session_date(dt, session_sched))
+    df['currentADR'] = df['utc_date'].map(adr_series).round(5)
 
     # Calculate EMA values and distances for each MA period
     ma_periods = [request.ma1_period, request.ma2_period, request.ma3_period]
@@ -1193,7 +1342,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
         ema_columns[period] = ema_values  # Store for State calculation
         df[f'EMA_rawDistance({period})'] = (df['close'] - ema_values).round(5)
         df[f'EMA_adrDistance({period})'] = ((df['close'] - ema_values) / df['currentADR']).round(5)
-        df[f'EMA_rrDistance({period})'] = ((df['close'] - ema_values) / request.reversal_size).round(5)
+        df[f'EMA_rrDistance({period})'] = ((df['close'] - ema_values) / df['reversal_size']).round(5)
 
     # Calculate DD (drawdown/wick size in price units)
     # UP brick (close > open): wick extends below open -> DD = open - low
@@ -1208,7 +1357,7 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Normalize DD by currentADR
     df['DD_ADR'] = (df['DD'] / df['currentADR']).round(5)
     # Normalize DD by reversal size
-    df['DD_RR'] = (df['DD'] / request.reversal_size).round(5)
+    df['DD_RR'] = (df['DD'] / df['reversal_size']).round(5)
 
     # Calculate State based on MA order
     # Fast=ma1_period, Med=ma2_period, Slow=ma3_period
@@ -1261,11 +1410,11 @@ async def generate_stats(instrument: str, request: StatsRequest):
         current_is_up = is_up_arr_t[i]
         prior_is_up = is_up_arr_t[i - 1] if i > 0 else None
 
-        # Type1 logic - pattern depends on reversal vs brick size
+        # Type1 logic - pattern depends on reversal vs brick size (per-bar)
         # reversal > brick: 3-bar pattern (DOWN, UP, UP or UP, DOWN, DOWN)
         # reversal == brick: 2-bar pattern (DOWN, UP or UP, DOWN)
         # MA1 touch can be on ANY bar in the pattern (current, prior, or prior2)
-        use_3bar = request.reversal_size > request.brick_size
+        use_3bar = df['reversal_size'].iloc[i] > df['brick_size'].iloc[i]
 
         if use_3bar and i > 1 and state == 3:
             prior2_is_up = is_up_arr_t[i - 2]

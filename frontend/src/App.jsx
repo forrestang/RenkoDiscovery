@@ -1,8 +1,9 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import Sidebar from './components/Sidebar'
 import ChartArea from './components/ChartArea'
 import RenkoControls from './components/RenkoControls'
 import MAControls from './components/MAControls'
+import SessionControls, { getDefaultSettings as getDefaultSessionSettings, migrateTemplate } from './components/SessionControls'
 import StatsPage from './components/StatsPage'
 import ParquetPage from './components/ParquetPage'
 import MLResultsPage from './components/MLResultsPage'
@@ -98,16 +99,29 @@ function App() {
       if (!parsed.wickMode) {
         parsed.wickMode = 'all'
       }
+      // Migrate: add ADR fields if missing
+      if (!parsed.sizingMode) parsed.sizingMode = 'price'
+      if (!parsed.brickPct || parsed.brickPct <= 0) parsed.brickPct = 5
+      if (!parsed.reversalPct || parsed.reversalPct <= 0) parsed.reversalPct = 10
+      if (!parsed.adrPeriod || parsed.adrPeriod <= 0) parsed.adrPeriod = 14
       return {
         brickSize: parsed.brickSize,
         reversalSize: parsed.reversalSize,
-        wickMode: parsed.wickMode
+        wickMode: parsed.wickMode,
+        sizingMode: parsed.sizingMode,
+        brickPct: parsed.brickPct,
+        reversalPct: parsed.reversalPct,
+        adrPeriod: parsed.adrPeriod
       }
     }
     return {
       brickSize: 0.0010,
       reversalSize: 0.0020,
-      wickMode: 'all'
+      wickMode: 'all',
+      sizingMode: 'price',
+      brickPct: 5,
+      reversalPct: 10,
+      adrPeriod: 14
     }
   })
   const [renkoData, setRenkoData] = useState(null)
@@ -127,6 +141,19 @@ function App() {
   const [showIndicatorPane, setShowIndicatorPane] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}showIndicatorPane`)
     return saved === 'true'
+  })
+  const [sessionSettings, setSessionSettings] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}sessionSettings`)
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      // Ensure builtin templates always exist
+      const defaults = getDefaultSessionSettings()
+      return {
+        ...parsed,
+        templates: { ...defaults.templates, ...parsed.templates },
+      }
+    }
+    return getDefaultSessionSettings()
   })
 
   // ML state
@@ -201,6 +228,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}showIndicatorPane`, showIndicatorPane.toString())
   }, [showIndicatorPane])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}sessionSettings`, JSON.stringify(sessionSettings))
+  }, [sessionSettings])
 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}mlSelectedFeatures`, JSON.stringify(mlSelectedFeatures))
@@ -563,7 +594,8 @@ function App() {
           ma1_period: statsConfig.ma1Period,
           ma2_period: statsConfig.ma2Period,
           ma3_period: statsConfig.ma3Period,
-          renko_data: renkoData.data
+          renko_data: renkoData.data,
+          session_schedule: sessionSchedule
         })
       })
 
@@ -624,15 +656,24 @@ function App() {
 
     setIsLoading(true)
     try {
+      const body = {
+        sizing_mode: settings.sizingMode || 'price',
+        wick_mode: settings.wickMode || 'all',
+        working_dir: workingDir,
+        session_schedule: sessionSchedule
+      }
+      if (settings.sizingMode === 'adr') {
+        body.brick_pct = settings.brickPct
+        body.reversal_pct = settings.reversalPct
+        body.adr_period = settings.adrPeriod
+      } else {
+        body.brick_size = settings.brickSize
+        body.reversal_size = settings.reversalSize
+      }
       const res = await fetch(`${apiBase}/renko/${instrument}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          brick_size: settings.brickSize,
-          reversal_size: settings.reversalSize,
-          wick_mode: settings.wickMode || 'all',
-          working_dir: workingDir
-        })
+        body: JSON.stringify(body)
       })
       if (res.ok) {
         const data = await res.json()
@@ -695,6 +736,13 @@ function App() {
       console.error('Failed to delete all cache:', err)
     }
   }
+
+  const sessionSchedule = useMemo(() => {
+    return migrateTemplate(
+      sessionSettings.templates[sessionSettings.activeTemplateId]
+      || sessionSettings.templates['fx-default']
+    ).schedule
+  }, [sessionSettings])
 
   // Resize handling
   const handleResizeStart = useCallback((e) => {
@@ -825,6 +873,9 @@ function App() {
           {activeInstrument && (
             <MAControls settings={maSettings} onChange={setMASettings} />
           )}
+          {activeInstrument && (
+            <SessionControls settings={sessionSettings} onChange={setSessionSettings} />
+          )}
         </div>
       </header>
 
@@ -939,6 +990,9 @@ function App() {
               showIndicatorPane={showIndicatorPane}
               brickSize={renkoSettings.brickSize}
               reversalSize={renkoSettings.reversalSize}
+              renkoPerBrickSizes={renkoData?.data?.brick_size}
+              renkoPerReversalSizes={renkoData?.data?.reversal_size}
+              sessionSchedule={sessionSchedule}
             />
           )}
         </main>

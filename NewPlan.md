@@ -147,6 +147,28 @@ The Type1/Type2 pattern logic uses `reversalSize > brickSize` to choose 3-bar vs
 
 ---
 
+● Using the 17:00 EST (22:00 UTC) rollover:
+  ┌───────────┬────────────┬─────────────┬────────────┬─────────────┬──────────┐
+  │  Session  │ Open (EST) │ Close (EST) │ Open (UTC) │ Close (UTC) │ Duration │
+  ├───────────┼────────────┼─────────────┼────────────┼─────────────┼──────────┤
+  │ Monday    │ Sun 17:00  │ Mon 17:00   │ Sun 22:00  │ Mon 22:00   │ 24h      │
+  ├───────────┼────────────┼─────────────┼────────────┼─────────────┼──────────┤
+  │ Tuesday   │ Mon 17:00  │ Tue 17:00   │ Mon 22:00  │ Tue 22:00   │ 24h      │
+  ├───────────┼────────────┼─────────────┼────────────┼─────────────┼──────────┤
+  │ Wednesday │ Tue 17:00  │ Wed 17:00   │ Tue 22:00  │ Wed 22:00   │ 24h      │
+  ├───────────┼────────────┼─────────────┼────────────┼─────────────┼──────────┤
+  │ Thursday  │ Wed 17:00  │ Thu 17:00   │ Wed 22:00  │ Thu 22:00   │ 24h      │
+  ├───────────┼────────────┼─────────────┼────────────┼─────────────┼──────────┤
+  │ Friday    │ Thu 17:00  │ Fri 17:00   │ Thu 22:00  │ Fri 22:00   │ 24h      │
+  └───────────┴────────────┴─────────────┴────────────┴─────────────┴──────────┘
+  Five even 24-hour sessions. The market opens Sunday 17:00 EST, which is the start of Monday's session — not a separate
+   Sunday session. The market closes Friday 17:00 EST, which is the end of Friday's session.
+
+  The Sunday stub you were seeing at 22:00 UTC is actually the first few hours of Monday's session. When you split at
+  00:00 UTC, you were slicing those hours off into their own "day," creating the short Sunday artifact and making Monday
+   appear to start 2 hours late.
+
+
 ----------------------------------------------------
 ***************************************************
 ----------------------------------------------------
@@ -165,10 +187,10 @@ Add two optional data processing steps during CSV import (at `/process` time), c
 1. After combining and deduplicating all M1 bars for an instrument (existing step in `/process`), group by UTC calendar date
 2. Count M1 bars per day
 3. Calculate the median bar count across all days
-4. Drop every day where the bar count is below 50% of the median
+4. Drop every day where the bar count is below n-percent of the median, where n is an additional user input.  I.e., the user can input a percentage value.
 5. Reset the DataFrame index after dropping
 
-**Threshold:** Hardcoded at 50% of median. Simple and reasonable — a typical forex day has ~1440 M1 bars, so anything under ~720 gets cut. This catches Christmas, New Year's, and other shortened sessions.
+**Threshold:** User input at n-percent of median. Simple and reasonable — a typical forex day has ~1440 M1 bars, so anything under ~720 gets cut(if the user input 50%). This catches Christmas, New Year's, and other shortened sessions.
 
 ### Feature B: Back-Adjust (Eliminate Inter-Session Price Gaps)
 
@@ -258,7 +280,7 @@ const [backAdjust, setBackAdjust] = useState(false);
 
 Place two checkboxes in the Import Settings area (near the Format/Interval toggles, before the Process button):
 
-- **"Clean holidays/bad data"** — tooltip: "Removes sessions with fewer than 50% of the typical day's bar count"
+- **"Clean holidays/bad data"** — tooltip: "Removes sessions with fewer than n-percent of the typical day's bar count"
 - **"Back-adjust gaps"** — tooltip: "Eliminates inter-session price gaps by adjusting prior sessions"
 
 Style consistently with the existing toggle buttons in that section.
