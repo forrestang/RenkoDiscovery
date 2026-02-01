@@ -40,12 +40,15 @@ async function startBackend(port) {
   backendProcess.stderr.on('data', (data) => {
     console.error(`[backend] ${data}`);
   });
+  backendProcess.on('error', (err) => {
+    console.error(`[backend] Failed to spawn: ${err.message}`);
+  });
 
   // Wait for backend to be ready
   await waitForPort(port);
 }
 
-function waitForPort(port, retries = 50, delay = 200) {
+function waitForPort(port, retries = 150, delay = 200) {
   return new Promise((resolve, reject) => {
     let attempts = 0;
     const check = () => {
@@ -117,8 +120,21 @@ app.whenReady().then(async () => {
   });
 
   const port = await findOpenPort(BACKEND_PORT);
-  await startBackend(port);
-  await createWindow(port);
+
+  try {
+    await startBackend(port);
+    await createWindow(port);
+  } catch (err) {
+    await createWindow(port);
+    dialog.showMessageBoxSync(mainWindow, {
+      type: 'error',
+      title: 'Backend Failed to Start',
+      message: 'The backend server could not be started.',
+      detail: err.message
+        + '\n\nThe application will not function correctly.'
+        + '\n\nCheck that Python/backend files are present and try restarting.',
+    });
+  }
 });
 
 app.on('window-all-closed', () => {

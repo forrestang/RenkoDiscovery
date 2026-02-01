@@ -2576,4 +2576,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     is_frozen = getattr(sys, 'frozen', False)
-    uvicorn.run("main:app", host="127.0.0.1", port=args.port, reload=not is_frozen)
+    if is_frozen:
+        uvicorn.run(app, host="127.0.0.1", port=args.port, reload=False)
+    else:
+        uvicorn.run("main:app", host="127.0.0.1", port=args.port, reload=True)
