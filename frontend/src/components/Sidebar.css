@@ -125,15 +125,34 @@
   height: 18px;
 }
 
-/* Tab content - This is the key: flex container that fills space */
+/* Tab content - single scrollable container for all sections */
 .tab-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   padding: var(--space-2);
   gap: var(--space-2);
-  overflow: hidden;
-  min-height: 0; /* Critical for nested flex scrolling */
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* Custom scrollbar for tab content */
+.tab-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tab-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tab-content::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+.tab-content::-webkit-scrollbar-thumb:hover {
+  background: var(--border-default);
 }
 
 /* Sections base */
@@ -141,6 +160,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  flex-shrink: 0;
 }
 
 /* Collapsible section - fixed height based on content */
@@ -148,30 +168,22 @@
   flex-shrink: 0;
 }
 
-/* Scrollable sections */
+/* Scrollable sections - now just normal sections, scrolling handled by tab-content */
 .scrollable-section {
   display: flex;
   flex-direction: column;
-  min-height: 80px;
-  flex: 1; /* Source files takes all remaining space */
-  overflow: hidden;
+  flex-shrink: 0;
 }
 
-/* Cache section - content-based height, doesn't expand */
+/* Cache section */
 .scrollable-section.cache-section {
-  flex: 0 0 auto; /* Don't grow, don't shrink, auto height */
-  min-height: 0;
-  max-height: 35%; /* Cap at 35% of sidebar if lots of items */
+  flex-shrink: 0;
 }
 
 .scrollable-content {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: rgba(0, 0, 0, 0.15);
-  min-height: 0; /* Critical for flex scrolling */
 }
 
 /* Custom scrollbar */
