@@ -401,7 +401,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   }, [chopHighMin])
 
   // Signal Quality Filter state
-  const SQF_DEFAULTS = { ema1: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, ema2: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, ema3: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, dd: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] } }
+  const SQF_DEFAULTS = { ema1: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, ema2: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, ema3: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, dd: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, prRunCnt: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, conBars: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, stateDur: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] }, barDur: { upEnabled: false, dnEnabled: false, upRange: [null, null], dnRange: [null, null] } }
   const [sqfNormMode, setSqfNormMode] = useState(() => {
     return localStorage.getItem(`${STORAGE_PREFIX}sqfNormMode`) || 'rr'
   })
@@ -523,21 +523,29 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       { key: 'ema2', field: 'ema2Dist' },
       { key: 'ema3', field: 'ema3Dist' },
       { key: 'dd', field: 'dd' },
+      { key: 'prRunCnt', field: 'prRunCnt', integer: true },
+      { key: 'conBars', field: 'conUpBars', dnField: 'conDnBars', integer: true },
+      { key: 'stateDur', field: 'stateDur', integer: true },
+      { key: 'barDur', field: 'barDur', integer: true },
     ]
     const result = {}
     for (const [type, upKey, dnKey] of [['t1', 'type1Up', 'type1Dn'], ['t2', 'type2Up', 'type2Dn']]) {
       const bounds = {}
-      for (const { key, field } of groups) {
-        const fld = field + suffix
-        const upVals = (signalData[upKey] || []).map(p => p[fld]).filter(v => v != null)
-        const dnVals = (signalData[dnKey] || []).map(p => p[fld]).filter(v => v != null)
-        const round1 = v => Math.round(v * 10) / 10
+      for (const { key, field, dnField, integer: isInt } of groups) {
+        const upFld = isInt ? field : field + suffix
+        const dnFld = isInt ? (dnField || field) : (dnField || field) + suffix
+        const upVals = (signalData[upKey] || []).map(p => p[upFld]).filter(v => v != null)
+        const dnVals = (signalData[dnKey] || []).map(p => p[dnFld]).filter(v => v != null)
+        const expand = isInt ? 1 : 0.1
+        const round1 = isInt ? v => Math.round(v) : v => Math.round(v * 10) / 10
         bounds[key] = {
           up: upVals.length > 0
-            ? [round1(Math.min(...upVals) - 0.1), round1(Math.max(...upVals) + 0.1)]
+            ? [round1(Math.min(...upVals) - expand), round1(Math.max(...upVals) + expand)]
             : [0, 0],
           dn: dnVals.length > 0
-            ? [round1(Math.max(...dnVals) + 0.1), round1(Math.min(...dnVals) - 0.1)]
+            ? (isInt
+              ? [round1(Math.min(...dnVals) - expand), round1(Math.max(...dnVals) + expand)]
+              : [round1(Math.max(...dnVals) + expand), round1(Math.min(...dnVals) - expand)])
             : [0, 0],
           available: upVals.length > 0 || dnVals.length > 0,
         }
@@ -555,12 +563,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       { key: 'ema2', field: 'ema2Dist' },
       { key: 'ema3', field: 'ema3Dist' },
       { key: 'dd', field: 'dd' },
+      { key: 'prRunCnt', field: 'prRunCnt', integer: true },
+      { key: 'conBars', field: 'conUpBars', dnField: 'conDnBars', integer: true },
+      { key: 'stateDur', field: 'stateDur', integer: true },
+      { key: 'barDur', field: 'barDur', integer: true },
     ]
-    for (const { key, field } of groups) {
+    for (const { key, field, dnField, integer: isInt } of groups) {
       const cfg = sqfFilters[type][key]
       const enabled = dir === 'up' ? cfg.upEnabled : cfg.dnEnabled
       if (!enabled) continue
-      const val = pt[field + suffix]
+      const activeField = (dir === 'dn' && dnField) ? dnField : field
+      const val = pt[isInt ? activeField : activeField + suffix]
       if (val == null) return false
       const range = dir === 'up' ? cfg.upRange : cfg.dnRange
       const [a, b] = range
@@ -1051,7 +1064,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                             { key: 'ema2', label: `EMA(${stats?.settings?.ma2Period ?? stats?.maPeriods?.[1] ?? '?'})`, tooltip: 'Distance from MA for entry bar' },
                             { key: 'ema3', label: `EMA(${stats?.settings?.ma3Period ?? stats?.maPeriods?.[2] ?? '?'})`, tooltip: 'Distance from MA for entry bar' },
                             { key: 'dd', label: 'DD', tooltip: 'Wick size of entry bar' },
-                          ].filter(g => sqfBounds[type][g.key]?.available).map(({ key, label: groupLabel, tooltip }) => (
+                            { key: 'prRunCnt', label: 'PRIOR RUN COUNT', tooltip: 'Prior run count', integer: true },
+                            { key: 'conBars', label: 'CON UP/DN', tooltip: 'Consecutive UP/DN bars', integer: true },
+                            { key: 'stateDur', label: 'STATE DURATION', tooltip: 'State duration (minutes)', integer: true },
+                            { key: 'barDur', label: 'BARDURATION', tooltip: 'Bar duration (minutes)', integer: true },
+                          ].filter(g => sqfBounds[type][g.key]?.available).map(({ key, label: groupLabel, tooltip, integer: isInt }) => (
                             <div key={key} className="sqf-filter-group">
                               <div className="sqf-filter-label" title={tooltip}>{groupLabel}</div>
                               {['up', 'dn'].map(dir => {
@@ -1072,20 +1089,20 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                                     </label>
                                     <input
                                       type="number"
-                                      step="0.1"
+                                      step={isInt ? "1" : "0.1"}
                                       className="sqf-range-input"
                                       disabled={!enabled}
-                                      placeholder={bounds[0]?.toFixed(1) ?? ''}
+                                      placeholder={isInt ? (bounds[0]?.toFixed(0) ?? '') : (bounds[0]?.toFixed(1) ?? '')}
                                       value={cfg[rangeKey][0] ?? ''}
                                       onChange={e => updateSqfRange(type, key, rangeKey, 0, e.target.value)}
                                     />
                                     <span className="sqf-range-sep">to</span>
                                     <input
                                       type="number"
-                                      step="0.1"
+                                      step={isInt ? "1" : "0.1"}
                                       className="sqf-range-input"
                                       disabled={!enabled}
-                                      placeholder={bounds[1]?.toFixed(1) ?? ''}
+                                      placeholder={isInt ? (bounds[1]?.toFixed(0) ?? '') : (bounds[1]?.toFixed(1) ?? '')}
                                       value={cfg[rangeKey][1] ?? ''}
                                       onChange={e => updateSqfRange(type, key, rangeKey, 1, e.target.value)}
                                     />

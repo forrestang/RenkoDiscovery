@@ -2366,6 +2366,10 @@ def get_parquet_stats(filepath: str):
     for col, fld in [('DD_RR', 'dd_rr'), ('DD_ADR', 'dd_adr')]:
         if col in df.columns:
             extra_metric_cols.append((col, fld))
+    # Integer signal context fields
+    for col, fld in [('priorRunCount', 'prRunCnt'), ('Con_UP_bars', 'conUpBars'), ('Con_DN_bars', 'conDnBars'), ('stateDuration', 'stateDur'), ('barDuration', 'barDur')]:
+        if col in df.columns:
+            extra_metric_cols.append((col, fld))
 
     if 'MFE_clr_RR' in df.columns:
         # Columns to pull from the subset
