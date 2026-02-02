@@ -3,7 +3,7 @@ import Sidebar from './components/Sidebar'
 import ChartArea from './components/ChartArea'
 import RenkoControls from './components/RenkoControls'
 import MAControls from './components/MAControls'
-import SessionControls, { getDefaultSettings as getDefaultSessionSettings, migrateTemplate } from './components/SessionControls'
+import { getDefaultSettings as getDefaultSessionSettings, migrateTemplate } from './components/SessionControls'
 import StatsPage from './components/StatsPage'
 import ParquetPage from './components/ParquetPage'
 import MLResultsPage from './components/MLResultsPage'
@@ -155,6 +155,13 @@ function App() {
     }
     return getDefaultSessionSettings()
   })
+
+  // Data cleaning/adjustment state
+  const [cleanHolidays, setCleanHolidays] = useState(false)
+  const [cleanThresholdPct, setCleanThresholdPct] = useState(50)
+  const [backAdjust, setBackAdjust] = useState(false)
+  // Session schedule loaded from chart metadata (set when chart data is loaded)
+  const [chartSessionSchedule, setChartSessionSchedule] = useState(null)
 
   // ML state
   const [mlColumns, setMlColumns] = useState(null)
@@ -553,7 +560,11 @@ function App() {
           working_dir: workingDir,
           data_format: dataFormat,
           interval_type: intervalType,
-          custom_name: customName || null
+          custom_name: customName || null,
+          clean_holidays: cleanHolidays,
+          clean_threshold_pct: cleanThresholdPct,
+          back_adjust: backAdjust,
+          session_schedule: templateSessionSchedule,
         })
       })
 
@@ -625,6 +636,12 @@ function App() {
       if (res.ok) {
         const data = await res.json()
         setChartData(data)
+        // Use session schedule from chart metadata if available
+        if (data.session_schedule) {
+          setChartSessionSchedule(data.session_schedule)
+        } else {
+          setChartSessionSchedule(null)
+        }
         // If renko or overlay mode is active, also load renko data
         if (chartType === 'renko' || chartType === 'overlay') {
           loadRenko(instrument)
@@ -737,12 +754,16 @@ function App() {
     }
   }
 
-  const sessionSchedule = useMemo(() => {
+  // Derive session schedule: use chart metadata schedule when a chart is loaded,
+  // otherwise fall back to the user's template-based schedule (used at import time)
+  const templateSessionSchedule = useMemo(() => {
     return migrateTemplate(
       sessionSettings.templates[sessionSettings.activeTemplateId]
       || sessionSettings.templates['fx-default']
     ).schedule
   }, [sessionSettings])
+
+  const sessionSchedule = chartSessionSchedule || templateSessionSchedule
 
   // Resize handling
   const handleResizeStart = useCallback((e) => {
@@ -873,9 +894,6 @@ function App() {
           {activeInstrument && (
             <MAControls settings={maSettings} onChange={setMASettings} />
           )}
-          {activeInstrument && (
-            <SessionControls settings={sessionSettings} onChange={setSessionSettings} />
-          )}
         </div>
       </header>
 
@@ -911,6 +929,16 @@ function App() {
             onIntervalTypeChange={setIntervalType}
             customName={customName}
             onCustomNameChange={setCustomName}
+            // Session schedule (for import)
+            sessionSettings={sessionSettings}
+            onSessionSettingsChange={setSessionSettings}
+            // Data cleaning/adjustment
+            cleanHolidays={cleanHolidays}
+            onCleanHolidaysChange={setCleanHolidays}
+            cleanThresholdPct={cleanThresholdPct}
+            onCleanThresholdPctChange={setCleanThresholdPct}
+            backAdjust={backAdjust}
+            onBackAdjustChange={setBackAdjust}
             // Stats generation
             onRunStats={handleRunStats}
             isRunningStats={isRunningStats}

@@ -177,34 +177,41 @@ The Type1/Type2 pattern logic uses `reversalSize > brickSize` to choose 3-bar vs
 
 ### Summary
 
-Add two optional data processing steps during CSV import (at `/process` time), controlled by checkboxes on the Data tab. These modify the `.feather` cache before it's saved, so all downstream operations (renko generation, stats, charting) automatically get clean/adjusted data.
+Add two optional data processing steps during CSV import (at `/process` time), controlled by checkboxes on the Data tab's left sidebar. These modify the `.feather` cache before it's saved, so all downstream operations (renko generation, stats, charting) automatically get clean/adjusted data.
+
+**Key architectural change:** The session schedule configuration moves into the Data tab import section. The user sets (or loads a saved) session schedule at import time. That schedule is used for cleaning/back-adjustment grouping, stored in `.meta.json`, and read back by the frontend at runtime for chart boundary lines, ADR, etc. The current `SessionControls` in the chart header is replaced by reading the schedule from the loaded instrument's metadata. This means sessions are set once at import — no need to configure them in two places.
+
+**UTC caution:** All datetime-to-session assignment must use UTC. The backend's `_get_session_date(dt, schedule)` (main.py line 678) already handles this correctly — it reads `dt.hour` and `dt.minute` on UTC-localized datetimes. The frontend must continue using `parseUTC()` (not `new Date()`) when interpreting datetimes from the data, as established by the Plan 1 fix. Any new code touching datetimes must follow this same pattern.
+
+---
 
 ### Feature A: Clean Holidays / Bad Data
 
-**Purpose:** Remove entire calendar days (UTC) that have abnormally low bar counts — holidays, half-days, or days with bad/sparse data.
+**Purpose:** Remove entire trading sessions that have abnormally low bar counts — holidays, half-days, or sessions with bad/sparse data.
 
 **Algorithm:**
-1. After combining and deduplicating all M1 bars for an instrument (existing step in `/process`), group by UTC calendar date
-2. Count M1 bars per day
-3. Calculate the median bar count across all days
-4. Drop every day where the bar count is below n-percent of the median, where n is an additional user input.  I.e., the user can input a percentage value.
+1. After combining and deduplicating all M1 bars (existing step in `/process`), assign each bar to its trading session using `_get_session_date(dt, schedule)` — NOT `df['datetime'].dt.date` (which splits at 00:00 UTC and would break sessions that span midnight, e.g. the 22:00 UTC FX boundary)
+2. Count M1 bars per session
+3. Calculate the median bar count across all sessions
+4. Drop every session where the bar count is below **n-percent** of the median, where **n is a user input** (numeric field on the import UI, default 50%). Example: a typical FX session has ~1440 M1 bars; at 50% threshold, sessions under ~720 bars get removed. This catches Christmas, New Year's, and other shortened sessions.
 5. Reset the DataFrame index after dropping
 
-**Threshold:** User input at n-percent of median. Simple and reasonable — a typical forex day has ~1440 M1 bars, so anything under ~720 gets cut(if the user input 50%). This catches Christmas, New Year's, and other shortened sessions.
+**Threshold:** User-configurable percentage input (not hardcoded). Displayed next to the "Clean holidays" checkbox, only visible when the checkbox is enabled.
 
 ### Feature B: Back-Adjust (Eliminate Inter-Session Price Gaps)
 
 **Purpose:** Chain-adjust all sessions backwards from the most recent one so there are zero price jumps between sessions. The most recent session's prices remain unchanged (anchor point). All prior sessions get shifted.
 
 **Algorithm:**
-1. After cleaning (if cleaning is also enabled), identify day boundaries in the M1 data by grouping on UTC date
-2. Work backwards from the most recent day:
-   - For each day boundary: `gap = next_day_first_open - current_day_last_close`
+1. After cleaning (if cleaning is also enabled), assign each bar to its trading session using `_get_session_date(dt, schedule)` — same session grouping as cleaning
+2. Get unique sessions sorted chronologically
+3. Work backwards from the most recent session:
+   - For each session boundary: `gap = next_session_first_open - current_session_last_close`
    - Accumulate the gap
-   - Subtract the cumulative gap from all OHLC prices (`open`, `high`, `low`, `close`) of the current day and all prior days
-3. The most recent day is the anchor — its prices are untouched
+   - Add the cumulative gap to all OHLC prices (`open`, `high`, `low`, `close`) of the current session and all prior sessions
+4. The most recent session is the anchor — its prices are untouched
 
-**Order of operations:** If both options are enabled, cleaning runs first, then back-adjustment runs on the cleaned data. This prevents the adjuster from trying to bridge gaps across days that shouldn't be in the dataset. If only one option is selected, it runs standalone with no dependency.
+**Order of operations:** If both options are enabled, cleaning runs first, then back-adjustment runs on the cleaned data. This prevents the adjuster from trying to bridge gaps across sessions that shouldn't be in the dataset.
 
 ---
 
@@ -214,80 +221,111 @@ Add two optional data processing steps during CSV import (at `/process` time), c
 
 #### Step 1: Extend `ProcessRequest` model
 
-Add two boolean fields:
+Add fields:
 - `clean_holidays: bool = False`
+- `clean_threshold_pct: float = 50.0` — user-configurable percentage threshold
 - `back_adjust: bool = False`
+- `session_schedule: Optional[dict] = None` — same `{"monday": {"hour": 22, "minute": 0}, ...}` shape used by `RenkoRequest`
 
-Defaults preserve backward compatibility — existing callers are unaffected.
+Defaults preserve backward compatibility.
 
 #### Step 2: Add `clean_holidays()` function
 
 ```python
-def clean_holidays(df: pd.DataFrame) -> pd.DataFrame:
+def clean_holidays(df: pd.DataFrame, schedule: dict, threshold_pct: float = 50.0) -> pd.DataFrame:
 ```
 
-- Assumes `df` has a `datetime` column (already parsed as datetime)
-- Groups by `df['datetime'].dt.date`
-- Counts bars per day
-- Calculates median bar count
-- Drops all rows belonging to days with count < 50% of median
-- Returns the filtered DataFrame with reset index
+- Assigns each bar to a session via `_get_session_date(dt, schedule)`
+- Counts bars per session, computes median
+- Drops sessions with count < `threshold_pct`% of median
+- Returns filtered DataFrame with reset index
+- If all sessions are removed, returns empty DataFrame (caller checks and reports error)
 
 #### Step 3: Add `back_adjust_data()` function
 
 ```python
-def back_adjust_data(df: pd.DataFrame) -> pd.DataFrame:
+def back_adjust_data(df: pd.DataFrame, schedule: dict) -> pd.DataFrame:
 ```
 
-- Groups by `df['datetime'].dt.date` to identify day boundaries
-- Gets the unique dates sorted chronologically
-- Iterates backwards from the second-to-last date:
-  - `gap = first_open_of_next_day - last_close_of_current_day`
-  - Accumulates the gap
-  - Subtracts cumulative gap from `open`, `high`, `low`, `close` for all rows on the current day and all prior days
-- Returns the adjusted DataFrame
+- Assigns each bar to a session via `_get_session_date(dt, schedule)`
+- Sorts unique sessions chronologically
+- Iterates backwards accumulating gaps between consecutive sessions
+- Shifts OHLC of all prior sessions by cumulative gap
+- Drops the temporary `_session_date` column before returning
 
-#### Step 4: Call in `/process` endpoint
+#### Step 4: Wire into `/process` endpoint
 
-After the existing deduplication and sorting step (around line 562), and before saving to .feather:
+After dedup/sort (~line 568), before feather save:
 
 ```python
+sched = request.session_schedule or _default_schedule()
+
 if request.clean_holidays:
-    combined = clean_holidays(combined)
+    combined = clean_holidays(combined, sched, request.clean_threshold_pct)
+    if len(combined) == 0:
+        results.append({"instrument": instrument, "status": "error",
+                        "message": "All sessions removed by holiday cleaning"})
+        continue
 
 if request.back_adjust:
-    combined = back_adjust_data(combined)
+    combined = back_adjust_data(combined, sched)
 ```
 
 #### Step 5: Update `.meta.json`
 
-Add `clean_holidays` and `back_adjust` boolean fields to the metadata dict so the UI can reflect what was applied to a cached dataset.
+Add to metadata dict:
+- `clean_holidays` (bool)
+- `clean_threshold_pct` (float, only if clean_holidays is true)
+- `back_adjust` (bool)
+- `session_schedule` (the resolved schedule dict that was used)
+
+#### Step 6: Expose session schedule via `/chart/{instrument}` response
+
+When the frontend loads a chart, it needs the session schedule that was used at import. Add `session_schedule` to the JSON response of the `/chart/{instrument}` endpoint by reading it from the instrument's `.meta.json`. If the metadata doesn't contain a schedule (older imports), fall back to `_default_schedule()`.
 
 ---
 
 ### Frontend Changes
 
-#### File: `frontend/src/components/Sidebar.jsx`
+#### Step 7: Move SessionControls into the Data tab import section (Sidebar.jsx)
 
-#### Step 6: Add state variables
+Remove `SessionControls` from the chart header in `App.jsx`. Instead, place the same session schedule UI (template selector, per-day hour/minute grid, save/rename/delete) in the Sidebar's Data tab, in the import settings area above the Process button. The `SessionControls` component itself can be reused as-is — it just moves to a different location.
 
+The session schedule state (`sessionSettings`) stays in `App.jsx` and is passed down to Sidebar as a prop, same as today.
+
+#### Step 8: Add cleaning controls to import section (Sidebar.jsx)
+
+Below the session schedule and above the Process button, add:
+- **"Clean holidays"** checkbox + a numeric input for threshold percentage (default 50%, step 5, min 10, max 90). The numeric input only appears when the checkbox is enabled.
+- **"Back-adjust gaps"** checkbox
+
+New state in `App.jsx`:
 ```javascript
-const [cleanHolidays, setCleanHolidays] = useState(false);
-const [backAdjust, setBackAdjust] = useState(false);
+const [cleanHolidays, setCleanHolidays] = useState(false)
+const [cleanThresholdPct, setCleanThresholdPct] = useState(50)
+const [backAdjust, setBackAdjust] = useState(false)
 ```
 
-#### Step 7: Add checkboxes to Import Settings section
+#### Step 9: Pass session schedule + flags in `/process` POST request
 
-Place two checkboxes in the Import Settings area (near the Format/Interval toggles, before the Process button):
+Extend `handleProcess` body:
+```javascript
+clean_holidays: cleanHolidays,
+clean_threshold_pct: cleanThresholdPct,
+back_adjust: backAdjust,
+session_schedule: sessionSchedule
+```
 
-- **"Clean holidays/bad data"** — tooltip: "Removes sessions with fewer than n-percent of the typical day's bar count"
-- **"Back-adjust gaps"** — tooltip: "Eliminates inter-session price gaps by adjusting prior sessions"
+`sessionSchedule` is already derived from `sessionSettings` via `useMemo`.
 
-Style consistently with the existing toggle buttons in that section.
+#### Step 10: Read session schedule from loaded chart data at runtime
 
-#### Step 8: Pass flags in `/process` POST request
+When the frontend loads a chart (response from `/chart/{instrument}`), read the `session_schedule` field from the response. Use this as the active schedule for:
+- Drawing session boundary lines on the chart (ChartArea.jsx)
+- ADR calculation in renko generation (passed to `/renko/{instrument}`)
+- Any other runtime session logic
 
-Add `clean_holidays` and `back_adjust` to the request body sent to the `/process` endpoint alongside the existing `files`, `working_dir`, `data_format`, `interval_type`, and `custom_name` fields.
+This replaces the old flow where the user had to separately configure sessions at runtime. The schedule is now baked into the data at import and read back automatically.
 
 ---
 
@@ -295,18 +333,23 @@ Add `clean_holidays` and `back_adjust` to the request body sent to the `/process
 
 | File | Changes |
 |------|---------|
-| `backend/main.py` | ProcessRequest model, `clean_holidays()` function, `back_adjust_data()` function, `/process` endpoint, `.meta.json` output |
-| `frontend/src/components/Sidebar.jsx` | State variables, checkbox UI, POST request body |
+| `backend/main.py` | ProcessRequest model, `clean_holidays()`, `back_adjust_data()`, `/process` wiring, `.meta.json`, `/chart` response |
+| `frontend/src/App.jsx` | State for clean/adjust options, move sessionSettings usage, handleProcess body, read schedule from chart response |
+| `frontend/src/components/Sidebar.jsx` | SessionControls placement in import section, cleaning checkboxes + threshold input |
+| `frontend/src/components/ChartArea.jsx` | Receives session schedule from chart data instead of from a separate settings prop |
 
 ---
 
 ### Verification
 
-1. **Regression**: Import a dataset with both checkboxes off — confirm .feather output is identical to current behavior
-2. **Clean only**: Import with clean enabled — inspect the .feather and confirm short days (holidays) are gone. Compare day counts before/after.
-3. **Back-adjust only**: Import with back-adjust enabled — load the chart and confirm no visible price jumps between sessions
-4. **Both enabled**: Import with both on — confirm cleaning runs first (short days removed), then back-adjustment applied to remaining data with no gaps
-5. **Metadata**: Check `.meta.json` records which options were used
-6. **Edge cases**: Single-day dataset (nothing to clean or adjust), dataset with no holidays (clean is a no-op), dataset where all days are sparse (should warn or return empty)
+1. **Regression**: Import with both checkboxes off — .feather output identical to current behavior
+2. **Clean only**: Import with clean at 50% — confirm short sessions (holidays) are removed. The returned result should show how many sessions were dropped.
+3. **Back-adjust only**: Import with back-adjust — load chart, confirm no visible price jumps at session boundaries
+4. **Both enabled**: Cleaning runs first, then back-adjustment on clean data — no gaps across removed sessions
+5. **Session grouping**: Verify sessions are grouped by the configured boundary time (e.g. 22:00 UTC), not by 00:00 UTC. Monday's session should include Sunday 22:00–Monday 22:00, not Monday 00:00–Tuesday 00:00.
+6. **UTC correctness**: Verify boundary lines on the chart appear at the correct UTC time (not shifted to local time). This was the Plan 1 bug — ensure it doesn't regress.
+7. **Metadata**: `.meta.json` records `clean_holidays`, `clean_threshold_pct`, `back_adjust`, and `session_schedule`
+8. **Runtime schedule**: After loading a chart, session boundary lines and ADR use the schedule from `.meta.json` automatically without the user having to set it again
+9. **Edge cases**: Empty after cleaning (error reported), single session (back-adjust is no-op), all sessions similar count (clean is no-op)
 
 ---

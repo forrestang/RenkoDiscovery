@@ -65,7 +65,7 @@ function getOpenTime(schedule, dayIndex) {
   return { day: DAY_BEFORE[dayIndex], hour: prevSchedule.hour, minute: prevSchedule.minute }
 }
 
-function SessionControls({ settings, onChange }) {
+function SessionControls({ settings, onChange, inline = false }) {
   const [isOpen, setIsOpen] = useState(false)
   const [renameId, setRenameId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
@@ -173,7 +173,7 @@ function SessionControls({ settings, onChange }) {
   const allSame = DAYS.every(d => schedule[d].hour === schedule[DAYS[0]].hour && schedule[d].minute === schedule[DAYS[0]].minute)
 
   return (
-    <div className="session-controls-wrapper">
+    <div className={`session-controls-wrapper${inline ? ' inline' : ''}`}>
       <button className="session-toggle-btn" onClick={() => setIsOpen(!isOpen)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="12" cy="12" r="10" />

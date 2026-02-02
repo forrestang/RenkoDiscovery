@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import SessionControls from './SessionControls'
 import './Sidebar.css'
 
 const STORAGE_PREFIX = 'RenkoDiscovery_'
@@ -30,6 +31,16 @@ function Sidebar({
   onIntervalTypeChange,
   customName,
   onCustomNameChange,
+  // Session schedule (for import)
+  sessionSettings,
+  onSessionSettingsChange,
+  // Data cleaning/adjustment
+  cleanHolidays,
+  onCleanHolidaysChange,
+  cleanThresholdPct,
+  onCleanThresholdPctChange,
+  backAdjust,
+  onBackAdjustChange,
   // Stats generation
   onRunStats,
   isRunningStats,
@@ -429,6 +440,51 @@ function Sidebar({
                 {detectedInstrument && !customName && (
                   <span className="detected-hint">Detected: {detectedInstrument}</span>
                 )}
+              </div>
+
+              {/* Session Schedule */}
+              <div className="import-subsection">
+                <label className="option-label">Session Schedule</label>
+                <SessionControls settings={sessionSettings} onChange={onSessionSettingsChange} inline />
+              </div>
+
+              {/* Data Cleaning Options */}
+              <div className="import-subsection">
+                <label className="option-label">Data Processing</label>
+                <div className="checkbox-row">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={cleanHolidays}
+                      onChange={(e) => onCleanHolidaysChange(e.target.checked)}
+                    />
+                    Clean holidays
+                  </label>
+                  {cleanHolidays && (
+                    <div className="threshold-input">
+                      <input
+                        type="number"
+                        className="compact-input mono"
+                        value={cleanThresholdPct}
+                        onChange={(e) => onCleanThresholdPctChange(parseFloat(e.target.value) || 50)}
+                        min={10}
+                        max={90}
+                        step={5}
+                      />
+                      <span className="input-suffix">%</span>
+                    </div>
+                  )}
+                </div>
+                <div className="checkbox-row">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={backAdjust}
+                      onChange={(e) => onBackAdjustChange(e.target.checked)}
+                    />
+                    Back-adjust gaps
+                  </label>
+                </div>
               </div>
 
               <div className="process-bar">

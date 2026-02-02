@@ -65,6 +65,10 @@ class ProcessRequest(BaseModel):
     data_format: str = "MT4"  # "MT4" or "J4X"
     interval_type: str = "M"  # "M" for minute, "T" for tick
     custom_name: Optional[str] = None  # User-specified output filename
+    clean_holidays: bool = False
+    clean_threshold_pct: float = 50.0  # Drop sessions with bar count < this % of median
+    back_adjust: bool = False
+    session_schedule: Optional[dict] = None  # {"monday": {"hour": 22, "minute": 0}, ...}
 
 
 class ChartDataRequest(BaseModel):
@@ -584,6 +588,26 @@ def process_files(request: ProcessRequest):
             combined['close'] = pd.to_numeric(combined['close'], errors='coerce')
             combined['volume'] = pd.to_numeric(combined['volume'], errors='coerce').fillna(0).astype(int)
 
+            # Data cleaning and back-adjustment
+            sched = request.session_schedule or _default_schedule()
+            sessions_removed = 0
+
+            if request.clean_holidays:
+                before_count = len(combined)
+                combined = clean_holidays(combined, sched, request.clean_threshold_pct)
+                sessions_removed = -1  # placeholder; compute actual count below
+                if len(combined) == 0:
+                    results.append({
+                        "instrument": instrument,
+                        "status": "error",
+                        "message": "All sessions removed by holiday cleaning"
+                    })
+                    continue
+                sessions_removed = (before_count - len(combined))
+
+            if request.back_adjust:
+                combined = back_adjust_data(combined, sched)
+
             # Save as feather - get unique path with format/interval tags
             output_path = get_unique_cache_path(cache_dir, instrument, data_format, interval_type)
             combined.to_feather(output_path)
@@ -599,8 +623,14 @@ def process_files(request: ProcessRequest):
                     "start": combined['datetime'].min().isoformat(),
                     "end": combined['datetime'].max().isoformat()
                 },
-                "processed_at": datetime.now().isoformat()
+                "processed_at": datetime.now().isoformat(),
+                "session_schedule": sched,
+                "clean_holidays": request.clean_holidays,
+                "back_adjust": request.back_adjust,
             }
+            if request.clean_holidays:
+                metadata["clean_threshold_pct"] = request.clean_threshold_pct
+                metadata["bars_removed_by_cleaning"] = sessions_removed
             save_cache_metadata(output_path, metadata)
 
             # Use the actual filename (without extension) as the cache name
@@ -651,6 +681,18 @@ def get_chart_data(instrument: str, working_dir: Optional[str] = None, limit: Op
     else:
         datetime_list = df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S').tolist()
 
+    # Read session_schedule from metadata if available
+    meta_path = feather_path.with_suffix('.meta.json')
+    session_schedule = _default_schedule()
+    if meta_path.exists():
+        try:
+            with open(meta_path, 'r') as f:
+                meta = json.load(f)
+            if 'session_schedule' in meta:
+                session_schedule = meta['session_schedule']
+        except Exception:
+            pass
+
     return {
         "instrument": instrument,
         "is_tick_data": is_tick_data,
@@ -663,7 +705,8 @@ def get_chart_data(instrument: str, working_dir: Optional[str] = None, limit: Op
             "volume": df['volume'].tolist(),
         },
         "total_rows": total_rows,
-        "displayed_rows": len(df)
+        "displayed_rows": len(df),
+        "session_schedule": session_schedule,
     }
 
 
@@ -727,6 +770,57 @@ def _default_schedule():
         'thursday': {'hour': 22, 'minute': 0},
         'friday': {'hour': 22, 'minute': 0},
     }
+
+
+def clean_holidays(df: pd.DataFrame, schedule: dict, threshold_pct: float = 50.0) -> pd.DataFrame:
+    """Remove sessions with abnormally low bar counts (holidays, half-days, bad data).
+
+    Drops entire sessions where the M1 bar count is below threshold_pct% of the
+    median bar count across all sessions.
+    """
+    session_dates = df['datetime'].apply(lambda dt: _get_session_date(dt, schedule))
+    counts = session_dates.value_counts()
+    median_count = counts.median()
+    threshold = median_count * threshold_pct / 100.0
+    valid_sessions = counts[counts >= threshold].index
+    mask = session_dates.isin(valid_sessions)
+    return df[mask].reset_index(drop=True)
+
+
+def back_adjust_data(df: pd.DataFrame, schedule: dict) -> pd.DataFrame:
+    """Chain-adjust all sessions backwards to eliminate inter-session price gaps.
+
+    The most recent session is the anchor (prices unchanged). All prior sessions
+    are shifted by the cumulative gap so there are zero jumps between sessions.
+    """
+    df = df.copy()
+    session_dates = df['datetime'].apply(lambda dt: _get_session_date(dt, schedule))
+    df['_session_date'] = session_dates
+    unique_sessions = sorted(df['_session_date'].unique())
+
+    if len(unique_sessions) <= 1:
+        df.drop(columns=['_session_date'], inplace=True)
+        return df
+
+    # First pass: collect all inter-session gaps from original (unmodified) data
+    gaps = []  # gaps[i] = gap between session i and session i+1
+    for i in range(len(unique_sessions) - 1):
+        curr_last_close = df.loc[df['_session_date'] == unique_sessions[i], 'close'].iloc[-1]
+        next_first_open = df.loc[df['_session_date'] == unique_sessions[i + 1], 'open'].iloc[0]
+        gaps.append(next_first_open - curr_last_close)
+
+    # Second pass: accumulate gaps backwards and apply shifts
+    # The last session is the anchor (shift = 0). Each prior session gets
+    # shifted by the sum of all gaps from it to the last session.
+    cumulative_gap = 0.0
+    for i in range(len(gaps) - 1, -1, -1):
+        cumulative_gap += gaps[i]
+        mask = df['_session_date'] == unique_sessions[i]
+        for col in ['open', 'high', 'low', 'close']:
+            df.loc[mask, col] += cumulative_gap
+
+    df.drop(columns=['_session_date'], inplace=True)
+    return df
 
 
 def compute_adr_lookup(raw_df: pd.DataFrame, adr_period: int, session_schedule: dict = None) -> pd.Series:

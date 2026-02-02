@@ -40,6 +40,25 @@
   z-index: 1000;
 }
 
+/* Inline variant: renders in-flow instead of as a floating dropdown */
+.session-controls-wrapper.inline .session-dropdown {
+  position: static;
+  min-width: unset;
+  margin-top: var(--space-2);
+  box-shadow: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.session-controls-wrapper.inline .session-schedule-header,
+.session-controls-wrapper.inline .session-schedule-row {
+  grid-template-columns: 56px 38px 38px 1fr 1fr;
+}
+
+.session-controls-wrapper.inline .session-dropdown-body {
+  padding: var(--space-2);
+}
+
 .session-dropdown-header {
   display: flex;
   align-items: center;
