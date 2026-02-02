@@ -899,13 +899,11 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
     def calc_up_brick_low(pending_low_val, brick_open, brick_sz, apply_wick=True):
         """Calculate low for up brick based on wick mode."""
-        if wick_mode == "none":
+        if wick_mode == "none" or not apply_wick:
             return brick_open
         elif wick_mode == "all":
-            return min(pending_low_val, brick_open)  # Always show wick
+            return min(pending_low_val, brick_open)
         elif wick_mode == "big":
-            if not apply_wick:
-                return brick_open
             retracement = brick_open - pending_low_val
             if retracement > brick_sz:
                 return pending_low_val
@@ -914,13 +912,11 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
 
     def calc_down_brick_high(pending_high_val, brick_open, brick_sz, apply_wick=True):
         """Calculate high for down brick based on wick mode."""
-        if wick_mode == "none":
+        if wick_mode == "none" or not apply_wick:
             return brick_open
         elif wick_mode == "all":
-            return max(pending_high_val, brick_open)  # Always show wick
+            return max(pending_high_val, brick_open)
         elif wick_mode == "big":
-            if not apply_wick:
-                return brick_open
             retracement = pending_high_val - brick_open
             if retracement > brick_sz:
                 return pending_high_val
@@ -1063,8 +1059,12 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 down_threshold = last_brick_close - active_rs
 
                 # Reset pending values after all bricks created
-                pending_high = high_prices[i]
-                pending_low = low_prices[i]
+                if len(crossings) > 1:
+                    pending_high = high_prices[i]
+                    pending_low = last_brick_close
+                else:
+                    pending_high = high_prices[i]
+                    pending_low = low_prices[i]
                 tick_idx_open = i
 
             elif price <= down_threshold:
@@ -1101,8 +1101,12 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 up_threshold = last_brick_close + active_rs
 
                 # Reset pending values after all bricks created
-                pending_high = high_prices[i]
-                pending_low = low_prices[i]
+                if len(crossings) > 1:
+                    pending_high = last_brick_close
+                    pending_low = low_prices[i]
+                else:
+                    pending_high = high_prices[i]
+                    pending_low = low_prices[i]
                 tick_idx_open = i
 
         else:  # direction == -1
@@ -1139,8 +1143,12 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 up_threshold = last_brick_close + active_rs
 
                 # Reset pending values after all bricks created
-                pending_high = high_prices[i]
-                pending_low = low_prices[i]
+                if len(crossings) > 1:
+                    pending_high = last_brick_close
+                    pending_low = low_prices[i]
+                else:
+                    pending_high = high_prices[i]
+                    pending_low = low_prices[i]
                 tick_idx_open = i
 
             elif price >= up_threshold:
@@ -1177,8 +1185,12 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 down_threshold = last_brick_close - active_rs
 
                 # Reset pending values after all bricks created
-                pending_high = high_prices[i]
-                pending_low = low_prices[i]
+                if len(crossings) > 1:
+                    pending_high = high_prices[i]
+                    pending_low = last_brick_close
+                else:
+                    pending_high = high_prices[i]
+                    pending_low = low_prices[i]
                 tick_idx_open = i
 
     # Build pending brick (the forming brick that hasn't completed yet)
