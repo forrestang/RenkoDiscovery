@@ -590,12 +590,13 @@ def process_files(request: ProcessRequest):
 
             # Data cleaning and back-adjustment
             sched = request.session_schedule or _default_schedule()
-            sessions_removed = 0
+            bars_removed = 0
+            removed_session_dates = []
+            adjusted_session_dates = []
 
             if request.clean_holidays:
                 before_count = len(combined)
-                combined = clean_holidays(combined, sched, request.clean_threshold_pct)
-                sessions_removed = -1  # placeholder; compute actual count below
+                combined, removed_session_dates = clean_holidays(combined, sched, request.clean_threshold_pct)
                 if len(combined) == 0:
                     results.append({
                         "instrument": instrument,
@@ -603,10 +604,10 @@ def process_files(request: ProcessRequest):
                         "message": "All sessions removed by holiday cleaning"
                     })
                     continue
-                sessions_removed = (before_count - len(combined))
+                bars_removed = before_count - len(combined)
 
             if request.back_adjust:
-                combined = back_adjust_data(combined, sched)
+                combined, adjusted_session_dates = back_adjust_data(combined, sched)
 
             # Save as feather - get unique path with format/interval tags
             output_path = get_unique_cache_path(cache_dir, instrument, data_format, interval_type)
@@ -630,7 +631,14 @@ def process_files(request: ProcessRequest):
             }
             if request.clean_holidays:
                 metadata["clean_threshold_pct"] = request.clean_threshold_pct
-                metadata["bars_removed_by_cleaning"] = sessions_removed
+                metadata["sessions_removed_count"] = len(removed_session_dates)
+                metadata["bars_removed_by_cleaning"] = bars_removed
+            if request.back_adjust:
+                metadata["sessions_adjusted_count"] = len(adjusted_session_dates)
+            if removed_session_dates:
+                metadata["removed_session_dates"] = removed_session_dates
+            if adjusted_session_dates:
+                metadata["adjusted_session_dates"] = adjusted_session_dates
             save_cache_metadata(output_path, metadata)
 
             # Use the actual filename (without extension) as the cache name
@@ -783,8 +791,9 @@ def clean_holidays(df: pd.DataFrame, schedule: dict, threshold_pct: float = 50.0
     median_count = counts.median()
     threshold = median_count * threshold_pct / 100.0
     valid_sessions = counts[counts >= threshold].index
+    removed_sessions = sorted(counts[counts < threshold].index)
     mask = session_dates.isin(valid_sessions)
-    return df[mask].reset_index(drop=True)
+    return df[mask].reset_index(drop=True), [str(d) for d in removed_sessions]
 
 
 def back_adjust_data(df: pd.DataFrame, schedule: dict) -> pd.DataFrame:
@@ -800,7 +809,7 @@ def back_adjust_data(df: pd.DataFrame, schedule: dict) -> pd.DataFrame:
 
     if len(unique_sessions) <= 1:
         df.drop(columns=['_session_date'], inplace=True)
-        return df
+        return df, []
 
     # First pass: collect all inter-session gaps from original (unmodified) data
     gaps = []  # gaps[i] = gap between session i and session i+1
@@ -819,8 +828,9 @@ def back_adjust_data(df: pd.DataFrame, schedule: dict) -> pd.DataFrame:
         for col in ['open', 'high', 'low', 'close']:
             df.loc[mask, col] += cumulative_gap
 
+    adjusted_sessions = [str(s) for s in unique_sessions[:-1]]
     df.drop(columns=['_session_date'], inplace=True)
-    return df
+    return df, adjusted_sessions
 
 
 def compute_adr_lookup(raw_df: pd.DataFrame, adr_period: int, session_schedule: dict = None) -> pd.Series:
