@@ -2452,6 +2452,11 @@ def get_parquet_stats(filepath: str):
         'Con_UP_bars': 'conUp', 'Con_DN_bars': 'conDn',
         'MFE_clr_RR': 'mfeClrRR', 'DD_RR': 'ddRR',
         'chop(rolling)': 'chop',
+        'REAL_clr_RR': 'realClrRR', 'REAL_clr_ADR': 'realClrADR',
+        'MFE_clr_ADR': 'mfeClrADR',
+        'REAL_MA1_RR': 'realMA1RR', 'REAL_MA1_ADR': 'realMA1ADR',
+        'REAL_MA2_RR': 'realMA2RR', 'REAL_MA2_ADR': 'realMA2ADR',
+        'REAL_MA3_RR': 'realMA3RR', 'REAL_MA3_ADR': 'realMA3ADR',
     }
     bar_data = {}
     for src_col, dest_key in bar_data_cols.items():

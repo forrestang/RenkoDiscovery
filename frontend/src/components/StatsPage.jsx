@@ -428,6 +428,28 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       return { t1: SQF_DEFAULTS, t2: SQF_DEFAULTS }
     } catch { return { t1: SQF_DEFAULTS, t2: SQF_DEFAULTS } }
   })
+
+  // Expectancy heatmap column selector
+  const [expectancyCol, setExpectancyCol] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}expectancyCol`) || 'realClrRR'
+  })
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}expectancyCol`, expectancyCol)
+  }, [expectancyCol])
+
+  const expectancyColumns = [
+    { value: 'realClrRR', label: 'REAL Clr RR' },
+    { value: 'mfeClrRR', label: 'MFE Clr RR' },
+    { value: 'realClrADR', label: 'REAL Clr ADR' },
+    { value: 'mfeClrADR', label: 'MFE Clr ADR' },
+    { value: 'realMA1RR', label: 'REAL MA1 RR' },
+    { value: 'realMA2RR', label: 'REAL MA2 RR' },
+    { value: 'realMA3RR', label: 'REAL MA3 RR' },
+    { value: 'realMA1ADR', label: 'REAL MA1 ADR' },
+    { value: 'realMA2ADR', label: 'REAL MA2 ADR' },
+    { value: 'realMA3ADR', label: 'REAL MA3 ADR' },
+  ]
+
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}sqfNormMode`, sqfNormMode)
   }, [sqfNormMode])
@@ -1526,7 +1548,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       {activeTab === 'conditional' && (
         <div className="stats-tab-content">
           {/* State x Consecutive Bars Heatmap */}
-          {stats.stateConbarsHeatmap && stats.stateConbarsHeatmap.length > 0 && (() => {
+          {stats.barData && stats.barData.state && (() => {
             const states = [3, 2, 1, -1, -2, -3];
             const stateLabels = { 3: '+3', 2: '+2', 1: '+1', '-1': '-1', '-2': '-2', '-3': '-3' };
             const cellBg = (avgRR) => {
@@ -1540,13 +1562,48 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                 return `rgba(239, 68, 68, ${(intensity * 0.45 + 0.05).toFixed(2)})`;
               }
             };
-            const conBarsRange = stats.stateConbarsHeatmap.map(r => r.conBars);
+
+            // Compute heatmap data client-side from barData
+            const bd = stats.barData;
+            const colData = bd[expectancyCol] || [];
+            const maxConBars = 10;
+            const conBarsRange = Array.from({ length: maxConBars }, (_, i) => i + 1);
+
+            // Build lookup: { state -> { conBars -> { sum, count } } }
+            const heatmapData = {};
+            states.forEach(s => { heatmapData[s] = {}; conBarsRange.forEach(c => { heatmapData[s][c] = { sum: 0, count: 0 }; }); });
+
+            for (let i = 0; i < (bd.state?.length || 0); i++) {
+              const state = bd.state[i];
+              const val = colData[i];
+              if (state == null || val == null || !states.includes(state)) continue;
+              const conBars = state > 0 ? bd.conUp?.[i] : bd.conDn?.[i];
+              if (conBars == null || conBars < 1 || conBars > maxConBars) continue;
+              heatmapData[state][conBars].sum += val;
+              heatmapData[state][conBars].count += 1;
+            }
+
+            const selectedLabel = expectancyColumns.find(c => c.value === expectancyCol)?.label || expectancyCol;
+
             return (
               <div className="stats-module">
                 <table className="stats-table">
                   <thead>
                     <tr className="module-title-row">
-                      <th colSpan={conBarsRange.length + 1} className="module-title" data-tooltip="Average REAL_clr_RR by State and consecutive bar count. Green = positive RR, Red = negative. Shows sample count in parentheses.">FWD REAL RR PER CONSECUTIVE BAR BY STATE</th>
+                      <th colSpan={conBarsRange.length + 1} className="module-title" data-tooltip={`Average ${selectedLabel} by State and consecutive bar count. Green = positive, Red = negative. Shows sample count in parentheses.`}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>EXPECTANCY BY STATE/CONBAR</span>
+                          <select
+                            value={expectancyCol}
+                            onChange={(e) => setExpectancyCol(e.target.value)}
+                            style={{ marginLeft: '10px', padding: '2px 6px', fontSize: '11px', background: '#1e293b', color: '#e2e8f0', border: '1px solid #475569', borderRadius: '4px', cursor: 'pointer' }}
+                          >
+                            {expectancyColumns.map(col => (
+                              <option key={col.value} value={col.value}>{col.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </th>
                     </tr>
                     <tr>
                       <th>State</th>
@@ -1559,16 +1616,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                     {states.map(s => (
                       <tr key={s}>
                         <td className={s > 0 ? 'up' : 'dn'} data-tooltip={stateMAOrder[s]}>{stateLabels[s]}</td>
-                        {stats.stateConbarsHeatmap.map(row => {
-                          const count = row[`s${s}_count`];
-                          const avgRR = row[`s${s}_avgRR`];
+                        {conBarsRange.map(conBars => {
+                          const cell = heatmapData[s][conBars];
+                          const count = cell.count;
+                          const avgRR = count > 0 ? cell.sum / count : null;
                           const dir = s > 0 ? 'up' : 'down';
-                          const ordinal = row.conBars === 1 ? '1st' : row.conBars === 2 ? '2nd' : row.conBars === 3 ? '3rd' : `${row.conBars}th`;
+                          const ordinal = conBars === 1 ? '1st' : conBars === 2 ? '2nd' : conBars === 3 ? '3rd' : `${conBars}th`;
                           const tooltip = count > 0
-                            ? `When I'm on the ${ordinal} consecutive ${dir} bar in State ${stateLabels[s]}, the bars in that situation averaged ${avgRR.toFixed(2)} RR`
+                            ? `When I'm on the ${ordinal} consecutive ${dir} bar in State ${stateLabels[s]}, the bars in that situation averaged ${avgRR.toFixed(2)} ${selectedLabel}`
                             : null;
                           return (
-                            <td key={row.conBars} style={{ background: cellBg(avgRR), textAlign: 'center' }} title={tooltip}>
+                            <td key={conBars} style={{ background: cellBg(avgRR), textAlign: 'center' }} title={tooltip}>
                               {count > 0 ? (
                                 <span>
                                   <span style={{ fontWeight: 600 }}>{avgRR.toFixed(2)}</span>
