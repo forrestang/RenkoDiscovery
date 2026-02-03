@@ -1592,7 +1592,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                     <tr className="module-title-row">
                       <th colSpan={conBarsRange.length + 1} className="module-title" data-tooltip={`Average ${selectedLabel} by State and consecutive bar count. Green = positive, Red = negative. Shows sample count in parentheses.`}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>EXPECTANCY BY STATE/CONBAR</span>
+                          <span>EXPECTANCY BY STATE/CONSECUTIVE BAR</span>
                           <select
                             value={expectancyCol}
                             onChange={(e) => setExpectancyCol(e.target.value)}
