@@ -480,6 +480,25 @@ function App() {
     }
   }
 
+  const [isExportingCSV, setIsExportingCSV] = useState(false)
+
+  const handleExportCSV = async (filepath) => {
+    setIsExportingCSV(true)
+    try {
+      const res = await fetch(`${apiBase}/export-csv?filepath=${encodeURIComponent(filepath)}&working_dir=${encodeURIComponent(workingDir)}`)
+      const data = await res.json()
+      if (res.ok) {
+        alert(`Exported to: ${data.path}`)
+      } else {
+        alert(`Export failed: ${data.detail}`)
+      }
+    } catch (err) {
+      alert(`Export failed: ${err.message}`)
+    } finally {
+      setIsExportingCSV(false)
+    }
+  }
+
   const handleDeleteStatsFile = async (filepath) => {
     try {
       const res = await fetch(`${apiBase}/stats-file?filepath=${encodeURIComponent(filepath)}`, {
@@ -950,8 +969,10 @@ function App() {
             onStatsFileSelect={handleStatsFileSelect}
             onShowStats={handleShowStats}
             onShowParquet={handleShowParquet}
+            onExportCSV={handleExportCSV}
             isLoadingStats={isLoadingStats}
             isLoadingParquet={isLoadingParquet}
+            isExportingCSV={isExportingCSV}
             onDeleteStatsFile={handleDeleteStatsFile}
             onDeleteAllStatsFiles={handleDeleteAllStatsFiles}
             isLoading={isLoading}

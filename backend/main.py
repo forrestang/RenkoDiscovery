@@ -1819,6 +1819,26 @@ def get_parquet_data(filepath: str):
     return {"columns": columns, "rows": rows, "totalRows": len(rows)}
 
 
+@app.get("/export-csv")
+def export_csv(filepath: str, working_dir: str):
+    """Export a parquet file as CSV into an 'exports' folder in the user's working directory."""
+    parquet_path = Path(filepath)
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"Parquet file not found: {filepath}")
+
+    try:
+        df = pd.read_parquet(parquet_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read parquet: {str(e)}")
+
+    exports_dir = Path(working_dir) / "exports"
+    exports_dir.mkdir(exist_ok=True)
+    csv_path = exports_dir / (parquet_path.stem + ".csv")
+    df.to_csv(csv_path, index=False, float_format='%.5f')
+
+    return {"message": f"Exported {csv_path.name}", "path": str(csv_path)}
+
+
 @app.get("/parquet-stats")
 def get_parquet_stats(filepath: str):
     """
