@@ -1088,10 +1088,30 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     brick_close = brick_open - active_bs
                     first_brick = (idx == 0)
                     brick_pending_high = high_prices[cross_open:cross_close+1].max() if wick_mode == "all" and not first_brick else pending_high
+
+                    # Special handling for second bar of reversal (idx==1)
+                    if idx == 1:
+                        if wick_mode == "none":
+                            brick_high = brick_open
+                        elif wick_mode == "all":
+                            brick_range_high = high_prices[cross_open:cross_close+1].max()
+                            brick_high = max(brick_range_high, brick_open)
+                        elif wick_mode == "big":
+                            brick_range_high = high_prices[cross_open:cross_close+1].max()
+                            retracement = brick_range_high - brick_open
+                            if retracement > active_bs:
+                                brick_high = brick_range_high
+                            else:
+                                brick_high = brick_open
+                        else:
+                            brick_high = brick_open
+                    else:
+                        brick_high = calc_down_brick_high(brick_pending_high, brick_open, active_bs, apply_wick=first_brick)
+
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
-                        'high': calc_down_brick_high(brick_pending_high, brick_open, active_bs, apply_wick=first_brick),
+                        'high': brick_high,
                         'low': brick_close,
                         'close': brick_close,
                         'direction': -1,
@@ -1172,11 +1192,31 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                     brick_close = brick_open + active_bs
                     first_brick = (idx == 0)
                     brick_pending_low = low_prices[cross_open:cross_close+1].min() if wick_mode == "all" and not first_brick else pending_low
+
+                    # Special handling for second bar of reversal (idx==1)
+                    if idx == 1:
+                        if wick_mode == "none":
+                            brick_low = brick_open
+                        elif wick_mode == "all":
+                            brick_range_low = low_prices[cross_open:cross_close+1].min()
+                            brick_low = min(brick_range_low, brick_open)
+                        elif wick_mode == "big":
+                            brick_range_low = low_prices[cross_open:cross_close+1].min()
+                            retracement = brick_open - brick_range_low
+                            if retracement > active_bs:
+                                brick_low = brick_range_low
+                            else:
+                                brick_low = brick_open
+                        else:
+                            brick_low = brick_open
+                    else:
+                        brick_low = calc_up_brick_low(brick_pending_low, brick_open, active_bs, apply_wick=first_brick)
+
                     bricks.append({
                         'datetime': timestamps[cross_open],
                         'open': brick_open,
                         'high': brick_close,
-                        'low': calc_up_brick_low(brick_pending_low, brick_open, active_bs, apply_wick=first_brick),
+                        'low': brick_low,
                         'close': brick_close,
                         'direction': 1,
                         'is_reversal': 1 if first_brick else 0,
