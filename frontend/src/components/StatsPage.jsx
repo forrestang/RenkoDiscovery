@@ -318,6 +318,11 @@ function computeWickDist(bd, indices) {
   return { upDist: calcWickDist(upVals), dnDist: calcWickDist(dnVals) }
 }
 
+const stateMAOrder = {
+  3: 'fast>med>slow', 2: 'fast>slow>med', 1: 'slow>fast>med',
+  '-1': 'med>fast>slow', '-2': 'med>slow>fast', '-3': 'slow>med>fast',
+};
+
 function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
   const signalData = stats?.signalData
 
@@ -1276,7 +1281,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                     <tbody>
                       {chopRegimeStats.stateByChop.map(row => (
                         <tr key={row.state}>
-                          <td className={row.state > 0 ? 'state-up' : row.state < 0 ? 'state-dn' : ''}>
+                          <td className={row.state > 0 ? 'state-up' : row.state < 0 ? 'state-dn' : ''} data-tooltip={stateMAOrder[row.state]}>
                             {row.state > 0 ? `+${row.state}` : row.state}
                           </td>
                           <td>{row.low}%</td>
@@ -1389,7 +1394,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                 <tbody>
                   {_stateStats.map(row => (
                     <tr key={row.state}>
-                      <td className={row.state > 0 ? 'state-up' : row.state < 0 ? 'state-dn' : ''}>
+                      <td className={row.state > 0 ? 'state-up' : row.state < 0 ? 'state-dn' : ''} data-tooltip={stateMAOrder[row.state]}>
                         {row.state > 0 ? `+${row.state}` : row.state}
                       </td>
                       <td>{row.count.toLocaleString()}</td>
@@ -1553,7 +1558,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                   <tbody>
                     {states.map(s => (
                       <tr key={s}>
-                        <td className={s > 0 ? 'up' : 'dn'}>{stateLabels[s]}</td>
+                        <td className={s > 0 ? 'up' : 'dn'} data-tooltip={stateMAOrder[s]}>{stateLabels[s]}</td>
                         {stats.stateConbarsHeatmap.map(row => {
                           const count = row[`s${s}_count`];
                           const avgRR = row[`s${s}_avgRR`];
@@ -1605,14 +1610,14 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                     <tr>
                       <th data-tooltip="Prior State (row) → Current State (column)">From \ To</th>
                       {states.map(s => (
-                        <th key={s} className={s > 0 ? 'up' : 'dn'}>{stateLabels[s]}</th>
+                        <th key={s} className={s > 0 ? 'up' : 'dn'} data-tooltip={stateMAOrder[s]}>{stateLabels[s]}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {stats.stateTransitionMatrix.map(row => (
                       <tr key={row.fromState}>
-                        <td className={row.fromState > 0 ? 'up' : 'dn'}>{stateLabels[row.fromState]}</td>
+                        <td className={row.fromState > 0 ? 'up' : 'dn'} data-tooltip={stateMAOrder[row.fromState]}>{stateLabels[row.fromState]}</td>
                         {states.map(toState => {
                           const pct = row[`to_${toState}_pct`];
                           const count = row[`to_${toState}_count`];

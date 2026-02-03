@@ -792,8 +792,9 @@ def clean_holidays(df: pd.DataFrame, schedule: dict, threshold_pct: float = 50.0
     threshold = median_count * threshold_pct / 100.0
     valid_sessions = counts[counts >= threshold].index
     removed_sessions = sorted(counts[counts < threshold].index)
+    removed_details = [[str(d), int(median_count), int(counts[d])] for d in removed_sessions]
     mask = session_dates.isin(valid_sessions)
-    return df[mask].reset_index(drop=True), [str(d) for d in removed_sessions]
+    return df[mask].reset_index(drop=True), removed_details
 
 
 def back_adjust_data(df: pd.DataFrame, schedule: dict) -> pd.DataFrame:
@@ -828,9 +829,9 @@ def back_adjust_data(df: pd.DataFrame, schedule: dict) -> pd.DataFrame:
         for col in ['open', 'high', 'low', 'close']:
             df.loc[mask, col] += cumulative_gap
 
-    adjusted_sessions = [str(s) for s in unique_sessions[:-1]]
+    adjusted_details = [[str(unique_sessions[i]), f"{float(gaps[i]):.5f}"] for i in range(len(gaps))]
     df.drop(columns=['_session_date'], inplace=True)
-    return df, adjusted_sessions
+    return df, adjusted_details
 
 
 def compute_adr_lookup(raw_df: pd.DataFrame, adr_period: int, session_schedule: dict = None) -> pd.Series:

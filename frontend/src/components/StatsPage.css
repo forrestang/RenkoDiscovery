@@ -234,6 +234,33 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
 
+/* Tooltip for state cells (th and td) */
+.stats-table th[data-tooltip],
+.stats-table td[data-tooltip] {
+  position: relative;
+  cursor: default;
+}
+.stats-table th[data-tooltip]:hover::after,
+.stats-table td[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 12px;
+  top: 100%;
+  z-index: 100;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
 .stats-table th.up {
   color: #22c55e;
 }
