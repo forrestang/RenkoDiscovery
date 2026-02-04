@@ -538,9 +538,14 @@ function calculateEMA(data, period) {
   return result
 }
 
+const STORAGE_PREFIX = 'RenkoDiscovery_'
+
 function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002, renkoPerBrickSizes = null, renkoPerReversalSizes = null, sessionSchedule = null }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
+  const indicatorPaneHeightRef = useRef(
+    parseInt(localStorage.getItem(`${STORAGE_PREFIX}indicatorPaneHeight`), 10) || 120
+  )
   const seriesRef = useRef(null)  // Candlestick series for OHLC data
   const tickLineSeriesRef = useRef(null)  // Line series for tick data
   const primitiveRef = useRef(null)
@@ -787,7 +792,24 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       setHoveredM1Index(null)
     })
 
+    // Persist indicator pane height on resize via drag
+    const handlePointerUp = () => {
+      const c = chartRef.current
+      if (!c) return
+      const panes = c.panes()
+      if (panes && panes[1]) {
+        const h = panes[1].getHeight()
+        if (h && h !== indicatorPaneHeightRef.current) {
+          indicatorPaneHeightRef.current = h
+          localStorage.setItem(`${STORAGE_PREFIX}indicatorPaneHeight`, h.toString())
+        }
+      }
+    }
+    containerRef.current.addEventListener('pointerup', handlePointerUp)
+    const containerEl = containerRef.current
+
     return () => {
+      containerEl.removeEventListener('pointerup', handlePointerUp)
       resizeObserver.disconnect()
       chart.remove()
       chartRef.current = null
@@ -1272,7 +1294,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       // Set pane height after series is created
       const panes = chart.panes()
       if (panes && panes[1]) {
-        panes[1].setHeight(120)
+        panes[1].setHeight(indicatorPaneHeightRef.current)
       }
     }
 
