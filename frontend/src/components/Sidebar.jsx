@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import ReactDOM from 'react-dom'
 import SessionControls from './SessionControls'
 import './Sidebar.css'
 
@@ -91,6 +92,10 @@ function Sidebar({
     return saved ? parseInt(saved) : 20
   })
   const [statsFilename, setStatsFilename] = useState('')
+  const [showFilterHelp, setShowFilterHelp] = useState(false)
+  const [helpPos, setHelpPos] = useState({ x: 200, y: 100 })
+  const [dragging, setDragging] = useState(false)
+  const dragOffset = useRef({ x: 0, y: 0 })
   const [workingDirCollapsed, setWorkingDirCollapsed] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}workingDirCollapsed`)
     return saved === 'true'
@@ -101,6 +106,20 @@ function Sidebar({
     setWorkingDirCollapsed(newValue)
     localStorage.setItem(`${STORAGE_PREFIX}workingDirCollapsed`, newValue.toString())
   }
+
+  useEffect(() => {
+    if (!dragging) return
+    const onMouseMove = (e) => {
+      setHelpPos({ x: e.clientX - dragOffset.current.x, y: e.clientY - dragOffset.current.y })
+    }
+    const onMouseUp = () => setDragging(false)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [dragging])
 
   // Group files by instrument
   const groupedFiles = files.reduce((acc, file) => {
@@ -454,7 +473,7 @@ function Sidebar({
               <div className="import-subsection">
                 <label className="option-label">Data Processing</label>
                 <div className="checkbox-row">
-                  <label className="checkbox-label">
+                  <label className="checkbox-label" title="Remove sessions with abnormally low bar counts (holidays, half-days, bad data). The threshold sets the minimum % of the median session bar count — sessions below this are dropped.">
                     <input
                       type="checkbox"
                       checked={cleanHolidays}
@@ -967,6 +986,7 @@ function Sidebar({
             <div className="section">
               <div className="section-header">
                 <span className="section-title">Row Filter</span>
+                <button className="filter-help-btn" onClick={() => setShowFilterHelp(v => !v)} title="Query syntax help">?</button>
               </div>
               <input
                 type="text"
@@ -976,6 +996,59 @@ function Sidebar({
                 onChange={e => onMlFilterExprChange(e.target.value)}
               />
             </div>
+          )}
+
+          {/* Filter Help Panel - rendered via portal */}
+          {showFilterHelp && ReactDOM.createPortal(
+            <div className="filter-help-panel" style={{ left: helpPos.x, top: helpPos.y }}>
+              <div
+                className={`filter-help-panel-header ${dragging ? 'grabbing' : ''}`}
+                onMouseDown={(e) => {
+                  dragOffset.current = { x: e.clientX - helpPos.x, y: e.clientY - helpPos.y }
+                  setDragging(true)
+                }}
+              >
+                <span className="filter-help-panel-title">Row Filter — Pandas Query Syntax</span>
+                <button className="filter-help-close" onClick={() => setShowFilterHelp(false)}>&times;</button>
+              </div>
+              <div className="filter-help-panel-body">
+                <p>The row filter accepts a <strong>pandas query expression</strong> to select which rows from the parquet file are included in training. Only matching rows will be used.</p>
+
+                <h4>Operators</h4>
+                <table className="filter-help-table">
+                  <thead>
+                    <tr><th>Operator</th><th>Meaning</th><th>Example</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><code>==</code></td><td>equals</td><td><code>Type1 == 1</code></td></tr>
+                    <tr><td><code>!=</code></td><td>not equal</td><td><code>State != 0</code></td></tr>
+                    <tr><td><code>&gt;</code> <code>&gt;=</code></td><td>greater than</td><td><code>State &gt;= 2</code></td></tr>
+                    <tr><td><code>&lt;</code> <code>&lt;=</code></td><td>less than</td><td><code>DD_RR &lt; 0.5</code></td></tr>
+                    <tr><td><code>and</code></td><td>both conditions</td><td><code>Type1 == 1 and State &gt; 0</code></td></tr>
+                    <tr><td><code>or</code></td><td>either condition</td><td><code>Type1 == 1 or Type2 == 1</code></td></tr>
+                    <tr><td><code>in</code></td><td>matches any in list</td><td><code>State in [2, 3]</code></td></tr>
+                    <tr><td><code>not in</code></td><td>excludes list</td><td><code>State not in [-1, 0, 1]</code></td></tr>
+                  </tbody>
+                </table>
+
+                <h4>Examples</h4>
+                <ul>
+                  <li><code>Type1 == 1</code> — only Type1 signals</li>
+                  <li><code>Type1 == 1 and State &gt;= 2</code> — Type1 in strong bullish alignment</li>
+                  <li><code>(Type1 == 1 or Type2 == 1) and State &gt; 0</code> — either signal type, bullish only</li>
+                  <li><code>State in [2, 3] and DD_RR &lt; 0.5</code> — strong trend with small wicks</li>
+                </ul>
+
+                <h4>Tips</h4>
+                <ul>
+                  <li>Column names are case-sensitive and must match exactly</li>
+                  <li>Use <code>and</code> / <code>or</code> (not <code>&amp;&amp;</code> / <code>||</code>)</li>
+                  <li>Group conditions with parentheses when mixing <code>and</code> and <code>or</code></li>
+                  <li>Leave the filter blank to train on all rows</li>
+                </ul>
+              </div>
+            </div>,
+            document.body
           )}
 
           {/* Model Name */}
