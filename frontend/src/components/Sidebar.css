@@ -1555,6 +1555,32 @@
   color: var(--accent-primary);
 }
 
+.ml-model-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.ml-model-delete-btn:hover {
+  background: var(--bearish-bg);
+  color: var(--bearish);
+}
+
+.ml-model-delete-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* Stats Files Section */
 .stats-files-section {
   flex: 1;

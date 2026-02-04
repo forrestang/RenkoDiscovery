@@ -79,6 +79,8 @@ function Sidebar({
   isTrainingML,
   mlModels,
   onLoadMLReport,
+  onDeleteMLModel,
+  onDeleteAllMLModels,
   mlError
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
@@ -1102,6 +1104,17 @@ function Sidebar({
             <div className="section ml-models-section">
               <div className="section-header">
                 <span className="section-title">Trained Models</span>
+                <button
+                  className="delete-all-btn"
+                  onClick={() => {
+                    if (window.confirm(`Delete all ${mlModels.length} trained models?`)) {
+                      onDeleteAllMLModels?.()
+                    }
+                  }}
+                  title="Delete all trained models"
+                >
+                  Delete All
+                </button>
               </div>
               <div className="ml-models-list">
                 {mlModels.map(model => (
@@ -1120,6 +1133,19 @@ function Sidebar({
                         View
                       </button>
                     )}
+                    <button
+                      className="ml-model-delete-btn"
+                      onClick={() => {
+                        if (window.confirm(`Delete model "${model.name}"?`)) {
+                          onDeleteMLModel?.(model.name)
+                        }
+                      }}
+                      title="Delete model"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 6L6 18M6 6l12 12" />
+                      </svg>
+                    </button>
                   </div>
                 ))}
               </div>

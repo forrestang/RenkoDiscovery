@@ -416,6 +416,38 @@ function App() {
     }
   }
 
+  const handleDeleteMLModel = async (name) => {
+    try {
+      const res = await fetch(
+        `${apiBase}/ml/model?name=${encodeURIComponent(name)}&working_dir=${encodeURIComponent(workingDir)}`,
+        { method: 'DELETE' }
+      )
+      if (res.ok) {
+        fetchMLModels()
+        if (mlReport && mlReport.model_name === name) {
+          setMlReport(null)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete ML model:', err)
+    }
+  }
+
+  const handleDeleteAllMLModels = async () => {
+    try {
+      const res = await fetch(
+        `${apiBase}/ml/models?working_dir=${encodeURIComponent(workingDir)}`,
+        { method: 'DELETE' }
+      )
+      if (res.ok) {
+        fetchMLModels()
+        setMlReport(null)
+      }
+    } catch (err) {
+      console.error('Failed to delete ML models:', err)
+    }
+  }
+
   const handleFileSelect = useCallback((filepath) => {
     setSelectedFiles(prev => {
       if (prev.includes(filepath)) {
@@ -995,6 +1027,8 @@ function App() {
             isTrainingML={isTrainingML}
             mlModels={mlModels}
             onLoadMLReport={loadMLReport}
+            onDeleteMLModel={handleDeleteMLModel}
+            onDeleteAllMLModels={handleDeleteAllMLModels}
             mlError={mlError}
           />
 

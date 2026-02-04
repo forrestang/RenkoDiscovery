@@ -2911,6 +2911,48 @@ def get_ml_report(filepath: str):
         raise HTTPException(status_code=400, detail=f"Failed to read report: {str(e)}")
 
 
+@app.delete("/ml/model")
+def delete_ml_model(name: str, working_dir: Optional[str] = None):
+    """Delete an ML model and all its associated files."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    model_path = base_dir / "ML" / "models" / f"{name}.cbm"
+    report_path = base_dir / "ML" / "reports" / f"{name}_report.json"
+    data_path = base_dir / "ML" / "training_data" / f"{name}_data.parquet"
+
+    if not model_path.exists():
+        raise HTTPException(status_code=404, detail=f"Model not found: {name}")
+
+    deleted = []
+    for p in [model_path, report_path, data_path]:
+        if p.exists():
+            p.unlink()
+            deleted.append(str(p))
+
+    return {"status": "deleted", "name": name, "files_deleted": deleted}
+
+
+@app.delete("/ml/models")
+def delete_all_ml_models(working_dir: Optional[str] = None):
+    """Delete all ML models, reports, and training data."""
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    ml_dir = base_dir / "ML"
+    deleted = 0
+    errors = []
+
+    for subdir in ["models", "reports", "training_data"]:
+        d = ml_dir / subdir
+        if d.exists():
+            for f in d.iterdir():
+                if f.is_file():
+                    try:
+                        f.unlink()
+                        deleted += 1
+                    except Exception as e:
+                        errors.append(str(e))
+
+    return {"status": "ok", "deleted": deleted, "errors": errors}
+
+
 if __name__ == "__main__":
     import sys
     import argparse
