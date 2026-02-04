@@ -1536,6 +1536,16 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Prior state (shifted by 1)
     df['prState'] = df['State'].shift(1)
 
+    # fromState: the state of the previous run (persists throughout current state run)
+    state_list = df['State'].tolist()
+    from_state = [None] * len(state_list)
+    last_state = None
+    for i in range(1, len(state_list)):
+        if state_list[i] != state_list[i - 1]:  # State changed
+            last_state = state_list[i - 1]       # Capture the state we came from
+        from_state[i] = last_state
+    df['fromState'] = from_state
+
     # Calculate Type1 and Type2 pullback counters
     # These accumulate only in +3/-3 states, reset on state change
     state_arr = df['State'].values
@@ -2488,7 +2498,7 @@ def get_parquet_stats(filepath: str):
     # Build per-bar column arrays for client-side chop filtering (Module 7)
     bar_data_cols = {
         'open': 'open', 'close': 'close', 'high': 'high', 'low': 'low',
-        'State': 'state', 'prState': 'prState',
+        'State': 'state', 'prState': 'prState', 'fromState': 'fromState',
         'Con_UP_bars': 'conUp', 'Con_DN_bars': 'conDn',
         'MFE_clr_RR': 'mfeClrRR', 'DD_RR': 'ddRR',
         'chop(rolling)': 'chop',

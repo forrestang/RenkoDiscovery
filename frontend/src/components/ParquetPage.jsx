@@ -45,6 +45,7 @@ function ParquetPage({ data, filename, isLoading, onBack }) {
     'DD_RR': 'Drawdown normalized by reversal size',
     'State': 'EMA alignment state (-3 to +3)',
     'prState': 'Prior bar State value',
+    'fromState': 'State of the previous run (prior state transition)',
     'Type1': 'Type1 pullback signal counter',
     'Type2': 'Type2 pullback signal counter',
     'Con_UP_bars': 'Consecutive UP bars counter',
