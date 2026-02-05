@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import ReactDOM from 'react-dom'
 import Plot from 'react-plotly.js'
 import './StatsPage.css'
 
@@ -24,6 +25,11 @@ const RR_BUCKETS = [
   { label: '2 to <3',  test: v => v >= 2 && v < 3 },
   { label: '3 to <5',  test: v => v >= 3 && v < 5 },
   { label: '5+',       test: v => v >= 5 },
+]
+
+const PLAYGROUND_COLORS = [
+  '#3b82f6', '#f59e0b', '#a855f7', '#22c55e', '#ef4444',
+  '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#6366f1',
 ]
 
 function computeSignalStats(upArr, dnArr, rrField = 'rr') {
@@ -323,7 +329,7 @@ const stateMAOrder = {
   '-1': 'med>fast>slow', '-2': 'med>slow>fast', '-3': 'slow>med>fast',
 };
 
-function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
+function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) {
   const signalData = stats?.signalData
 
   // Derive distinct N values per type
@@ -489,6 +495,197 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       return { ...prev, [type]: { ...prev[type], [group]: { ...prev[type][group], [rangeKey]: range } } }
     })
   }
+
+  // ==================== Playground Tab State ====================
+  const [playgroundSignals, setPlaygroundSignals] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}playgroundSignals`)
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return [{ name: 'Signal 1', expression: '', enabled: true }]
+  })
+  const [playgroundData, setPlaygroundData] = useState({ signals: {}, errors: {} })
+  const [playgroundLoading, setPlaygroundLoading] = useState(false)
+  const [playgroundRRField, setPlaygroundRRField] = useState('rr')
+  const [showPlaygroundHelp, setShowPlaygroundHelp] = useState(false)
+  const [pgHelpPos, setPgHelpPos] = useState({ x: 200, y: 100 })
+  const [pgDragging, setPgDragging] = useState(false)
+  const pgDragOffset = useRef({ x: 0, y: 0 })
+  const [savedSignals, setSavedSignals] = useState([])
+  const [showLoadDropdown, setShowLoadDropdown] = useState(false)
+  const loadDropdownRef = useRef(null)
+
+  // Persist playground signals to localStorage
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}playgroundSignals`, JSON.stringify(playgroundSignals))
+  }, [playgroundSignals])
+
+  // Help panel drag effect
+  useEffect(() => {
+    if (!pgDragging) return
+    const onMouseMove = (e) => {
+      setPgHelpPos({ x: e.clientX - pgDragOffset.current.x, y: e.clientY - pgDragOffset.current.y })
+    }
+    const onMouseUp = () => setPgDragging(false)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [pgDragging])
+
+  const addPlaygroundSignal = useCallback(() => {
+    setPlaygroundSignals(prev => [...prev, { name: `Signal ${prev.length + 1}`, expression: '', enabled: true }])
+  }, [])
+
+  const removePlaygroundSignal = useCallback((index) => {
+    setPlaygroundSignals(prev => prev.length <= 1 ? prev : prev.filter((_, i) => i !== index))
+  }, [])
+
+  const updatePlaygroundSignal = useCallback((index, field, value) => {
+    setPlaygroundSignals(prev => prev.map((s, i) => i === index ? { ...s, [field]: value } : s))
+  }, [])
+
+  const togglePlaygroundSignal = useCallback((index) => {
+    setPlaygroundSignals(prev => prev.map((s, i) =>
+      i === index ? { ...s, enabled: s.enabled === false ? true : false } : s
+    ))
+  }, [])
+
+  const evaluatePlaygroundSignals = useCallback(async () => {
+    if (!filepath || !apiBase) return
+    const nonEmpty = playgroundSignals.filter(s => s.expression.trim() && s.enabled !== false)
+    if (nonEmpty.length === 0) return
+    setPlaygroundLoading(true)
+    try {
+      const res = await fetch(`${apiBase}/playground-signals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filepath, signals: nonEmpty }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      setPlaygroundData(data)
+    } catch (e) {
+      setPlaygroundData({ signals: {}, errors: { _global: e.message } })
+    } finally {
+      setPlaygroundLoading(false)
+    }
+  }, [filepath, apiBase, playgroundSignals])
+
+  // Fetch saved signals when filepath changes
+  useEffect(() => {
+    if (!filepath || !apiBase) return
+    fetch(`${apiBase}/playground-saved-signals?filepath=${encodeURIComponent(filepath)}`)
+      .then(r => r.ok ? r.json() : { signals: [] })
+      .then(data => setSavedSignals(data.signals || []))
+      .catch(() => setSavedSignals([]))
+  }, [filepath, apiBase])
+
+  const savePlaygroundSignal = useCallback(async (signal) => {
+    if (!filepath || !apiBase || !signal.name.trim() || !signal.expression.trim()) return
+    try {
+      const res = await fetch(`${apiBase}/playground-save-signal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filepath, name: signal.name, expression: signal.expression }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSavedSignals(data.signals || [])
+      }
+    } catch {}
+  }, [filepath, apiBase])
+
+  const deletePlaygroundSavedSignal = useCallback(async (name) => {
+    if (!filepath || !apiBase) return
+    try {
+      const res = await fetch(`${apiBase}/playground-delete-signal?filepath=${encodeURIComponent(filepath)}&name=${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSavedSignals(data.signals || [])
+      }
+    } catch {}
+  }, [filepath, apiBase])
+
+  const loadPlaygroundSignal = useCallback((saved) => {
+    setPlaygroundSignals(prev => {
+      const emptyIdx = prev.findIndex(s => !s.expression.trim())
+      if (emptyIdx >= 0) {
+        return prev.map((s, i) => i === emptyIdx ? { name: saved.name, expression: saved.expression, enabled: true } : s)
+      }
+      return [...prev, { name: saved.name, expression: saved.expression, enabled: true }]
+    })
+    setShowLoadDropdown(false)
+  }, [])
+
+  // Close load dropdown on outside click
+  useEffect(() => {
+    if (!showLoadDropdown) return
+    const handler = (e) => {
+      if (loadDropdownRef.current && !loadDropdownRef.current.contains(e.target)) {
+        setShowLoadDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showLoadDropdown])
+
+  // Memoized R-Curve traces for playground
+  const playgroundCurveTraces = useMemo(() => {
+    const traces = []
+    const sigs = playgroundData.signals || {}
+    playgroundSignals.forEach((signal, i) => {
+      if (signal.enabled === false) return
+      const points = sigs[signal.name]
+      if (!points || points.length === 0) return
+      const sorted = [...points].sort((a, b) => a.idx - b.idx)
+      const rrKey = playgroundRRField
+      let cumulative = 0
+      const x = []
+      const y = []
+      sorted.forEach((pt, j) => {
+        cumulative += (pt[rrKey] ?? 0)
+        x.push(j + 1)
+        y.push(parseFloat(cumulative.toFixed(2)))
+      })
+      traces.push({
+        x, y,
+        type: 'scatter',
+        mode: 'lines',
+        name: signal.name,
+        line: { color: PLAYGROUND_COLORS[i % PLAYGROUND_COLORS.length], width: 1.5 },
+      })
+    })
+    return traces
+  }, [playgroundData, playgroundSignals, playgroundRRField])
+
+  // Memoized stats for playground signals
+  const playgroundStats = useMemo(() => {
+    const sigs = playgroundData.signals || {}
+    const result = {}
+    playgroundSignals.forEach((signal) => {
+      if (signal.enabled === false) return
+      const points = sigs[signal.name]
+      if (!points || points.length === 0) return
+      const rrKey = playgroundRRField
+      const values = points.map(p => p[rrKey] ?? 0)
+      const count = values.length
+      const sum = values.reduce((s, v) => s + v, 0)
+      const avgRR = (sum / count).toFixed(2)
+      const wins = values.filter(v => v > 0).length
+      const winRate = (wins / count * 100).toFixed(0)
+      const dist = RR_BUCKETS.map(b => {
+        const cnt = values.filter(b.test).length
+        return { label: b.label, count: cnt, pct: count > 0 ? (cnt / count * 100).toFixed(1) : '0.0' }
+      })
+      result[signal.name] = { count, avgRR, winRate, dist }
+    })
+    return result
+  }, [playgroundData, playgroundSignals, playgroundRRField])
 
   // Active chop filter based on current tab
   const chopFilter = activeTab === 'general' ? chopFilterGeneral : chopFilterSignals
@@ -910,6 +1107,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
             className={`stats-tab ${activeTab === 'conditional' ? 'active' : ''}`}
             onClick={() => setActiveTab('conditional')}
           >Conditional</button>
+          <button
+            className={`stats-tab ${activeTab === 'playground' ? 'active' : ''}`}
+            onClick={() => setActiveTab('playground')}
+          >Playground</button>
         </div>
         <div className="stats-file-header">
           <span className="stats-filename">{filename}</span>
@@ -937,7 +1138,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
       </div>
 
       {/* Chop Filter Bar — fixed above scroll, shared UI, independent per-tab state */}
-      {activeTab !== 'conditional' && <div className="chop-filter-bar">
+      {activeTab !== 'conditional' && activeTab !== 'playground' && <div className="chop-filter-bar">
         <span className="chop-filter-label">Chop:</span>
         {[
           { value: 'all', label: 'All' },
@@ -1770,6 +1971,261 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete }) {
                 </tbody>
               </table>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ==================== Playground Tab ==================== */}
+      {activeTab === 'playground' && (
+        <div className="stats-tab-content">
+          {/* Signal Definitions */}
+          <div className="stats-module module-box playground-signals-module">
+            <div className="playground-header">
+              <span className="module-title-text">SIGNAL DEFINITIONS</span>
+              <div className="playground-header-actions">
+                <div className="playground-load-wrapper" ref={loadDropdownRef}>
+                  <button className="filter-action-btn" onClick={() => setShowLoadDropdown(prev => !prev)}>
+                    Load ▼
+                  </button>
+                  {showLoadDropdown && (
+                    <div className="playground-load-dropdown">
+                      {savedSignals.length === 0 ? (
+                        <div className="playground-load-empty">No saved signals</div>
+                      ) : savedSignals.map((s, i) => (
+                        <div key={i} className="playground-load-item">
+                          <span className="playground-load-item-name" onClick={() => loadPlaygroundSignal(s)}>{s.name}</span>
+                          <span className="playground-load-item-expr" onClick={() => loadPlaygroundSignal(s)}>{s.expression}</span>
+                          <button
+                            className="playground-load-delete"
+                            onClick={(e) => { e.stopPropagation(); deletePlaygroundSavedSignal(s.name) }}
+                            title="Delete saved signal"
+                          >&times;</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button className="filter-help-btn" onClick={() => setShowPlaygroundHelp(prev => !prev)} title="Help">?</button>
+                <button className="filter-action-btn" onClick={addPlaygroundSignal}>+ Add Signal</button>
+                <button className="filter-action-btn active" onClick={evaluatePlaygroundSignals} disabled={playgroundLoading}>
+                  {playgroundLoading ? 'Evaluating...' : 'Evaluate'}
+                </button>
+              </div>
+            </div>
+            {playgroundSignals.map((signal, i) => (
+              <div key={i} className={`playground-signal-row${signal.enabled === false ? ' playground-signal-row-disabled' : ''}`}>
+                <button
+                  className="playground-signal-color"
+                  style={signal.enabled === false
+                    ? { background: 'transparent', borderColor: PLAYGROUND_COLORS[i % PLAYGROUND_COLORS.length] }
+                    : { background: PLAYGROUND_COLORS[i % PLAYGROUND_COLORS.length] }}
+                  onClick={() => togglePlaygroundSignal(i)}
+                  title={signal.enabled === false ? 'Enable signal' : 'Disable signal'}
+                />
+                <input
+                  className="playground-signal-name"
+                  value={signal.name}
+                  onChange={e => updatePlaygroundSignal(i, 'name', e.target.value)}
+                  placeholder="Name"
+                />
+                <button
+                  className={`playground-signal-save${savedSignals.some(s => s.name === signal.name && s.expression === signal.expression) ? ' saved' : ''}`}
+                  onClick={() => savePlaygroundSignal(signal)}
+                  title="Save signal to disk"
+                >💾</button>
+                <input
+                  className="playground-signal-expr"
+                  value={signal.expression}
+                  onChange={e => updatePlaygroundSignal(i, 'expression', e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') evaluatePlaygroundSignals() }}
+                  placeholder="Pandas expression, e.g. State == 3"
+                />
+                <button className="playground-signal-remove" onClick={() => removePlaygroundSignal(i)} title="Remove signal">&times;</button>
+              </div>
+            ))}
+            {/* Per-signal errors */}
+            {Object.entries(playgroundData.errors || {}).map(([name, msg]) => (
+              <div key={name} className="playground-error">
+                <strong>{name}:</strong> {msg}
+              </div>
+            ))}
+          </div>
+
+          {/* Cumulative R Curve */}
+          <div className="stats-module module-box playground-rcurve-module">
+            <div className="equity-curve-header">
+              <span className="module-title-text">CUMULATIVE R CURVE</span>
+              <select
+                className="fx-column-select"
+                value={playgroundRRField}
+                onChange={e => setPlaygroundRRField(e.target.value)}
+              >
+                {RR_FIELDS.map(f => (
+                  <option key={f.value} value={f.value} title={f.desc}>{f.label}</option>
+                ))}
+              </select>
+            </div>
+            <Plot
+              data={playgroundCurveTraces}
+              layout={{
+                height: 300,
+                margin: { t: 8, r: 16, b: 40, l: 50 },
+                paper_bgcolor: '#000000',
+                plot_bgcolor: '#000000',
+                font: { family: 'monospace', size: 11, color: '#a0a0b0' },
+                xaxis: {
+                  title: { text: 'Signal #', font: { size: 10 } },
+                  gridcolor: 'rgba(255,255,255,0.1)',
+                  zeroline: false,
+                },
+                yaxis: {
+                  title: { text: 'Cumulative R', font: { size: 10 } },
+                  gridcolor: 'rgba(255,255,255,0.1)',
+                  zeroline: true,
+                  zerolinecolor: 'rgba(255,255,255,0.2)',
+                },
+                showlegend: true,
+                legend: { font: { size: 10 }, bgcolor: 'transparent', x: 0, y: 1 },
+              }}
+              config={{ displayModeBar: false, responsive: true }}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          {/* Signal Performance Table */}
+          {(() => {
+            const enabledSignals = playgroundSignals.filter(s => s.enabled !== false)
+            return (
+            <div className="stats-module">
+              <table className="stats-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan={enabledSignals.length + 1} className="module-title">SIGNAL PERFORMANCE</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    {enabledSignals.map((s, i) => (
+                      <th key={s.name + i} style={{ color: PLAYGROUND_COLORS[playgroundSignals.indexOf(s) % PLAYGROUND_COLORS.length] }}>{s.name}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Count</td>
+                    {enabledSignals.map((s, i) => (
+                      <td key={s.name + i}>{playgroundStats[s.name]?.count ?? '—'}</td>
+                    ))}
+                  </tr>
+                  <tr>
+                    <td>Avg RR</td>
+                    {enabledSignals.map((s, i) => (
+                      <td key={s.name + i}>{playgroundStats[s.name]?.avgRR ?? '—'}</td>
+                    ))}
+                  </tr>
+                  <tr>
+                    <td>Win Rate</td>
+                    {enabledSignals.map((s, i) => {
+                      const st = playgroundStats[s.name]
+                      return <td key={s.name + i}>{st ? `${st.winRate}%` : '—'}</td>
+                    })}
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* RR Distribution */}
+              <table className="stats-table" style={{ marginTop: '8px' }}>
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan={enabledSignals.length + 1} className="module-title">RR DISTRIBUTION</th>
+                  </tr>
+                  <tr>
+                    <th>Bucket</th>
+                    {enabledSignals.map((s, i) => (
+                      <th key={s.name + i} style={{ color: PLAYGROUND_COLORS[playgroundSignals.indexOf(s) % PLAYGROUND_COLORS.length] }}>{s.name}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {RR_BUCKETS.map(bucket => (
+                    <tr key={bucket.label}>
+                      <td>{bucket.label}</td>
+                      {enabledSignals.map((s, i) => {
+                        const d = playgroundStats[s.name]?.dist?.find(d => d.label === bucket.label)
+                        return <td key={s.name + i}>{d ? `${d.count} (${d.pct}%)` : '—'}</td>
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            )
+          })()}
+
+          {/* Help Panel (Portal) */}
+          {showPlaygroundHelp && ReactDOM.createPortal(
+            <div className="filter-help-panel" style={{ left: pgHelpPos.x, top: pgHelpPos.y }}>
+              <div
+                className={`filter-help-panel-header ${pgDragging ? 'grabbing' : ''}`}
+                onMouseDown={(e) => {
+                  pgDragOffset.current = { x: e.clientX - pgHelpPos.x, y: e.clientY - pgHelpPos.y }
+                  setPgDragging(true)
+                }}
+              >
+                <span className="filter-help-panel-title">Playground — Pandas Query Syntax</span>
+                <button className="filter-help-close" onClick={() => setShowPlaygroundHelp(false)}>&times;</button>
+              </div>
+              <div className="filter-help-panel-body">
+                <p>Enter a <strong>pandas query expression</strong> to define each signal. Matching rows become signal occurrences, and their MFE/RR metrics are plotted.</p>
+
+                <h4>Operators</h4>
+                <table className="filter-help-table">
+                  <thead>
+                    <tr><th>Operator</th><th>Meaning</th><th>Example</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><code>==</code></td><td>equals</td><td><code>State == 3</code></td></tr>
+                    <tr><td><code>!=</code></td><td>not equal</td><td><code>State != 0</code></td></tr>
+                    <tr><td><code>&gt;</code> <code>&gt;=</code></td><td>greater than</td><td><code>State &gt;= 2</code></td></tr>
+                    <tr><td><code>&lt;</code> <code>&lt;=</code></td><td>less than</td><td><code>DD_RR &lt; 0.5</code></td></tr>
+                    <tr><td><code>and</code></td><td>both conditions</td><td><code>Type1 == 1 and State &gt; 0</code></td></tr>
+                    <tr><td><code>or</code></td><td>either condition</td><td><code>Type1 == 1 or Type2 == 1</code></td></tr>
+                    <tr><td><code>in</code></td><td>matches any in list</td><td><code>State in [2, 3]</code></td></tr>
+                    <tr><td><code>not in</code></td><td>excludes list</td><td><code>State not in [-1, 0, 1]</code></td></tr>
+                  </tbody>
+                </table>
+
+                <h4>Examples</h4>
+                <ul>
+                  <li><code>State == 3</code> — strongest bullish MA alignment</li>
+                  <li><code>State == -3</code> — strongest bearish MA alignment</li>
+                  <li><code>Type1 &gt; 0 and State &gt;= 2</code> — Type1 UP in strong trend</li>
+                  <li><code>DD_RR &lt; 0.3 and State in [2, 3]</code> — small wicks in trend</li>
+                  <li><code>Con_UP_bars &gt;= 3</code> — 3+ consecutive UP bars</li>
+                  <li><code>priorRunCount == 1</code> — first occurrence in a run</li>
+                </ul>
+
+                <h4>Available Columns</h4>
+                <ul>
+                  <li><code>State</code> — MA alignment state (-3 to 3)</li>
+                  <li><code>Type1</code>, <code>Type2</code> — signal type (positive=UP, negative=DN, abs=Nth)</li>
+                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code> — consecutive bar count</li>
+                  <li><code>DD_RR</code>, <code>DD_ADR</code> — wick/drawdown size</li>
+                  <li><code>priorRunCount</code> — prior run count</li>
+                  <li><code>MFE_clr_RR</code>, <code>REAL_clr_RR</code> — RR metrics</li>
+                  <li><code>stateDuration</code>, <code>barDuration</code> — time in state/bar</li>
+                  <li><code>prState</code>, <code>fromState</code> — prior/from states</li>
+                </ul>
+
+                <h4>Tips</h4>
+                <ul>
+                  <li>Column names are case-sensitive</li>
+                  <li>Use <code>and</code> / <code>or</code> (not <code>&amp;&amp;</code> / <code>||</code>)</li>
+                  <li>Group with parentheses: <code>(A or B) and C</code></li>
+                  <li>Press Enter in any expression field to evaluate</li>
+                </ul>
+              </div>
+            </div>,
+            document.body
           )}
         </div>
       )}

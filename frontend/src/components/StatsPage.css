@@ -102,12 +102,16 @@
 
 /* Inline Settings */
 .settings-inline {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 2px 10px;
   margin-left: auto;
   flex-shrink: 0;
   line-height: 1;
+}
+
+.settings-inline .settings-inline-sep {
+  display: none;
 }
 
 .settings-inline-item {
@@ -794,5 +798,222 @@
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-secondary);
+}
+
+/* ==================== Playground Tab ==================== */
+
+.playground-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.playground-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.playground-signal-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 4px;
+}
+
+.playground-signal-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: pointer;
+  padding: 0;
+  border: 2px solid transparent;
+  transition: all 0.15s;
+}
+
+.playground-signal-row-disabled {
+  opacity: 0.4;
+}
+
+.playground-signal-name {
+  width: 100px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.playground-signal-name:focus {
+  border-color: var(--accent-primary);
+}
+
+.playground-signal-expr {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.playground-signal-expr:focus {
+  border-color: var(--accent-primary);
+}
+
+.playground-signal-remove {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.playground-signal-remove:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.playground-error {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+  padding: 4px 8px;
+  border-radius: 3px;
+  margin-top: 4px;
+}
+
+/* Full-width playground modules */
+.playground-signals-module {
+  width: 100%;
+}
+
+.playground-rcurve-module {
+  width: 100%;
+}
+
+/* Save signal button (disk icon) */
+.playground-signal-save {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.playground-signal-save:hover {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.playground-signal-save.saved {
+  color: #22c55e;
+}
+
+/* Load dropdown */
+.playground-load-wrapper {
+  position: relative;
+}
+
+.playground-load-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 50;
+  margin-top: 4px;
+  min-width: 220px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.playground-load-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--text-primary);
+  transition: background 0.1s;
+}
+
+.playground-load-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.playground-load-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playground-load-item-expr {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-left: 8px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playground-load-delete {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+.playground-load-delete:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.playground-load-empty {
+  padding: 10px;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
 }
 

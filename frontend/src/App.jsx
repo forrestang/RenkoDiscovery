@@ -1059,6 +1059,7 @@ function App() {
               filepath={statsFilepath}
               isLoading={isLoadingStats}
               onDelete={handleDeleteStatsFile}
+              apiBase={apiBase}
             />
           ) : (
             <ChartArea

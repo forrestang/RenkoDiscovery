@@ -116,6 +116,16 @@ class MLTrainRequest(BaseModel):
     n_splits: int = 5          # time-series CV folds
 
 
+class PlaygroundSignal(BaseModel):
+    name: str
+    expression: str
+
+
+class PlaygroundRequest(BaseModel):
+    filepath: str
+    signals: list[PlaygroundSignal]
+
+
 def extract_instrument(filename: str) -> Optional[str]:
     """Extract instrument symbol from filename."""
     filename_upper = filename.upper()
@@ -2562,6 +2572,147 @@ def get_parquet_stats(filepath: str):
         "barData": bar_data,
         "maPeriods": ma_periods
     }
+
+
+@app.post("/playground-signals")
+def playground_signals(request: PlaygroundRequest):
+    """Evaluate arbitrary pandas expressions against a parquet file and return signal data."""
+    parquet_path = Path(request.filepath)
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {request.filepath}")
+
+    try:
+        df = pd.read_parquet(parquet_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read parquet: {str(e)}")
+
+    # Build extra_metric_cols (same mapping as parquet-stats)
+    ma1_period = int(df['ma1_period'].iloc[0]) if 'ma1_period' in df.columns else 20
+    ma2_period = int(df['ma2_period'].iloc[0]) if 'ma2_period' in df.columns else 50
+    ma3_period = int(df['ma3_period'].iloc[0]) if 'ma3_period' in df.columns else 200
+    ma_periods = [ma1_period, ma2_period, ma3_period]
+
+    extra_metric_cols = []
+    for col_name, field_name in [
+        ('MFE_clr_ADR', 'clr_adr'),
+        ('REAL_clr_ADR', 'clr_adr_adj'),
+        ('REAL_clr_RR', 'rr_adj'),
+        ('REAL_MA1_RR', 'ma1_rr'),
+        ('REAL_MA1_ADR', 'ma1_adr'),
+        ('REAL_MA2_RR', 'ma2_rr'),
+        ('REAL_MA2_ADR', 'ma2_adr'),
+        ('REAL_MA3_RR', 'ma3_rr'),
+        ('REAL_MA3_ADR', 'ma3_adr'),
+    ]:
+        if col_name in df.columns:
+            extra_metric_cols.append((col_name, field_name))
+
+    for idx_i, period in enumerate(ma_periods, start=1):
+        for col_sfx, fld_sfx in [('rrDistance', 'rr'), ('adrDistance', 'adr')]:
+            col = f'EMA_{col_sfx}({period})'
+            fld = f'ema{idx_i}Dist_{fld_sfx}'
+            if col in df.columns:
+                extra_metric_cols.append((col, fld))
+    for col, fld in [('DD_RR', 'dd_rr'), ('DD_ADR', 'dd_adr')]:
+        if col in df.columns:
+            extra_metric_cols.append((col, fld))
+    for col, fld in [('priorRunCount', 'prRunCnt'), ('Con_UP_bars', 'conUpBars'), ('Con_DN_bars', 'conDnBars'), ('stateDuration', 'stateDur'), ('barDuration', 'barDur')]:
+        if col in df.columns:
+            extra_metric_cols.append((col, fld))
+
+    signals_result = {}
+    errors_result = {}
+
+    for signal in request.signals:
+        if not signal.expression.strip():
+            continue
+        try:
+            subset = df.query(signal.expression)
+            if 'MFE_clr_RR' not in subset.columns:
+                errors_result[signal.name] = "MFE_clr_RR column not found in parquet"
+                continue
+            subset = subset.dropna(subset=['MFE_clr_RR'])
+            idx_vals = subset.index.values
+            rr_vals = subset['MFE_clr_RR'].round(2).values
+            points = []
+            for i in range(len(idx_vals)):
+                pt = {"n": 1, "rr": float(rr_vals[i]), "idx": int(idx_vals[i])}
+                for col_name, field_name in extra_metric_cols:
+                    if col_name in subset.columns:
+                        val = subset[col_name].iloc[i]
+                        pt[field_name] = round(float(val), 2) if pd.notna(val) else None
+                points.append(pt)
+            signals_result[signal.name] = points
+        except Exception as e:
+            errors_result[signal.name] = str(e)
+
+    return {"signals": signals_result, "errors": errors_result}
+
+
+class SaveSignalRequest(BaseModel):
+    filepath: str
+    name: str
+    expression: str
+
+
+def _signals_json_path(filepath: str) -> Path:
+    """Derive Playground/signals.json path from a parquet filepath inside a Stats/ folder."""
+    p = Path(filepath)
+    # Walk up until we find a Stats directory, then go to its parent
+    for parent in [p.parent] + list(p.parents):
+        if parent.name == "Stats":
+            return parent.parent / "Playground" / "signals.json"
+    # Fallback: sibling of the file's directory
+    return p.parent.parent / "Playground" / "signals.json"
+
+
+def _read_signals(json_path: Path) -> list:
+    if json_path.exists():
+        try:
+            return json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+    return []
+
+
+def _write_signals(json_path: Path, signals: list):
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(signals, indent=2), encoding="utf-8")
+
+
+@app.get("/playground-saved-signals")
+def get_saved_signals(filepath: str):
+    """Return saved playground signals from Playground/signals.json."""
+    json_path = _signals_json_path(filepath)
+    return {"signals": _read_signals(json_path)}
+
+
+@app.post("/playground-save-signal")
+def save_signal(request: SaveSignalRequest):
+    """Save (or overwrite) a named signal to Playground/signals.json."""
+    json_path = _signals_json_path(request.filepath)
+    signals = _read_signals(json_path)
+    # Overwrite existing by name, or append
+    found = False
+    for s in signals:
+        if s["name"] == request.name:
+            s["expression"] = request.expression
+            found = True
+            break
+    if not found:
+        signals.append({"name": request.name, "expression": request.expression})
+    _write_signals(json_path, signals)
+    return {"signals": signals}
+
+
+@app.delete("/playground-delete-signal")
+def delete_signal(filepath: str, name: str):
+    """Remove a named signal from Playground/signals.json."""
+    json_path = _signals_json_path(filepath)
+    signals = _read_signals(json_path)
+    signals = [s for s in signals if s["name"] != name]
+    _write_signals(json_path, signals)
+    return {"signals": signals}
 
 
 @app.delete("/stats-file")
