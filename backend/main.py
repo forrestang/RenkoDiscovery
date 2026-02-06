@@ -135,6 +135,7 @@ class BacktestRequest(BaseModel):
     target_value: float     # RR/ADR amount, or 0 for color_change
     target_ma: int = 1      # which MA (1/2/3) for ma_trail target
     report_unit: str = 'rr' # 'rr' or 'adr' — unit for result values
+    allow_overlap: bool = True  # when False, skip entries while a trade is open
 
 
 def extract_instrument(filename: str) -> Optional[str]:
@@ -2745,124 +2746,119 @@ def backtest_signals(request: BacktestRequest):
     signals_result = {}
     errors_result = {}
 
+    # 1. Collect all (entry_index, signal_name) pairs across all signals
+    all_entries = []
     for signal in request.signals:
         if not signal.expression.strip():
             continue
         try:
             subset = df.query(signal.expression)
-            entry_indices = subset.index.values
+            for i in subset.index.values:
+                all_entries.append((int(i), signal.name))
+        except Exception as e:
+            errors_result[signal.name] = str(e)
 
-            trades = []
-            for i_pos, i in enumerate(entry_indices):
-                i = int(i)
-                if i >= n - 1:
-                    continue
+    # 2. Sort chronologically by entry index (stable sort preserves signal order for ties)
+    all_entries.sort(key=lambda x: x[0])
 
-                entry_close = close_arr[i]
-                entry_rev = rev_arr[i]
-                entry_adr = adr_arr[i]
-                entry_is_up = bool(is_up_arr[i])
-                direction = 'long' if entry_is_up else 'short'
+    # 3. Single pass with global next_allowed_entry
+    trades_by_signal = {}
+    next_allowed_entry = 0
+    for i, sig_name in all_entries:
+        if i >= n - 1:
+            continue
+        if not request.allow_overlap and i < next_allowed_entry:
+            continue
 
-                # Compute stop distance
-                if request.stop_type == 'adr':
-                    stop_dist = max(request.stop_value * entry_adr, 1.0 * entry_rev)
-                else:  # 'rr'
-                    stop_dist = request.stop_value * entry_rev
+        entry_close = close_arr[i]
+        entry_rev = rev_arr[i]
+        entry_adr = adr_arr[i]
+        entry_is_up = bool(is_up_arr[i])
+        direction = 'long' if entry_is_up else 'short'
 
-                # Stop price
+        # Compute stop distance
+        if request.stop_type == 'adr':
+            stop_dist = max(request.stop_value * entry_adr, 1.0 * entry_rev)
+        else:  # 'rr'
+            stop_dist = request.stop_value * entry_rev
+
+        # Stop price
+        if entry_is_up:
+            stop_price = entry_close - stop_dist
+        else:
+            stop_price = entry_close + stop_dist
+
+        # Compute target distance for fixed types
+        if request.target_type == 'fixed_rr':
+            target_dist = request.target_value * entry_rev
+        elif request.target_type == 'fixed_adr':
+            target_dist = request.target_value * entry_adr
+        else:
+            target_dist = None  # ma_trail / color_change use different logic
+
+        # Forward scan
+        outcome = 'open'
+        result = 0.0
+        bars_held = 0
+        exit_idx = None
+        exit_dt = ''
+
+        for j in range(i + 1, n):
+            bars_held = j - i
+
+            # Check STOP
+            if entry_is_up:
+                stopped = close_arr[j] <= stop_price
+            else:
+                stopped = close_arr[j] >= stop_price
+
+            if stopped:
+                outcome = 'stop'
+                # Result is the stop distance in report units
+                if request.report_unit == 'adr':
+                    result = -(stop_dist / entry_adr)
+                else:
+                    result = -(stop_dist / entry_rev)
+                exit_idx = j
+                exit_dt = dt_arr[j]
+                break
+
+            # Check TARGET
+            if request.target_type in ('fixed_rr', 'fixed_adr'):
                 if entry_is_up:
-                    stop_price = entry_close - stop_dist
+                    hit = close_arr[j] >= entry_close + target_dist
                 else:
-                    stop_price = entry_close + stop_dist
+                    hit = close_arr[j] <= entry_close - target_dist
 
-                # Compute target distance for fixed types
-                if request.target_type == 'fixed_rr':
-                    target_dist = request.target_value * entry_rev
-                elif request.target_type == 'fixed_adr':
-                    target_dist = request.target_value * entry_adr
-                else:
-                    target_dist = None  # ma_trail / color_change use different logic
-
-                # Forward scan
-                outcome = 'open'
-                result = 0.0
-                bars_held = 0
-                exit_idx = None
-                exit_dt = ''
-
-                for j in range(i + 1, n):
-                    bars_held = j - i
-
-                    # Check STOP
-                    if entry_is_up:
-                        stopped = close_arr[j] <= stop_price
+                if hit:
+                    outcome = 'target'
+                    if request.report_unit == 'adr':
+                        result = target_dist / entry_adr
                     else:
-                        stopped = close_arr[j] >= stop_price
+                        result = target_dist / entry_rev
+                    exit_idx = j
+                    exit_dt = dt_arr[j]
+                    break
 
-                    if stopped:
-                        outcome = 'stop'
-                        # Result is the stop distance in report units
-                        if request.report_unit == 'adr':
-                            result = -(stop_dist / entry_adr)
-                        else:
-                            result = -(stop_dist / entry_rev)
-                        exit_idx = j
-                        exit_dt = dt_arr[j]
-                        break
-
-                    # Check TARGET
-                    if request.target_type in ('fixed_rr', 'fixed_adr'):
-                        if entry_is_up:
-                            hit = close_arr[j] >= entry_close + target_dist
-                        else:
-                            hit = close_arr[j] <= entry_close - target_dist
-
-                        if hit:
+            elif request.target_type == 'ma_trail':
+                # Opposite-color bar closes beyond the MA
+                if is_up_arr[j] != entry_is_up and ema_values is not None:
+                    ema_val = ema_values[j]
+                    if not np.isnan(ema_val):
+                        if entry_is_up and close_arr[j] < ema_val:
+                            # Exit: down bar closed below MA
+                            move = close_arr[j] - entry_close
                             outcome = 'target'
                             if request.report_unit == 'adr':
-                                result = target_dist / entry_adr
+                                result = move / entry_adr
                             else:
-                                result = target_dist / entry_rev
+                                result = move / entry_rev
                             exit_idx = j
                             exit_dt = dt_arr[j]
                             break
-
-                    elif request.target_type == 'ma_trail':
-                        # Opposite-color bar closes beyond the MA
-                        if is_up_arr[j] != entry_is_up and ema_values is not None:
-                            ema_val = ema_values[j]
-                            if not np.isnan(ema_val):
-                                if entry_is_up and close_arr[j] < ema_val:
-                                    # Exit: down bar closed below MA
-                                    move = close_arr[j] - entry_close
-                                    outcome = 'target'
-                                    if request.report_unit == 'adr':
-                                        result = move / entry_adr
-                                    else:
-                                        result = move / entry_rev
-                                    exit_idx = j
-                                    exit_dt = dt_arr[j]
-                                    break
-                                elif not entry_is_up and close_arr[j] > ema_val:
-                                    # Exit: up bar closed above MA
-                                    move = entry_close - close_arr[j]
-                                    outcome = 'target'
-                                    if request.report_unit == 'adr':
-                                        result = move / entry_adr
-                                    else:
-                                        result = move / entry_rev
-                                    exit_idx = j
-                                    exit_dt = dt_arr[j]
-                                    break
-
-                    elif request.target_type == 'color_change':
-                        # First opposite-color bar
-                        if is_up_arr[j] != entry_is_up:
-                            if entry_is_up:
-                                move = close_arr[j] - entry_close
-                            else:
-                                move = entry_close - close_arr[j]
+                        elif not entry_is_up and close_arr[j] > ema_val:
+                            # Exit: up bar closed above MA
+                            move = entry_close - close_arr[j]
                             outcome = 'target'
                             if request.report_unit == 'adr':
                                 result = move / entry_adr
@@ -2872,70 +2868,148 @@ def backtest_signals(request: BacktestRequest):
                             exit_dt = dt_arr[j]
                             break
 
-                # If still open, compute unrealized P&L
-                if outcome == 'open':
-                    bars_held = n - 1 - i
+            elif request.target_type == 'color_change':
+                # First opposite-color bar
+                if is_up_arr[j] != entry_is_up:
                     if entry_is_up:
-                        move = close_arr[n - 1] - entry_close
+                        move = close_arr[j] - entry_close
                     else:
-                        move = entry_close - close_arr[n - 1]
+                        move = entry_close - close_arr[j]
+                    outcome = 'target'
                     if request.report_unit == 'adr':
                         result = move / entry_adr
                     else:
                         result = move / entry_rev
-                    exit_idx = n - 1
-                    exit_dt = dt_arr[n - 1]
+                    exit_idx = j
+                    exit_dt = dt_arr[j]
+                    break
 
-                trades.append({
-                    "idx": i,
-                    "entry_dt": dt_arr[i],
-                    "direction": direction,
-                    "outcome": outcome,
-                    "result": round(float(result), 2),
-                    "bars_held": bars_held,
-                    "exit_idx": exit_idx,
-                    "exit_dt": exit_dt,
-                })
+        # If still open, compute unrealized P&L
+        if outcome == 'open':
+            bars_held = n - 1 - i
+            if entry_is_up:
+                move = close_arr[n - 1] - entry_close
+            else:
+                move = entry_close - close_arr[n - 1]
+            if request.report_unit == 'adr':
+                result = move / entry_adr
+            else:
+                result = move / entry_rev
+            exit_idx = n - 1
+            exit_dt = dt_arr[n - 1]
 
-            # Compute summary stats
-            count = len(trades)
-            wins = [t for t in trades if t['outcome'] == 'target' and t['result'] > 0]
-            losses = [t for t in trades if t['outcome'] == 'stop']
-            open_trades = [t for t in trades if t['outcome'] == 'open']
-            win_results = [t['result'] for t in wins]
-            loss_results = [t['result'] for t in losses]
+        trade = {
+            "idx": i,
+            "entry_dt": dt_arr[i],
+            "direction": direction,
+            "outcome": outcome,
+            "result": round(float(result), 2),
+            "bars_held": bars_held,
+            "exit_idx": exit_idx,
+            "exit_dt": exit_dt,
+        }
+        if sig_name not in trades_by_signal:
+            trades_by_signal[sig_name] = []
+        trades_by_signal[sig_name].append(trade)
+        if not request.allow_overlap and exit_idx is not None:
+            next_allowed_entry = exit_idx + 1
 
-            win_count = len(wins)
-            loss_count = len(losses)
-            open_count = len(open_trades)
-            closed_count = win_count + loss_count
+    # 4. Compute summary stats per signal
+    for signal in request.signals:
+        if signal.name in errors_result:
+            continue
+        if not signal.expression.strip():
+            continue
+        trades = trades_by_signal.get(signal.name, [])
 
-            win_rate = (win_count / closed_count) if closed_count > 0 else 0
-            avg_win = (sum(win_results) / win_count) if win_count > 0 else 0
-            avg_loss = (sum(loss_results) / loss_count) if loss_count > 0 else 0
-            gross_profit = sum(win_results)
-            gross_loss = abs(sum(loss_results))
-            profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float('inf') if gross_profit > 0 else 0
-            total_r = sum(t['result'] for t in trades)
-            expectancy = (total_r / closed_count) if closed_count > 0 else 0
+        # Compute summary stats
+        count = len(trades)
+        wins = [t for t in trades if t['outcome'] == 'target' and t['result'] > 0]
+        losses = [t for t in trades if t['outcome'] == 'stop']
+        open_trades = [t for t in trades if t['outcome'] == 'open']
+        win_results = [t['result'] for t in wins]
+        loss_results = [t['result'] for t in losses]
 
-            signals_result[signal.name] = {
-                "trades": trades,
-                "summary": {
-                    "count": count,
-                    "wins": win_count,
-                    "losses": loss_count,
-                    "open": open_count,
-                    "win_rate": round(win_rate, 3),
-                    "avg_win": round(avg_win, 2),
-                    "avg_loss": round(avg_loss, 2),
-                    "profit_factor": round(profit_factor, 2) if profit_factor != float('inf') else 999.99,
-                    "expectancy": round(expectancy, 2),
-                    "total_r": round(total_r, 2),
-                },
-            }
-        except Exception as e:
-            errors_result[signal.name] = str(e)
+        win_count = len(wins)
+        loss_count = len(losses)
+        open_count = len(open_trades)
+        closed_count = win_count + loss_count
+
+        win_rate = (win_count / closed_count) if closed_count > 0 else 0
+        avg_win = (sum(win_results) / win_count) if win_count > 0 else 0
+        avg_loss = (sum(loss_results) / loss_count) if loss_count > 0 else 0
+        gross_profit = sum(win_results)
+        gross_loss = abs(sum(loss_results))
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float('inf') if gross_profit > 0 else 0
+        total_r = sum(t['result'] for t in trades)
+        expectancy = (total_r / closed_count) if closed_count > 0 else 0
+
+        # Max Drawdown
+        cum = 0.0
+        peak = 0.0
+        max_drawdown = 0.0
+        for t in trades:
+            cum += t['result']
+            if cum > peak:
+                peak = cum
+            dd = peak - cum
+            if dd > max_drawdown:
+                max_drawdown = dd
+
+        # Sharpe Ratio
+        closed_results = [t['result'] for t in trades if t['outcome'] in ('target', 'stop')]
+        if len(closed_results) >= 2:
+            cr_mean = sum(closed_results) / len(closed_results)
+            cr_std = (sum((x - cr_mean) ** 2 for x in closed_results) / (len(closed_results) - 1)) ** 0.5
+            sharpe = (cr_mean / cr_std) if cr_std > 0 else None
+        else:
+            sharpe = None
+
+        # Max Consecutive Wins / Losses
+        max_consec_wins = 0
+        max_consec_losses = 0
+        cur_wins = 0
+        cur_losses = 0
+        for t in trades:
+            if t['outcome'] == 'open':
+                continue
+            if t['result'] > 0:
+                cur_wins += 1
+                cur_losses = 0
+            elif t['result'] < 0:
+                cur_losses += 1
+                cur_wins = 0
+            else:
+                cur_wins = 0
+                cur_losses = 0
+            if cur_wins > max_consec_wins:
+                max_consec_wins = cur_wins
+            if cur_losses > max_consec_losses:
+                max_consec_losses = cur_losses
+
+        # Avg Bars Held
+        avg_bars = (sum(t['bars_held'] for t in trades) / count) if count > 0 else 0
+
+        signals_result[signal.name] = {
+            "trades": trades,
+            "summary": {
+                "count": count,
+                "wins": win_count,
+                "losses": loss_count,
+                "open": open_count,
+                "win_rate": round(win_rate, 3),
+                "avg_win": round(avg_win, 2),
+                "avg_loss": round(avg_loss, 2),
+                "profit_factor": round(profit_factor, 2) if profit_factor != float('inf') else 999.99,
+                "expectancy": round(expectancy, 2),
+                "total_r": round(total_r, 2),
+                "max_drawdown": round(max_drawdown, 2),
+                "sharpe": round(sharpe, 2) if sharpe is not None else None,
+                "max_consec_wins": max_consec_wins,
+                "max_consec_losses": max_consec_losses,
+                "avg_bars_held": round(avg_bars, 1),
+            },
+        }
 
     return {
         "signals": signals_result,
@@ -2947,6 +3021,7 @@ def backtest_signals(request: BacktestRequest):
             "target_value": request.target_value,
             "target_ma": request.target_ma,
             "report_unit": request.report_unit,
+            "allow_overlap": request.allow_overlap,
         },
     }
 

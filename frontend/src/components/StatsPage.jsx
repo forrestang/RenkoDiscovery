@@ -724,6 +724,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   const btLoadDropdownRef = useRef(null)
   const [btSaveToastVisible, setBtSaveToastVisible] = useState(false)
   const btSaveToastTimer = useRef(null)
+  const [btAllowOverlap, setBtAllowOverlap] = useState(() => {
+    const v = localStorage.getItem(`${STORAGE_PREFIX}btAllowOverlap`)
+    return v === null ? true : v === 'true'
+  })
   const [showBtHelp, setShowBtHelp] = useState(false)
   const [btHelpPos, setBtHelpPos] = useState({ x: 200, y: 100 })
   const [btDragging, setBtDragging] = useState(false)
@@ -766,6 +770,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btReportUnit`, btReportUnit)
   }, [btReportUnit])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btAllowOverlap`, btAllowOverlap.toString())
+  }, [btAllowOverlap])
 
   const addBtSignal = useCallback(() => {
     setBtSignals(prev => [...prev, { name: `Signal ${prev.length + 1}`, expression: '', enabled: true }])
@@ -868,6 +875,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
           target_value: btTargetValue,
           target_ma: btTargetMA,
           report_unit: btReportUnit,
+          allow_overlap: btAllowOverlap,
         }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -878,7 +886,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     } finally {
       setBtLoading(false)
     }
-  }, [filepath, apiBase, btSignals, btStopType, btStopValue, btTargetType, btTargetValue, btTargetMA, btReportUnit])
+  }, [filepath, apiBase, btSignals, btStopType, btStopValue, btTargetType, btTargetValue, btTargetMA, btReportUnit, btAllowOverlap])
 
   // Memoized R-Curve traces for backtest
   const btCurveTraces = useMemo(() => {
@@ -2536,6 +2544,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <option value="adr">ADR</option>
                 </select>
               </div>
+              <div className="backtest-config-group" data-tooltip="When checked, a new trade will not be entered while an existing trade is still open">
+                <label className="backtest-config-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <input
+                    type="checkbox"
+                    checked={!btAllowOverlap}
+                    onChange={e => setBtAllowOverlap(!e.target.checked)}
+                    style={{ margin: 0 }}
+                  />
+                  One Trade at a Time
+                </label>
+              </div>
             </div>
           </div>
 
@@ -2658,7 +2677,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                 <table className="stats-table">
                   <thead>
                     <tr className="module-title-row">
-                      <th colSpan={11} className="module-title">BACKTEST SUMMARY</th>
+                      <th colSpan={16} className="module-title">BACKTEST SUMMARY</th>
                     </tr>
                     <tr>
                       <th>Signal</th>
@@ -2672,6 +2691,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       <th data-tooltip="Profit Factor — gross wins / gross losses. Above 1.0 = profitable.">PF</th>
                       <th data-tooltip="Expectancy — average result per closed trade. Positive = profitable on average.">Expect.</th>
                       <th>Total {btReportUnit.toUpperCase()}</th>
+                      <th data-tooltip="Max Drawdown — largest peak-to-trough decline in equity curve.">Max DD</th>
+                      <th data-tooltip="Sharpe Ratio — mean trade result / std deviation. Higher = more consistent.">Sharpe</th>
+                      <th data-tooltip="Max Consecutive Wins — longest winning streak.">W Streak</th>
+                      <th data-tooltip="Max Consecutive Losses — longest losing streak.">L Streak</th>
+                      <th data-tooltip="Avg Bars Held — average trade duration in renko bars.">Avg Bars</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2691,6 +2715,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                           <td>{sm.profit_factor}</td>
                           <td style={{ color: sm.expectancy >= 0 ? '#22c55e' : '#ef4444' }}>{sm.expectancy}</td>
                           <td style={{ fontWeight: 600, color: sm.total_r >= 0 ? '#22c55e' : '#ef4444' }}>{sm.total_r}</td>
+                          <td className="dn">{sm.max_drawdown}</td>
+                          <td>{sm.sharpe != null ? sm.sharpe : '\u2014'}</td>
+                          <td className="up">{sm.max_consec_wins}</td>
+                          <td className="dn">{sm.max_consec_losses}</td>
+                          <td>{sm.avg_bars_held}</td>
                         </tr>
                       )
                     })}

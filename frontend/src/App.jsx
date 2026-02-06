@@ -1052,16 +1052,7 @@ function App() {
               isLoading={isLoadingParquet}
               onBack={() => setStatsView('stats')}
             />
-          ) : activeTab === 'stats' ? (
-            <StatsPage
-              stats={statsData}
-              filename={statsFilename}
-              filepath={statsFilepath}
-              isLoading={isLoadingStats}
-              onDelete={handleDeleteStatsFile}
-              apiBase={apiBase}
-            />
-          ) : (
+          ) : activeTab !== 'stats' ? (
             <ChartArea
               chartData={chartType === 'renko' ? renkoData : chartData}
               renkoData={chartType === 'overlay' ? renkoData : null}
@@ -1078,7 +1069,17 @@ function App() {
               renkoPerReversalSizes={renkoData?.data?.reversal_size}
               sessionSchedule={sessionSchedule}
             />
-          )}
+          ) : null}
+          <div style={{ display: activeTab === 'stats' && statsView !== 'parquet' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <StatsPage
+              stats={statsData}
+              filename={statsFilename}
+              filepath={statsFilepath}
+              isLoading={isLoadingStats}
+              onDelete={handleDeleteStatsFile}
+              apiBase={apiBase}
+            />
+          </div>
         </main>
       </div>
     </div>
