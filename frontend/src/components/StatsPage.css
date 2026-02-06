@@ -905,6 +905,26 @@
   width: 100%;
 }
 
+.playground-save-toast {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  background: #22c55e;
+  color: #fff;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  animation: toast-fade 1.5s ease-in-out forwards;
+  pointer-events: none;
+  z-index: 10;
+}
+@keyframes toast-fade {
+  0% { opacity: 0; transform: translateY(-4px); }
+  15% { opacity: 1; transform: translateY(0); }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .playground-rcurve-module {
   width: 100%;
 }
@@ -1015,5 +1035,119 @@
   color: var(--text-muted);
   text-align: center;
   font-style: italic;
+}
+
+/* ==================== Backtest Tab ==================== */
+
+.backtest-config-module {
+  width: 100%;
+}
+
+.backtest-config-header {
+  margin-bottom: var(--space-2);
+}
+
+.backtest-config-grid {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.backtest-config-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.backtest-config-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 44px;
+}
+
+.backtest-config-select {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.backtest-config-input {
+  width: 56px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+}
+
+.backtest-config-input:focus,
+.backtest-config-select:focus {
+  border-color: var(--accent-primary);
+  outline: none;
+}
+
+.backtest-signals-module {
+  width: 100%;
+}
+
+.backtest-curve-module {
+  width: 100%;
+}
+
+.backtest-stats-module {
+  width: 100%;
+}
+
+.backtest-tradelog-module {
+  width: 100%;
+}
+
+.backtest-tradelog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.backtest-tradelog-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.backtest-tradelog-table td {
+  font-size: 10px;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+.backtest-tradelog-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-secondary);
+}
+
+.backtest-trade-win {
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.backtest-trade-loss {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.backtest-trade-open {
+  opacity: 0.6;
 }
 

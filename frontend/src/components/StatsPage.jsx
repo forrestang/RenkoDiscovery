@@ -331,6 +331,7 @@ const stateMAOrder = {
 
 function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) {
   const signalData = stats?.signalData
+  const brickEqReversal = stats?.settings?.brickSize != null && stats.settings.brickSize === stats.settings.reversalSize
 
   // Derive distinct N values per type
   const type1NValues = useMemo(() => {
@@ -514,6 +515,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   const [savedSignals, setSavedSignals] = useState([])
   const [showLoadDropdown, setShowLoadDropdown] = useState(false)
   const loadDropdownRef = useRef(null)
+  const [saveToastVisible, setSaveToastVisible] = useState(false)
+  const saveToastTimer = useRef(null)
 
   // Persist playground signals to localStorage
   useEffect(() => {
@@ -594,6 +597,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       if (res.ok) {
         const data = await res.json()
         setSavedSignals(data.signals || [])
+        clearTimeout(saveToastTimer.current)
+        setSaveToastVisible(true)
+        saveToastTimer.current = setTimeout(() => setSaveToastVisible(false), 1500)
       }
     } catch {}
   }, [filepath, apiBase])
@@ -686,6 +692,221 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     })
     return result
   }, [playgroundData, playgroundSignals, playgroundRRField])
+
+  // ==================== Backtest Tab State ====================
+  const [btSignals, setBtSignals] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}btSignals`)
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return [{ name: 'Signal 1', expression: '', enabled: true }]
+  })
+  const [btStopType, setBtStopType] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btStopType`) || 'rr')
+  const [btStopValue, setBtStopValue] = useState(() => {
+    const v = localStorage.getItem(`${STORAGE_PREFIX}btStopValue`)
+    return v ? parseFloat(v) : 1
+  })
+  const [btTargetType, setBtTargetType] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btTargetType`) || 'fixed_rr')
+  const [btTargetValue, setBtTargetValue] = useState(() => {
+    const v = localStorage.getItem(`${STORAGE_PREFIX}btTargetValue`)
+    return v ? parseFloat(v) : 2
+  })
+  const [btTargetMA, setBtTargetMA] = useState(() => {
+    const v = localStorage.getItem(`${STORAGE_PREFIX}btTargetMA`)
+    return v ? parseInt(v) : 1
+  })
+  const [btReportUnit, setBtReportUnit] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btReportUnit`) || 'rr')
+  const [btData, setBtData] = useState({ signals: {}, errors: {} })
+  const [btLoading, setBtLoading] = useState(false)
+  const [btSignalFilter, setBtSignalFilter] = useState('all')
+  const [btSavedSignals, setBtSavedSignals] = useState([])
+  const [showBtLoadDropdown, setShowBtLoadDropdown] = useState(false)
+  const btLoadDropdownRef = useRef(null)
+  const [btSaveToastVisible, setBtSaveToastVisible] = useState(false)
+  const btSaveToastTimer = useRef(null)
+  const [showBtHelp, setShowBtHelp] = useState(false)
+  const [btHelpPos, setBtHelpPos] = useState({ x: 200, y: 100 })
+  const [btDragging, setBtDragging] = useState(false)
+  const btDragOffset = useRef({ x: 0, y: 0 })
+
+  // Backtest help panel drag effect
+  useEffect(() => {
+    if (!btDragging) return
+    const onMouseMove = (e) => {
+      setBtHelpPos({ x: e.clientX - btDragOffset.current.x, y: e.clientY - btDragOffset.current.y })
+    }
+    const onMouseUp = () => setBtDragging(false)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [btDragging])
+
+  // Persist backtest config to localStorage
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btSignals`, JSON.stringify(btSignals))
+  }, [btSignals])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btStopType`, btStopType)
+  }, [btStopType])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btStopValue`, btStopValue.toString())
+  }, [btStopValue])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btTargetType`, btTargetType)
+  }, [btTargetType])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btTargetValue`, btTargetValue.toString())
+  }, [btTargetValue])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btTargetMA`, btTargetMA.toString())
+  }, [btTargetMA])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btReportUnit`, btReportUnit)
+  }, [btReportUnit])
+
+  const addBtSignal = useCallback(() => {
+    setBtSignals(prev => [...prev, { name: `Signal ${prev.length + 1}`, expression: '', enabled: true }])
+  }, [])
+
+  const removeBtSignal = useCallback((index) => {
+    setBtSignals(prev => prev.length <= 1 ? prev : prev.filter((_, i) => i !== index))
+  }, [])
+
+  const updateBtSignal = useCallback((index, field, value) => {
+    setBtSignals(prev => prev.map((s, i) => i === index ? { ...s, [field]: value } : s))
+  }, [])
+
+  const toggleBtSignal = useCallback((index) => {
+    setBtSignals(prev => prev.map((s, i) =>
+      i === index ? { ...s, enabled: s.enabled === false ? true : false } : s
+    ))
+  }, [])
+
+  // Fetch saved signals for backtest (shares same storage as playground)
+  useEffect(() => {
+    if (!filepath || !apiBase) return
+    fetch(`${apiBase}/playground-saved-signals?filepath=${encodeURIComponent(filepath)}`)
+      .then(r => r.ok ? r.json() : { signals: [] })
+      .then(data => setBtSavedSignals(data.signals || []))
+      .catch(() => setBtSavedSignals([]))
+  }, [filepath, apiBase])
+
+  const saveBtSignal = useCallback(async (signal) => {
+    if (!filepath || !apiBase || !signal.name.trim() || !signal.expression.trim()) return
+    try {
+      const res = await fetch(`${apiBase}/playground-save-signal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filepath, name: signal.name, expression: signal.expression }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setBtSavedSignals(data.signals || [])
+        setSavedSignals(data.signals || [])
+        clearTimeout(btSaveToastTimer.current)
+        setBtSaveToastVisible(true)
+        btSaveToastTimer.current = setTimeout(() => setBtSaveToastVisible(false), 1500)
+      }
+    } catch {}
+  }, [filepath, apiBase])
+
+  const deleteBtSavedSignal = useCallback(async (name) => {
+    if (!filepath || !apiBase) return
+    try {
+      const res = await fetch(`${apiBase}/playground-delete-signal?filepath=${encodeURIComponent(filepath)}&name=${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setBtSavedSignals(data.signals || [])
+        setSavedSignals(data.signals || [])
+      }
+    } catch {}
+  }, [filepath, apiBase])
+
+  const loadBtSignal = useCallback((saved) => {
+    setBtSignals(prev => {
+      const emptyIdx = prev.findIndex(s => !s.expression.trim())
+      if (emptyIdx >= 0) {
+        return prev.map((s, i) => i === emptyIdx ? { name: saved.name, expression: saved.expression, enabled: true } : s)
+      }
+      return [...prev, { name: saved.name, expression: saved.expression, enabled: true }]
+    })
+    setShowBtLoadDropdown(false)
+  }, [])
+
+  // Close backtest load dropdown on outside click
+  useEffect(() => {
+    if (!showBtLoadDropdown) return
+    const handler = (e) => {
+      if (btLoadDropdownRef.current && !btLoadDropdownRef.current.contains(e.target)) {
+        setShowBtLoadDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showBtLoadDropdown])
+
+  const evaluateBacktest = useCallback(async () => {
+    if (!filepath || !apiBase) return
+    const nonEmpty = btSignals.filter(s => s.expression.trim() && s.enabled !== false)
+    if (nonEmpty.length === 0) return
+    setBtLoading(true)
+    try {
+      const res = await fetch(`${apiBase}/backtest-signals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filepath,
+          signals: nonEmpty,
+          stop_type: btStopType,
+          stop_value: btStopValue,
+          target_type: btTargetType,
+          target_value: btTargetValue,
+          target_ma: btTargetMA,
+          report_unit: btReportUnit,
+        }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      setBtData(data)
+    } catch (e) {
+      setBtData({ signals: {}, errors: { _global: e.message } })
+    } finally {
+      setBtLoading(false)
+    }
+  }, [filepath, apiBase, btSignals, btStopType, btStopValue, btTargetType, btTargetValue, btTargetMA, btReportUnit])
+
+  // Memoized R-Curve traces for backtest
+  const btCurveTraces = useMemo(() => {
+    const traces = []
+    const sigs = btData.signals || {}
+    btSignals.forEach((signal, i) => {
+      if (signal.enabled === false) return
+      const sigData = sigs[signal.name]
+      if (!sigData || !sigData.trades || sigData.trades.length === 0) return
+      const sorted = [...sigData.trades].sort((a, b) => a.idx - b.idx)
+      let cumulative = 0
+      const x = [0]
+      const y = [0]
+      sorted.forEach((t, j) => {
+        cumulative += t.result
+        x.push(j + 1)
+        y.push(parseFloat(cumulative.toFixed(2)))
+      })
+      traces.push({
+        x, y,
+        type: 'scatter',
+        mode: 'lines',
+        name: signal.name,
+        line: { color: PLAYGROUND_COLORS[i % PLAYGROUND_COLORS.length], width: 1.5 },
+      })
+    })
+    return traces
+  }, [btData, btSignals])
 
   // Active chop filter based on current tab
   const chopFilter = activeTab === 'general' ? chopFilterGeneral : chopFilterSignals
@@ -837,8 +1058,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     return [
       { key: 'type1Up', color: '#22c55e', name: 'Type1 UP' },
       { key: 'type1Dn', color: '#ef4444', name: 'Type1 DN' },
-      { key: 'type2Up', color: '#4ade80', name: 'Type2 UP', dash: 'dot' },
-      { key: 'type2Dn', color: '#f87171', name: 'Type2 DN', dash: 'dot' },
+      ...(!brickEqReversal ? [
+        { key: 'type2Up', color: '#4ade80', name: 'Type2 UP', dash: 'dot' },
+        { key: 'type2Dn', color: '#f87171', name: 'Type2 DN', dash: 'dot' },
+      ] : []),
     ]
       .filter(s => filteredSignalData[s.key]?.length > 0)
       .map(s => {
@@ -861,14 +1084,16 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
           hovertemplate: `%{y:.2f} ${rrLabel}<extra>%{fullData.name}</extra>`,
         }
       })
-  }, [filteredSignalData, selectedRRField, rrLabel])
+  }, [filteredSignalData, selectedRRField, rrLabel, brickEqReversal])
 
   // Build combined UP+DN traces (interleaved chronologically by row index)
   const comboCurveTraces = useMemo(() => {
     if (!filteredSignalData) return []
     const combos = [
       { upKey: 'type1Up', dnKey: 'type1Dn', color: '#facc15', name: 'Type1 Combo' },
-      { upKey: 'type2Up', dnKey: 'type2Dn', color: '#fb923c', name: 'Type2 Combo', dash: 'dot' },
+      ...(!brickEqReversal ? [
+        { upKey: 'type2Up', dnKey: 'type2Dn', color: '#fb923c', name: 'Type2 Combo', dash: 'dot' },
+      ] : []),
     ]
     return combos
       .map(c => {
@@ -895,7 +1120,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
         }
       })
       .filter(Boolean)
-  }, [filteredSignalData, selectedRRField, rrLabel])
+  }, [filteredSignalData, selectedRRField, rrLabel, brickEqReversal])
 
   // Compute signal type stats from filtered data
   const type1Stats = useMemo(() => {
@@ -919,7 +1144,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     const getRR = (pt) => pt[selectedRRField] ?? 0
     const result = regimes.map(r => {
       const t1 = [...(filteredSignalData.type1Up || []), ...(filteredSignalData.type1Dn || [])].filter(pt => pt.chop != null && r.test(pt.chop))
-      const t2 = [...(filteredSignalData.type2Up || []), ...(filteredSignalData.type2Dn || [])].filter(pt => pt.chop != null && r.test(pt.chop))
+      const t2 = brickEqReversal ? [] : [...(filteredSignalData.type2Up || []), ...(filteredSignalData.type2Dn || [])].filter(pt => pt.chop != null && r.test(pt.chop))
       const calc = (arr) => {
         if (arr.length === 0) return { count: 0, winPct: 0, avgRR: 0 }
         const wins = arr.filter(pt => getRR(pt) > 0).length
@@ -1111,6 +1336,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             className={`stats-tab ${activeTab === 'playground' ? 'active' : ''}`}
             onClick={() => setActiveTab('playground')}
           >Playground</button>
+          <button
+            className={`stats-tab ${activeTab === 'backtest' ? 'active' : ''}`}
+            onClick={() => setActiveTab('backtest')}
+          >Backtest</button>
         </div>
         <div className="stats-file-header">
           <span className="stats-filename">{filename}</span>
@@ -1138,7 +1367,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       </div>
 
       {/* Chop Filter Bar — fixed above scroll, shared UI, independent per-tab state */}
-      {activeTab !== 'conditional' && activeTab !== 'playground' && <div className="chop-filter-bar">
+      {activeTab !== 'conditional' && activeTab !== 'playground' && activeTab !== 'backtest' && <div className="chop-filter-bar">
         <span className="chop-filter-label">Chop:</span>
         {[
           { value: 'all', label: 'All' },
@@ -1242,7 +1471,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       ))}
                     </div>
                   )}
-                  {type2NValues.length > 0 && (
+                  {type2NValues.length > 0 && !brickEqReversal && (
                     <div className="filter-group">
                       <button
                         className={`nth-chip type-toggle ${type2Enabled ? 'active' : ''}`}
@@ -1265,7 +1494,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   {[
                     { type: 't1', label: 'Signal Quality-T1', open: sqfPanelOpenT1, setOpen: setSqfPanelOpenT1 },
                     { type: 't2', label: 'Signal Quality-T2', open: sqfPanelOpenT2, setOpen: setSqfPanelOpenT2 },
-                  ].filter(({ type }) => sqfBounds?.[type]).map(({ type, label, open, setOpen }) => (
+                  ].filter(({ type }) => sqfBounds?.[type] && !(type === 't2' && brickEqReversal)).map(({ type, label, open, setOpen }) => (
                     <div key={type} className="sqf-filters-panel">
                       <div className="sqf-header-row">
                         <span className="sqf-label" onClick={() => setOpen(prev => !prev)}>
@@ -1388,19 +1617,19 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
               <table className="stats-table">
                 <thead>
                   <tr className="module-title-row">
-                    <th colSpan="5" className="module-title" data-tooltip="Signal performance summary for Type1 (MA1 touch reversal) and Type2 (wicked bars in +3/-3 state)">SIGNAL PERFORMANCE</th>
+                    <th colSpan={brickEqReversal ? 3 : 5} className="module-title" data-tooltip="Signal performance summary for Type1 (3-bar reversal pattern) and Type2 (wicked bars in +3/-3 state)">SIGNAL PERFORMANCE</th>
                   </tr>
                   <tr>
                     <th></th>
                     <th colSpan="2">Type 1</th>
-                    <th colSpan="2">Type 2</th>
+                    {!brickEqReversal && <th colSpan="2">Type 2</th>}
                   </tr>
                   <tr>
                     <th></th>
                     <th className="up">UP</th>
                     <th className="dn">DN</th>
-                    <th className="up">UP</th>
-                    <th className="dn">DN</th>
+                    {!brickEqReversal && <th className="up">UP</th>}
+                    {!brickEqReversal && <th className="dn">DN</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1408,40 +1637,40 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                     <td>Count</td>
                     <td className="up">{type1Stats?.upSummary.count ?? '—'}</td>
                     <td className="dn">{type1Stats?.dnSummary.count ?? '—'}</td>
-                    <td className="up">{type2Stats?.upSummary.count ?? '—'}</td>
-                    <td className="dn">{type2Stats?.dnSummary.count ?? '—'}</td>
+                    {!brickEqReversal && <td className="up">{type2Stats?.upSummary.count ?? '—'}</td>}
+                    {!brickEqReversal && <td className="dn">{type2Stats?.dnSummary.count ?? '—'}</td>}
                   </tr>
                   <tr>
                     <td>Avg RR</td>
                     <td className="up">{type1Stats?.upSummary.avgRR ?? '—'}</td>
                     <td className="dn">{type1Stats?.dnSummary.avgRR ?? '—'}</td>
-                    <td className="up">{type2Stats?.upSummary.avgRR ?? '—'}</td>
-                    <td className="dn">{type2Stats?.dnSummary.avgRR ?? '—'}</td>
+                    {!brickEqReversal && <td className="up">{type2Stats?.upSummary.avgRR ?? '—'}</td>}
+                    {!brickEqReversal && <td className="dn">{type2Stats?.dnSummary.avgRR ?? '—'}</td>}
                   </tr>
                   <tr>
                     <td>Win Rate</td>
                     <td className="up">{type1Stats ? `${type1Stats.upSummary.winRate}%` : '—'}</td>
                     <td className="dn">{type1Stats ? `${type1Stats.dnSummary.winRate}%` : '—'}</td>
-                    <td className="up">{type2Stats ? `${type2Stats.upSummary.winRate}%` : '—'}</td>
-                    <td className="dn">{type2Stats ? `${type2Stats.dnSummary.winRate}%` : '—'}</td>
+                    {!brickEqReversal && <td className="up">{type2Stats ? `${type2Stats.upSummary.winRate}%` : '—'}</td>}
+                    {!brickEqReversal && <td className="dn">{type2Stats ? `${type2Stats.dnSummary.winRate}%` : '—'}</td>}
                   </tr>
                 </tbody>
                 {/* RR Distribution */}
                 <thead>
                   <tr className="module-title-row">
-                    <th colSpan="5" className="module-title">RR DISTRIBUTION</th>
+                    <th colSpan={brickEqReversal ? 3 : 5} className="module-title">RR DISTRIBUTION</th>
                   </tr>
                   <tr>
                     <th></th>
                     <th colSpan="2">Type 1</th>
-                    <th colSpan="2">Type 2</th>
+                    {!brickEqReversal && <th colSpan="2">Type 2</th>}
                   </tr>
                   <tr>
                     <th>RR</th>
                     <th className="up">UP</th>
                     <th className="dn">DN</th>
-                    <th className="up">UP</th>
-                    <th className="dn">DN</th>
+                    {!brickEqReversal && <th className="up">UP</th>}
+                    {!brickEqReversal && <th className="dn">DN</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1450,8 +1679,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       <td>{bucket.label}</td>
                       <td className="up">{type1Stats ? `${type1Stats.upDist[i].count} (${type1Stats.upDist[i].pct}%)` : '—'}</td>
                       <td className="dn">{type1Stats ? `${type1Stats.dnDist[i].count} (${type1Stats.dnDist[i].pct}%)` : '—'}</td>
-                      <td className="up">{type2Stats ? `${type2Stats.upDist[i].count} (${type2Stats.upDist[i].pct}%)` : '—'}</td>
-                      <td className="dn">{type2Stats ? `${type2Stats.dnDist[i].count} (${type2Stats.dnDist[i].pct}%)` : '—'}</td>
+                      {!brickEqReversal && <td className="up">{type2Stats ? `${type2Stats.upDist[i].count} (${type2Stats.upDist[i].pct}%)` : '—'}</td>}
+                      {!brickEqReversal && <td className="dn">{type2Stats ? `${type2Stats.dnDist[i].count} (${type2Stats.dnDist[i].pct}%)` : '—'}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -1533,9 +1762,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       <tr><td>Type1 count</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type1.count}</td>)}</tr>
                       <tr><td>Type1 win %</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type1.winPct}%</td>)}</tr>
                       <tr><td>Type1 avg RR</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type1.avgRR}</td>)}</tr>
-                      <tr><td>Type2 count</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.count}</td>)}</tr>
-                      <tr><td>Type2 win %</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.winPct}%</td>)}</tr>
-                      <tr><td>Type2 avg RR</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.avgRR}</td>)}</tr>
+                      {!brickEqReversal && <tr><td>Type2 count</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.count}</td>)}</tr>}
+                      {!brickEqReversal && <tr><td>Type2 win %</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.winPct}%</td>)}</tr>}
+                      {!brickEqReversal && <tr><td>Type2 avg RR</td>{chopSignalPerf.map(r => <td key={r.key}>{r.type2.avgRR}</td>)}</tr>}
                     </tbody>
                   </>
                 )}
@@ -1979,7 +2208,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       {activeTab === 'playground' && (
         <div className="stats-tab-content">
           {/* Signal Definitions */}
-          <div className="stats-module module-box playground-signals-module">
+          <div className="stats-module module-box playground-signals-module" style={{ position: 'relative' }}>
+            {saveToastVisible && (
+              <div className="playground-save-toast">Saved</div>
+            )}
             <div className="playground-header">
               <span className="module-title-text">SIGNAL DEFINITIONS</span>
               <div className="playground-header-actions">
@@ -2227,6 +2459,390 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             </div>,
             document.body
           )}
+        </div>
+      )}
+
+      {/* ==================== Backtest Tab ==================== */}
+      {activeTab === 'backtest' && (
+        <div className="stats-tab-content">
+
+          {/* Config Module */}
+          <div className="stats-module module-box backtest-config-module">
+            <div className="backtest-config-header">
+              <span className="module-title-text">BACKTEST CONFIG</span>
+            </div>
+            <div className="backtest-config-grid">
+              <div className="backtest-config-group">
+                <label className="backtest-config-label">Stop</label>
+                <select
+                  className="backtest-config-select"
+                  value={btStopType}
+                  onChange={e => setBtStopType(e.target.value)}
+                >
+                  <option value="rr">RR</option>
+                  <option value="adr">ADR</option>
+                </select>
+                <input
+                  type="number"
+                  className="backtest-config-input"
+                  value={btStopValue}
+                  step="0.5"
+                  min="0.5"
+                  onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) setBtStopValue(v) }}
+                />
+              </div>
+              <div className="backtest-config-group">
+                <label className="backtest-config-label">Target</label>
+                <select
+                  className="backtest-config-select"
+                  value={btTargetType}
+                  onChange={e => setBtTargetType(e.target.value)}
+                >
+                  <option value="fixed_rr">Fixed RR</option>
+                  <option value="fixed_adr">Fixed ADR</option>
+                  <option value="ma_trail">MA Trail</option>
+                  <option value="color_change">Color Change</option>
+                </select>
+                {btTargetType !== 'color_change' && btTargetType !== 'ma_trail' && (
+                  <input
+                    type="number"
+                    className="backtest-config-input"
+                    value={btTargetValue}
+                    step="0.5"
+                    min="0.5"
+                    onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) setBtTargetValue(v) }}
+                  />
+                )}
+                {btTargetType === 'ma_trail' && (
+                  <select
+                    className="backtest-config-select"
+                    value={btTargetMA}
+                    onChange={e => setBtTargetMA(parseInt(e.target.value))}
+                  >
+                    <option value={1}>MA1</option>
+                    <option value={2}>MA2</option>
+                    <option value={3}>MA3</option>
+                  </select>
+                )}
+              </div>
+              <div className="backtest-config-group">
+                <label className="backtest-config-label">Report</label>
+                <select
+                  className="backtest-config-select"
+                  value={btReportUnit}
+                  onChange={e => setBtReportUnit(e.target.value)}
+                >
+                  <option value="rr">RR</option>
+                  <option value="adr">ADR</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Signal Definitions */}
+          <div className="stats-module module-box backtest-signals-module" style={{ position: 'relative' }}>
+            {btSaveToastVisible && (
+              <div className="playground-save-toast">Saved</div>
+            )}
+            <div className="playground-header">
+              <span className="module-title-text">SIGNAL DEFINITIONS</span>
+              <div className="playground-header-actions">
+                <div className="playground-load-wrapper" ref={btLoadDropdownRef}>
+                  <button className="filter-action-btn" onClick={() => setShowBtLoadDropdown(prev => !prev)}>
+                    Load ▼
+                  </button>
+                  {showBtLoadDropdown && (
+                    <div className="playground-load-dropdown">
+                      {btSavedSignals.length === 0 ? (
+                        <div className="playground-load-empty">No saved signals</div>
+                      ) : btSavedSignals.map((s, i) => (
+                        <div key={i} className="playground-load-item">
+                          <span className="playground-load-item-name" onClick={() => loadBtSignal(s)}>{s.name}</span>
+                          <span className="playground-load-item-expr" onClick={() => loadBtSignal(s)}>{s.expression}</span>
+                          <button
+                            className="playground-load-delete"
+                            onClick={(e) => { e.stopPropagation(); deleteBtSavedSignal(s.name) }}
+                            title="Delete saved signal"
+                          >&times;</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button className="filter-help-btn" onClick={() => setShowBtHelp(prev => !prev)} title="Help">?</button>
+                <button className="filter-action-btn" onClick={addBtSignal}>+ Add Signal</button>
+                <button className="filter-action-btn active" onClick={evaluateBacktest} disabled={btLoading}>
+                  {btLoading ? 'Running...' : 'Run Backtest'}
+                </button>
+              </div>
+            </div>
+            {btSignals.map((signal, i) => (
+              <div key={i} className={`playground-signal-row${signal.enabled === false ? ' playground-signal-row-disabled' : ''}`}>
+                <button
+                  className="playground-signal-color"
+                  style={signal.enabled === false
+                    ? { background: 'transparent', borderColor: PLAYGROUND_COLORS[i % PLAYGROUND_COLORS.length] }
+                    : { background: PLAYGROUND_COLORS[i % PLAYGROUND_COLORS.length] }}
+                  onClick={() => toggleBtSignal(i)}
+                  title={signal.enabled === false ? 'Enable signal' : 'Disable signal'}
+                />
+                <input
+                  className="playground-signal-name"
+                  value={signal.name}
+                  onChange={e => updateBtSignal(i, 'name', e.target.value)}
+                  placeholder="Name"
+                />
+                <button
+                  className={`playground-signal-save${btSavedSignals.some(s => s.name === signal.name && s.expression === signal.expression) ? ' saved' : ''}`}
+                  onClick={() => saveBtSignal(signal)}
+                  title="Save signal to disk"
+                >💾</button>
+                <input
+                  className="playground-signal-expr"
+                  value={signal.expression}
+                  onChange={e => updateBtSignal(i, 'expression', e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') evaluateBacktest() }}
+                  placeholder="Pandas expression, e.g. State == 3"
+                />
+                <button className="playground-signal-remove" onClick={() => removeBtSignal(i)} title="Remove signal">&times;</button>
+              </div>
+            ))}
+            {Object.entries(btData.errors || {}).map(([name, msg]) => (
+              <div key={name} className="playground-error">
+                <strong>{name}:</strong> {msg}
+              </div>
+            ))}
+          </div>
+
+          {/* Equity Curve */}
+          {btCurveTraces.length > 0 && (
+            <div className="stats-module module-box backtest-curve-module">
+              <div className="equity-curve-header">
+                <span className="module-title-text">EQUITY CURVE (CUMULATIVE {btReportUnit.toUpperCase()})</span>
+              </div>
+              <Plot
+                data={btCurveTraces}
+                layout={{
+                  height: 300,
+                  margin: { t: 8, r: 16, b: 40, l: 50 },
+                  paper_bgcolor: '#000000',
+                  plot_bgcolor: '#000000',
+                  font: { family: 'monospace', size: 11, color: '#a0a0b0' },
+                  xaxis: {
+                    title: { text: 'Trade #', font: { size: 10 } },
+                    gridcolor: 'rgba(255,255,255,0.1)',
+                    zeroline: false,
+                  },
+                  yaxis: {
+                    title: { text: `Cumulative ${btReportUnit.toUpperCase()}`, font: { size: 10 } },
+                    gridcolor: 'rgba(255,255,255,0.1)',
+                    zeroline: true,
+                    zerolinecolor: 'rgba(255,255,255,0.2)',
+                  },
+                  showlegend: true,
+                  legend: { font: { size: 10 }, bgcolor: 'transparent', x: 0, y: 1 },
+                }}
+                config={{ displayModeBar: false, responsive: true }}
+                style={{ width: '100%' }}
+              />
+            </div>
+          )}
+
+          {/* Summary Stats Table */}
+          {(() => {
+            const enabledSignals = btSignals.filter(s => s.enabled !== false)
+            const hasSummary = enabledSignals.some(s => btData.signals?.[s.name]?.summary)
+            if (!hasSummary) return null
+            return (
+              <div className="stats-module module-box backtest-stats-module">
+                <table className="stats-table">
+                  <thead>
+                    <tr className="module-title-row">
+                      <th colSpan={11} className="module-title">BACKTEST SUMMARY</th>
+                    </tr>
+                    <tr>
+                      <th>Signal</th>
+                      <th>Count</th>
+                      <th>Wins</th>
+                      <th>Losses</th>
+                      <th>Open</th>
+                      <th>Win %</th>
+                      <th>Avg Win</th>
+                      <th>Avg Loss</th>
+                      <th data-tooltip="Profit Factor — gross wins / gross losses. Above 1.0 = profitable.">PF</th>
+                      <th data-tooltip="Expectancy — average result per closed trade. Positive = profitable on average.">Expect.</th>
+                      <th>Total {btReportUnit.toUpperCase()}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {enabledSignals.map((s, i) => {
+                      const sm = btData.signals?.[s.name]?.summary
+                      if (!sm) return null
+                      return (
+                        <tr key={s.name + i}>
+                          <td style={{ color: PLAYGROUND_COLORS[btSignals.indexOf(s) % PLAYGROUND_COLORS.length], fontWeight: 600 }}>{s.name}</td>
+                          <td>{sm.count}</td>
+                          <td className="up">{sm.wins}</td>
+                          <td className="dn">{sm.losses}</td>
+                          <td>{sm.open}</td>
+                          <td>{(sm.win_rate * 100).toFixed(1)}%</td>
+                          <td className="up">{sm.avg_win}</td>
+                          <td className="dn">{sm.avg_loss}</td>
+                          <td>{sm.profit_factor}</td>
+                          <td style={{ color: sm.expectancy >= 0 ? '#22c55e' : '#ef4444' }}>{sm.expectancy}</td>
+                          <td style={{ fontWeight: 600, color: sm.total_r >= 0 ? '#22c55e' : '#ef4444' }}>{sm.total_r}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })()}
+
+          {/* Trade Log Table */}
+          {(() => {
+            const enabledSignals = btSignals.filter(s => s.enabled !== false)
+            const allTrades = []
+            enabledSignals.forEach(s => {
+              const sigData = btData.signals?.[s.name]
+              if (sigData?.trades) {
+                sigData.trades.forEach(t => allTrades.push({ ...t, signalName: s.name, signalIdx: btSignals.indexOf(s) }))
+              }
+            })
+            if (allTrades.length === 0) return null
+
+            const filteredTrades = btSignalFilter === 'all'
+              ? allTrades.sort((a, b) => a.idx - b.idx)
+              : allTrades.filter(t => t.signalName === btSignalFilter).sort((a, b) => a.idx - b.idx)
+
+            return (
+              <div className="stats-module module-box backtest-tradelog-module">
+                <div className="backtest-tradelog-header">
+                  <span className="module-title-text">TRADE LOG ({filteredTrades.length} trades)</span>
+                  <select
+                    className="backtest-config-select"
+                    value={btSignalFilter}
+                    onChange={e => setBtSignalFilter(e.target.value)}
+                  >
+                    <option value="all">All Signals</option>
+                    {enabledSignals.map(s => (
+                      <option key={s.name} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="backtest-tradelog-scroll">
+                  <table className="stats-table backtest-tradelog-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Signal</th>
+                        <th>Entry Date</th>
+                        <th>Bar#</th>
+                        <th>Dir</th>
+                        <th>Outcome</th>
+                        <th>Result</th>
+                        <th>Bars</th>
+                        <th>Exit Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTrades.map((t, i) => (
+                        <tr
+                          key={i}
+                          className={
+                            t.outcome === 'target' && t.result > 0 ? 'backtest-trade-win' :
+                            t.outcome === 'stop' ? 'backtest-trade-loss' :
+                            'backtest-trade-open'
+                          }
+                        >
+                          <td>{i + 1}</td>
+                          <td style={{ color: PLAYGROUND_COLORS[t.signalIdx % PLAYGROUND_COLORS.length] }}>{t.signalName}</td>
+                          <td>{t.entry_dt}</td>
+                          <td>{t.idx}</td>
+                          <td className={t.direction === 'long' ? 'up' : 'dn'}>{t.direction === 'long' ? 'L' : 'S'}</td>
+                          <td>{t.outcome === 'target' ? 'W' : t.outcome === 'stop' ? 'L' : 'Open'}</td>
+                          <td style={{ color: t.result >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
+                            {t.result >= 0 ? '+' : ''}{t.result}
+                          </td>
+                          <td>{t.bars_held}</td>
+                          <td>{t.exit_dt}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Help Panel (Portal) */}
+          {showBtHelp && ReactDOM.createPortal(
+            <div className="filter-help-panel" style={{ left: btHelpPos.x, top: btHelpPos.y }}>
+              <div
+                className={`filter-help-panel-header ${btDragging ? 'grabbing' : ''}`}
+                onMouseDown={(e) => {
+                  btDragOffset.current = { x: e.clientX - btHelpPos.x, y: e.clientY - btHelpPos.y }
+                  setBtDragging(true)
+                }}
+              >
+                <span className="filter-help-panel-title">Backtest — Pandas Query Syntax</span>
+                <button className="filter-help-close" onClick={() => setShowBtHelp(false)}>&times;</button>
+              </div>
+              <div className="filter-help-panel-body">
+                <p>Enter a <strong>pandas query expression</strong> to define each signal. Matching rows become signal occurrences, and their MFE/RR metrics are plotted.</p>
+
+                <h4>Operators</h4>
+                <table className="filter-help-table">
+                  <thead>
+                    <tr><th>Operator</th><th>Meaning</th><th>Example</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><code>==</code></td><td>equals</td><td><code>State == 3</code></td></tr>
+                    <tr><td><code>!=</code></td><td>not equal</td><td><code>State != 0</code></td></tr>
+                    <tr><td><code>&gt;</code> <code>&gt;=</code></td><td>greater than</td><td><code>State &gt;= 2</code></td></tr>
+                    <tr><td><code>&lt;</code> <code>&lt;=</code></td><td>less than</td><td><code>DD_RR &lt; 0.5</code></td></tr>
+                    <tr><td><code>and</code></td><td>both conditions</td><td><code>Type1 == 1 and State &gt; 0</code></td></tr>
+                    <tr><td><code>or</code></td><td>either condition</td><td><code>Type1 == 1 or Type2 == 1</code></td></tr>
+                    <tr><td><code>in</code></td><td>matches any in list</td><td><code>State in [2, 3]</code></td></tr>
+                    <tr><td><code>not in</code></td><td>excludes list</td><td><code>State not in [-1, 0, 1]</code></td></tr>
+                  </tbody>
+                </table>
+
+                <h4>Examples</h4>
+                <ul>
+                  <li><code>State == 3</code> — strongest bullish MA alignment</li>
+                  <li><code>State == -3</code> — strongest bearish MA alignment</li>
+                  <li><code>Type1 &gt; 0 and State &gt;= 2</code> — Type1 UP in strong trend</li>
+                  <li><code>DD_RR &lt; 0.3 and State in [2, 3]</code> — small wicks in trend</li>
+                  <li><code>Con_UP_bars &gt;= 3</code> — 3+ consecutive UP bars</li>
+                  <li><code>priorRunCount == 1</code> — first occurrence in a run</li>
+                </ul>
+
+                <h4>Available Columns</h4>
+                <ul>
+                  <li><code>State</code> — MA alignment state (-3 to 3)</li>
+                  <li><code>Type1</code>, <code>Type2</code> — signal type (positive=UP, negative=DN, abs=Nth)</li>
+                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code> — consecutive bar count</li>
+                  <li><code>DD_RR</code>, <code>DD_ADR</code> — wick/drawdown size</li>
+                  <li><code>priorRunCount</code> — prior run count</li>
+                  <li><code>MFE_clr_RR</code>, <code>REAL_clr_RR</code> — RR metrics</li>
+                  <li><code>stateDuration</code>, <code>barDuration</code> — time in state/bar</li>
+                  <li><code>prState</code>, <code>fromState</code> — prior/from states</li>
+                </ul>
+
+                <h4>Tips</h4>
+                <ul>
+                  <li>Column names are case-sensitive</li>
+                  <li>Use <code>and</code> / <code>or</code> (not <code>&amp;&amp;</code> / <code>||</code>)</li>
+                  <li>Group with parentheses: <code>(A or B) and C</code></li>
+                  <li>Press Enter in any expression field to evaluate</li>
+                </ul>
+              </div>
+            </div>,
+            document.body
+          )}
+
         </div>
       )}
     </div>

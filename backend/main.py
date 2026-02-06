@@ -126,6 +126,17 @@ class PlaygroundRequest(BaseModel):
     signals: list[PlaygroundSignal]
 
 
+class BacktestRequest(BaseModel):
+    filepath: str
+    signals: list[PlaygroundSignal]
+    stop_type: str          # 'rr' or 'adr'
+    stop_value: float       # e.g. 1.0 for 1RR, or 0.5 for 0.5 ADR
+    target_type: str        # 'fixed_rr', 'fixed_adr', 'ma_trail', 'color_change'
+    target_value: float     # RR/ADR amount, or 0 for color_change
+    target_ma: int = 1      # which MA (1/2/3) for ma_trail target
+    report_unit: str = 'rr' # 'rr' or 'adr' — unit for result values
+
+
 def extract_instrument(filename: str) -> Optional[str]:
     """Extract instrument symbol from filename."""
     filename_upper = filename.upper()
@@ -1587,64 +1598,39 @@ async def generate_stats(instrument: str, request: StatsRequest):
         current_is_up = is_up_arr_t[i]
         prior_is_up = is_up_arr_t[i - 1] if i > 0 else None
 
-        # Type1 logic - pattern depends on reversal vs brick size (per-bar)
-        # reversal > brick: 3-bar pattern (DOWN, UP, UP or UP, DOWN, DOWN)
-        # reversal == brick: 2-bar pattern (DOWN, UP or UP, DOWN)
-        # MA1 touch can be on ANY bar in the pattern (current, prior, or prior2)
+        # Type1 logic - always 3-bar pattern (DOWN, UP, UP or UP, DOWN, DOWN)
         use_3bar = df['reversal_size'].iloc[i] > df['brick_size'].iloc[i]
 
-        if use_3bar and i > 1 and state == 3:
+        if i > 1:
             prior2_is_up = is_up_arr_t[i - 2]
-            # 3-bar pattern: DOWN, UP, UP - with MA1 touch on current, prior, or prior2
-            ma1_touched = (low_arr[i] <= ma1_values[i] or
-                           low_arr[i - 1] <= ma1_values[i - 1] or
-                           low_arr[i - 2] <= ma1_values[i - 2])
-            if current_is_up and prior_is_up and not prior2_is_up and ma1_touched:
+            if state == 3 and current_is_up and prior_is_up and not prior2_is_up:
                 internal_type1 += 1
-            # Display only when full pattern matches
-            type1_count[i] = internal_type1 if (current_is_up and prior_is_up and not prior2_is_up) else 0
-        elif use_3bar and i > 1 and state == -3:
-            prior2_is_up = is_up_arr_t[i - 2]
-            # 3-bar pattern: UP, DOWN, DOWN - with MA1 touch on current, prior, or prior2
-            ma1_touched = (high_arr[i] >= ma1_values[i] or
-                           high_arr[i - 1] >= ma1_values[i - 1] or
-                           high_arr[i - 2] >= ma1_values[i - 2])
-            if not current_is_up and not prior_is_up and prior2_is_up and ma1_touched:
+                type1_count[i] = internal_type1
+            elif state == -3 and not current_is_up and not prior_is_up and prior2_is_up:
                 internal_type1 -= 1
-            # Display only when full pattern matches
-            type1_count[i] = internal_type1 if (not current_is_up and not prior_is_up and prior2_is_up) else 0
-        elif not use_3bar and i > 0 and state == 3:
-            # 2-bar pattern: DOWN, UP - with MA1 touch on current or prior
-            ma1_touched = (low_arr[i] <= ma1_values[i] or
-                           low_arr[i - 1] <= ma1_values[i - 1])
-            if current_is_up and not prior_is_up and ma1_touched:
-                internal_type1 += 1
-            # Display only on transition bar (UP following DOWN)
-            type1_count[i] = internal_type1 if (current_is_up and not prior_is_up) else 0
-        elif not use_3bar and i > 0 and state == -3:
-            # 2-bar pattern: UP, DOWN - with MA1 touch on current or prior
-            ma1_touched = (high_arr[i] >= ma1_values[i] or
-                           high_arr[i - 1] >= ma1_values[i - 1])
-            if not current_is_up and prior_is_up and ma1_touched:
-                internal_type1 -= 1
-            # Display only on transition bar (DOWN following UP)
-            type1_count[i] = internal_type1 if (not current_is_up and prior_is_up) else 0
+                type1_count[i] = internal_type1
+            else:
+                type1_count[i] = 0
         else:
             type1_count[i] = 0
 
-        # Type2 logic - when reversal > brick, prior bar must be same direction
-        if state == 3:
-            has_wick = current_is_up and open_arr[i] > low_arr[i]
-            prior_ok = not use_3bar or prior_is_up  # No check needed if equal, else prior must be UP
-            if has_wick and prior_ok:
-                internal_type2 += 1
-            type2_count[i] = internal_type2 if (current_is_up and prior_ok) else 0
-        elif state == -3:
-            has_wick = not current_is_up and high_arr[i] > open_arr[i]
-            prior_ok = not use_3bar or not prior_is_up  # No check needed if equal, else prior must be DOWN
-            if has_wick and prior_ok:
-                internal_type2 -= 1
-            type2_count[i] = internal_type2 if (not current_is_up and prior_ok) else 0
+        # Type2 logic - only when reversal > brick, wick must exceed brick_size
+        if use_3bar and i > 0:
+            brick_size_i = df['brick_size'].iloc[i]
+            if state == 3:
+                has_wick = current_is_up and (open_arr[i] - low_arr[i]) > brick_size_i
+                prior_ok = prior_is_up
+                if has_wick and prior_ok:
+                    internal_type2 += 1
+                type2_count[i] = internal_type2 if (current_is_up and prior_ok) else 0
+            elif state == -3:
+                has_wick = not current_is_up and (high_arr[i] - open_arr[i]) > brick_size_i
+                prior_ok = not prior_is_up
+                if has_wick and prior_ok:
+                    internal_type2 -= 1
+                type2_count[i] = internal_type2 if (not current_is_up and prior_ok) else 0
+            else:
+                type2_count[i] = 0
         else:
             type2_count[i] = 0
 
@@ -2713,6 +2699,256 @@ def delete_signal(filepath: str, name: str):
     signals = [s for s in signals if s["name"] != name]
     _write_signals(json_path, signals)
     return {"signals": signals}
+
+
+# ── Backtest Endpoint ──────────────────────────────────────────────────────────
+
+@app.post("/backtest-signals")
+def backtest_signals(request: BacktestRequest):
+    """Run a forward-scanning backtest simulation over parquet data."""
+    parquet_path = Path(request.filepath)
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"Parquet file not found: {request.filepath}")
+
+    try:
+        df = pd.read_parquet(parquet_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read parquet: {str(e)}")
+
+    if len(df) == 0:
+        raise HTTPException(status_code=400, detail="Parquet file contains no data")
+
+    # Pre-compute arrays for fast scanning
+    close_arr = df['close'].values.astype(float)
+    is_up_arr = (df['close'] > df['open']).values
+    rev_arr = df['reversal_size'].values.astype(float)
+    adr_arr = df['currentADR'].values.astype(float)
+    n = len(df)
+
+    # Pre-compute datetime strings for results
+    if 'datetime' in df.columns:
+        dt_arr = df['datetime'].astype(str).values
+    else:
+        dt_arr = np.array(['' for _ in range(n)])
+
+    # Pre-compute EMA if needed for ma_trail target
+    ema_values = None
+    if request.target_type == 'ma_trail':
+        ma_col_map = {1: 'ma1_period', 2: 'ma2_period', 3: 'ma3_period'}
+        period_col = ma_col_map.get(request.target_ma)
+        if period_col and period_col in df.columns:
+            period = int(df[period_col].iloc[0])
+        else:
+            period = [20, 50, 200][request.target_ma - 1]
+        ema_values = calculate_ema(pd.Series(close_arr), period).values
+
+    signals_result = {}
+    errors_result = {}
+
+    for signal in request.signals:
+        if not signal.expression.strip():
+            continue
+        try:
+            subset = df.query(signal.expression)
+            entry_indices = subset.index.values
+
+            trades = []
+            for i_pos, i in enumerate(entry_indices):
+                i = int(i)
+                if i >= n - 1:
+                    continue
+
+                entry_close = close_arr[i]
+                entry_rev = rev_arr[i]
+                entry_adr = adr_arr[i]
+                entry_is_up = bool(is_up_arr[i])
+                direction = 'long' if entry_is_up else 'short'
+
+                # Compute stop distance
+                if request.stop_type == 'adr':
+                    stop_dist = max(request.stop_value * entry_adr, 1.0 * entry_rev)
+                else:  # 'rr'
+                    stop_dist = request.stop_value * entry_rev
+
+                # Stop price
+                if entry_is_up:
+                    stop_price = entry_close - stop_dist
+                else:
+                    stop_price = entry_close + stop_dist
+
+                # Compute target distance for fixed types
+                if request.target_type == 'fixed_rr':
+                    target_dist = request.target_value * entry_rev
+                elif request.target_type == 'fixed_adr':
+                    target_dist = request.target_value * entry_adr
+                else:
+                    target_dist = None  # ma_trail / color_change use different logic
+
+                # Forward scan
+                outcome = 'open'
+                result = 0.0
+                bars_held = 0
+                exit_idx = None
+                exit_dt = ''
+
+                for j in range(i + 1, n):
+                    bars_held = j - i
+
+                    # Check STOP
+                    if entry_is_up:
+                        stopped = close_arr[j] <= stop_price
+                    else:
+                        stopped = close_arr[j] >= stop_price
+
+                    if stopped:
+                        outcome = 'stop'
+                        # Result is the stop distance in report units
+                        if request.report_unit == 'adr':
+                            result = -(stop_dist / entry_adr)
+                        else:
+                            result = -(stop_dist / entry_rev)
+                        exit_idx = j
+                        exit_dt = dt_arr[j]
+                        break
+
+                    # Check TARGET
+                    if request.target_type in ('fixed_rr', 'fixed_adr'):
+                        if entry_is_up:
+                            hit = close_arr[j] >= entry_close + target_dist
+                        else:
+                            hit = close_arr[j] <= entry_close - target_dist
+
+                        if hit:
+                            outcome = 'target'
+                            if request.report_unit == 'adr':
+                                result = target_dist / entry_adr
+                            else:
+                                result = target_dist / entry_rev
+                            exit_idx = j
+                            exit_dt = dt_arr[j]
+                            break
+
+                    elif request.target_type == 'ma_trail':
+                        # Opposite-color bar closes beyond the MA
+                        if is_up_arr[j] != entry_is_up and ema_values is not None:
+                            ema_val = ema_values[j]
+                            if not np.isnan(ema_val):
+                                if entry_is_up and close_arr[j] < ema_val:
+                                    # Exit: down bar closed below MA
+                                    move = close_arr[j] - entry_close
+                                    outcome = 'target'
+                                    if request.report_unit == 'adr':
+                                        result = move / entry_adr
+                                    else:
+                                        result = move / entry_rev
+                                    exit_idx = j
+                                    exit_dt = dt_arr[j]
+                                    break
+                                elif not entry_is_up and close_arr[j] > ema_val:
+                                    # Exit: up bar closed above MA
+                                    move = entry_close - close_arr[j]
+                                    outcome = 'target'
+                                    if request.report_unit == 'adr':
+                                        result = move / entry_adr
+                                    else:
+                                        result = move / entry_rev
+                                    exit_idx = j
+                                    exit_dt = dt_arr[j]
+                                    break
+
+                    elif request.target_type == 'color_change':
+                        # First opposite-color bar
+                        if is_up_arr[j] != entry_is_up:
+                            if entry_is_up:
+                                move = close_arr[j] - entry_close
+                            else:
+                                move = entry_close - close_arr[j]
+                            outcome = 'target'
+                            if request.report_unit == 'adr':
+                                result = move / entry_adr
+                            else:
+                                result = move / entry_rev
+                            exit_idx = j
+                            exit_dt = dt_arr[j]
+                            break
+
+                # If still open, compute unrealized P&L
+                if outcome == 'open':
+                    bars_held = n - 1 - i
+                    if entry_is_up:
+                        move = close_arr[n - 1] - entry_close
+                    else:
+                        move = entry_close - close_arr[n - 1]
+                    if request.report_unit == 'adr':
+                        result = move / entry_adr
+                    else:
+                        result = move / entry_rev
+                    exit_idx = n - 1
+                    exit_dt = dt_arr[n - 1]
+
+                trades.append({
+                    "idx": i,
+                    "entry_dt": dt_arr[i],
+                    "direction": direction,
+                    "outcome": outcome,
+                    "result": round(float(result), 2),
+                    "bars_held": bars_held,
+                    "exit_idx": exit_idx,
+                    "exit_dt": exit_dt,
+                })
+
+            # Compute summary stats
+            count = len(trades)
+            wins = [t for t in trades if t['outcome'] == 'target' and t['result'] > 0]
+            losses = [t for t in trades if t['outcome'] == 'stop']
+            open_trades = [t for t in trades if t['outcome'] == 'open']
+            win_results = [t['result'] for t in wins]
+            loss_results = [t['result'] for t in losses]
+
+            win_count = len(wins)
+            loss_count = len(losses)
+            open_count = len(open_trades)
+            closed_count = win_count + loss_count
+
+            win_rate = (win_count / closed_count) if closed_count > 0 else 0
+            avg_win = (sum(win_results) / win_count) if win_count > 0 else 0
+            avg_loss = (sum(loss_results) / loss_count) if loss_count > 0 else 0
+            gross_profit = sum(win_results)
+            gross_loss = abs(sum(loss_results))
+            profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float('inf') if gross_profit > 0 else 0
+            total_r = sum(t['result'] for t in trades)
+            expectancy = (total_r / closed_count) if closed_count > 0 else 0
+
+            signals_result[signal.name] = {
+                "trades": trades,
+                "summary": {
+                    "count": count,
+                    "wins": win_count,
+                    "losses": loss_count,
+                    "open": open_count,
+                    "win_rate": round(win_rate, 3),
+                    "avg_win": round(avg_win, 2),
+                    "avg_loss": round(avg_loss, 2),
+                    "profit_factor": round(profit_factor, 2) if profit_factor != float('inf') else 999.99,
+                    "expectancy": round(expectancy, 2),
+                    "total_r": round(total_r, 2),
+                },
+            }
+        except Exception as e:
+            errors_result[signal.name] = str(e)
+
+    return {
+        "signals": signals_result,
+        "errors": errors_result,
+        "config": {
+            "stop_type": request.stop_type,
+            "stop_value": request.stop_value,
+            "target_type": request.target_type,
+            "target_value": request.target_value,
+            "target_ma": request.target_ma,
+            "report_unit": request.report_unit,
+        },
+    }
 
 
 @app.delete("/stats-file")
