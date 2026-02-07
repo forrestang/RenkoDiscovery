@@ -25,6 +25,9 @@ function Sidebar({
   // Cache management
   onDeleteCache,
   onDeleteAllCache,
+  // Indicator signal export
+  onExportIndicatorSignals,
+  canExportIndicatorSignals,
   // Data import settings
   dataFormat,
   onDataFormatChange,
@@ -81,7 +84,8 @@ function Sidebar({
   onLoadMLReport,
   onDeleteMLModel,
   onDeleteAllMLModels,
-  mlError
+  mlError,
+  apiBase
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -98,6 +102,10 @@ function Sidebar({
   const [helpPos, setHelpPos] = useState({ x: 200, y: 100 })
   const [dragging, setDragging] = useState(false)
   const dragOffset = useRef({ x: 0, y: 0 })
+  const [mlSavedSignals, setMlSavedSignals] = useState([])
+  const [showMlLoadDropdown, setShowMlLoadDropdown] = useState(false)
+  const mlLoadDropdownRef = useRef(null)
+
   const [workingDirCollapsed, setWorkingDirCollapsed] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}workingDirCollapsed`)
     return saved === 'true'
@@ -122,6 +130,27 @@ function Sidebar({
       window.removeEventListener('mouseup', onMouseUp)
     }
   }, [dragging])
+
+  // Fetch saved signals for ML tab when source parquet changes
+  useEffect(() => {
+    if (!mlSourceParquet || !apiBase) { setMlSavedSignals([]); return }
+    fetch(`${apiBase}/playground-saved-signals?filepath=${encodeURIComponent(mlSourceParquet)}`)
+      .then(r => r.ok ? r.json() : { signals: [] })
+      .then(data => setMlSavedSignals(data.signals || []))
+      .catch(() => setMlSavedSignals([]))
+  }, [mlSourceParquet, apiBase])
+
+  // Close ML load dropdown on outside click
+  useEffect(() => {
+    if (!showMlLoadDropdown) return
+    const handler = (e) => {
+      if (mlLoadDropdownRef.current && !mlLoadDropdownRef.current.contains(e.target)) {
+        setShowMlLoadDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showMlLoadDropdown])
 
   // Group files by instrument
   const groupedFiles = files.reduce((acc, file) => {
@@ -642,6 +671,19 @@ function Sidebar({
               </div>
             </div>
           )}
+          {canExportIndicatorSignals && (
+            <div className="section">
+              <button
+                className="show-stats-btn"
+                onClick={onExportIndicatorSignals}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16, marginRight: 6, flexShrink: 0 }}>
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                </svg>
+                Export Indicator Signals
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -988,6 +1030,25 @@ function Sidebar({
             <div className="section">
               <div className="section-header">
                 <span className="section-title">Row Filter</span>
+                <div className="playground-load-wrapper" ref={mlLoadDropdownRef}>
+                  <button className="filter-action-btn" onClick={() => setShowMlLoadDropdown(v => !v)}>Load ▼</button>
+                  {showMlLoadDropdown && (
+                    <div className="playground-load-dropdown">
+                      {mlSavedSignals.length === 0 ? (
+                        <div className="playground-load-empty">No saved signals</div>
+                      ) : (
+                        mlSavedSignals.map(s => (
+                          <div key={s.name} className="playground-load-item"
+                            onClick={() => { onMlFilterExprChange(s.expression); setShowMlLoadDropdown(false) }}
+                          >
+                            <span className="playground-load-name">{s.name}</span>
+                            <span className="playground-load-expr">{s.expression}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
                 <button className="filter-help-btn" onClick={() => setShowFilterHelp(v => !v)} title="Query syntax help">?</button>
               </div>
               <input
@@ -1039,6 +1100,70 @@ function Sidebar({
                   <li><code>Type1 == 1 and State &gt;= 2</code> — Type1 in strong bullish alignment</li>
                   <li><code>(Type1 == 1 or Type2 == 1) and State &gt; 0</code> — either signal type, bullish only</li>
                   <li><code>State in [2, 3] and DD_RR &lt; 0.5</code> — strong trend with small wicks</li>
+                </ul>
+
+                <h4>Available Columns</h4>
+
+                <h5>System</h5>
+                <ul>
+                  <li><code>currentADR</code>, <code>chop(rolling)</code></li>
+                </ul>
+
+                <h5>Signals</h5>
+                <ul>
+                  <li><code>Type1</code>, <code>Type2</code>, <code>is_reversal</code></li>
+                </ul>
+
+                <h5>OHLC &amp; Price</h5>
+                <ul>
+                  <li><code>open</code>, <code>high</code>, <code>low</code>, <code>close</code></li>
+                  <li><code>open1</code>, <code>high1</code>, <code>low1</code>, <code>close1</code> — prior bar</li>
+                  <li><code>open2</code>, <code>high2</code>, <code>low2</code>, <code>close2</code> — 2 bars back</li>
+                </ul>
+
+                <h5>Moving Averages</h5>
+                <ul>
+                  <li><code>EMA_rawDistance(20)</code>, <code>EMA_rawDistance(50)</code>, <code>EMA_rawDistance(200)</code></li>
+                  <li><code>EMA_adrDistance(20)</code>, <code>EMA_adrDistance(50)</code>, <code>EMA_adrDistance(200)</code></li>
+                  <li><code>EMA_rrDistance(20)</code>, <code>EMA_rrDistance(50)</code>, <code>EMA_rrDistance(200)</code></li>
+                  <li><code>MA1</code>, <code>MA2</code>, <code>MA3</code> — EMA values</li>
+                  <li><code>MA1_1</code>, <code>MA2_1</code>, <code>MA3_1</code> — prior bar's MA values</li>
+                  <li><code>MA1_2</code>, <code>MA2_2</code>, <code>MA3_2</code> — 2 bars back MA values</li>
+                </ul>
+
+                <h5>State &amp; Structure</h5>
+                <ul>
+                  <li><code>State</code> — MA alignment (-3 to 3)</li>
+                  <li><code>prState</code> — prior bar's state</li>
+                  <li><code>fromState</code> — state of previous run</li>
+                  <li><code>direction</code> — open/close relationship</li>
+                  <li><code>stateBarCount</code> — bar # in current state</li>
+                </ul>
+
+                <h5>Consecutive Bars</h5>
+                <ul>
+                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code></li>
+                  <li><code>Con_UP_bars(state)</code>, <code>Con_DN_bars(state)</code></li>
+                  <li><code>priorRunCount</code></li>
+                </ul>
+
+                <h5>Drawdown/Wick</h5>
+                <ul>
+                  <li><code>DD</code>, <code>DD_RR</code>, <code>DD_ADR</code></li>
+                </ul>
+
+                <h5>Duration</h5>
+                <ul>
+                  <li><code>barDuration</code>, <code>stateDuration</code></li>
+                </ul>
+
+                <h5>MFE / Outcome Metrics</h5>
+                <ul>
+                  <li><code>MFE_clr_Bars</code>, <code>MFE_clr_price</code>, <code>MFE_clr_ADR</code>, <code>MFE_clr_RR</code></li>
+                  <li><code>REAL_clr_ADR</code>, <code>REAL_clr_RR</code></li>
+                  <li><code>REAL_MA1_Price</code>, <code>REAL_MA1_ADR</code>, <code>REAL_MA1_RR</code></li>
+                  <li><code>REAL_MA2_Price</code>, <code>REAL_MA2_ADR</code>, <code>REAL_MA2_RR</code></li>
+                  <li><code>REAL_MA3_Price</code>, <code>REAL_MA3_ADR</code>, <code>REAL_MA3_RR</code></li>
                 </ul>
 
                 <h4>Tips</h4>

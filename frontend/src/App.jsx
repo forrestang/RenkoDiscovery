@@ -7,6 +7,7 @@ import { getDefaultSettings as getDefaultSessionSettings, migrateTemplate } from
 import StatsPage from './components/StatsPage'
 import ParquetPage from './components/ParquetPage'
 import MLResultsPage from './components/MLResultsPage'
+import { computeIndicatorSignals } from './utils/indicatorSignals'
 import './styles/App.css'
 
 const DEFAULT_API_BASE = 'http://localhost:8000'
@@ -531,6 +532,19 @@ function App() {
     }
   }
 
+  const handleExportIndicatorSignals = () => {
+    if (!renkoData?.data?.close || !maSettings) return
+    const rows = computeIndicatorSignals(renkoData, maSettings, renkoSettings, pricePrecision)
+    const csv = 'datetime,State,Type1,Type2\n' + rows.map(r => `${r.datetime},${r.state},${r.type1},${r.type2}`).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${activeInstrument || 'signals'}_indicator_signals.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handleDeleteStatsFile = async (filepath) => {
     try {
       const res = await fetch(`${apiBase}/stats-file?filepath=${encodeURIComponent(filepath)}`, {
@@ -973,6 +987,9 @@ function App() {
             // Cache management
             onDeleteCache={deleteCache}
             onDeleteAllCache={deleteAllCache}
+            // Indicator signal export
+            onExportIndicatorSignals={handleExportIndicatorSignals}
+            canExportIndicatorSignals={!!renkoData?.data?.close && !!maSettings?.ma1?.enabled && !!maSettings?.ma2?.enabled && !!maSettings?.ma3?.enabled}
             // Data import settings
             dataFormat={dataFormat}
             onDataFormatChange={setDataFormat}
@@ -1030,6 +1047,7 @@ function App() {
             onDeleteMLModel={handleDeleteMLModel}
             onDeleteAllMLModels={handleDeleteAllMLModels}
             mlError={mlError}
+            apiBase={apiBase}
           />
 
           {!sidebarCollapsed && (

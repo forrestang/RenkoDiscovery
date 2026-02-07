@@ -1129,6 +1129,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     if (!chartData?.data?.close || !maSettings) return
 
     const { open, high, low, close } = chartData.data
+    const round = (v, d) => { const m = Math.pow(10, d); return Math.round(v * m) / m }
 
     // Calculate MA values (Fast=MA1, Med=MA2, Slow=MA3)
     const ma1Enabled = maSettings.ma1?.enabled
@@ -1209,12 +1210,12 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       if (use3bar) {
         const brickSizeAtI = renkoPerBrickSizes ? renkoPerBrickSizes[i] : brickSize
         const priorIsUpT2 = i > 0 ? close[i - 1] > open[i - 1] : false
-        if (state === 3 && isUp && (open[i] - low[i]) > brickSizeAtI) {
+        if (state === 3 && isUp && round(open[i] - low[i], pricePrecision) > brickSizeAtI) {
           if (priorIsUpT2) {
             typeMarkers.push({ time: i, value: -4, text: '2', color: '#10b981' })
           }
         }
-        if (state === -3 && isDown && (high[i] - open[i]) > brickSizeAtI) {
+        if (state === -3 && isDown && round(high[i] - open[i], pricePrecision) > brickSizeAtI) {
           if (!priorIsUpT2) {  // prior must be DOWN
             typeMarkers.push({ time: i, value: 4, text: '2', color: '#f43f5e' })
           }

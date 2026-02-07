@@ -937,7 +937,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
         elif wick_mode == "all":
             return min(pending_low_val, brick_open)
         elif wick_mode == "big":
-            retracement = brick_open - pending_low_val
+            retracement = round(brick_open - pending_low_val, 5)
             if retracement > brick_sz:
                 return pending_low_val
             return brick_open
@@ -950,7 +950,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
         elif wick_mode == "all":
             return max(pending_high_val, brick_open)
         elif wick_mode == "big":
-            retracement = pending_high_val - brick_open
+            retracement = round(pending_high_val - brick_open, 5)
             if retracement > brick_sz:
                 return pending_high_val
             return brick_open
@@ -1120,7 +1120,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                             brick_high = max(brick_range_high, brick_open)
                         elif wick_mode == "big":
                             brick_range_high = high_prices[cross_open:cross_close+1].max()
-                            retracement = brick_range_high - brick_open
+                            retracement = round(brick_range_high - brick_open, 5)
                             if retracement > active_bs:
                                 brick_high = brick_range_high
                             else:
@@ -1224,7 +1224,7 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                             brick_low = min(brick_range_low, brick_open)
                         elif wick_mode == "big":
                             brick_range_low = low_prices[cross_open:cross_close+1].min()
-                            retracement = brick_open - brick_range_low
+                            retracement = round(brick_open - brick_range_low, 5)
                             if retracement > active_bs:
                                 brick_low = brick_range_low
                             else:
@@ -1415,6 +1415,10 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     # Reset index to get datetime as column
     renko_df = renko_df.reset_index()
 
+    # Round OHLC to 5 decimal places (match parquet generation)
+    for col in ['open', 'high', 'low', 'close']:
+        renko_df[col] = renko_df[col].round(5)
+
     # Handle volume - sum if available, otherwise use brick count
     if 'volume' not in renko_df.columns:
         renko_df['volume'] = 1
@@ -1569,71 +1573,63 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['fromState'] = from_state
 
     # Calculate Type1 and Type2 pullback counters
-    # These accumulate only in +3/-3 states, reset on state change
+    # Logic ported from ChartArea.jsx indicator panel (lines 1186-1222)
+    # Nth occurrence counters accumulate in +3/-3 states, reset on state change
     state_arr = df['State'].values
-    prstate_arr = df['prState'].values
     is_up_arr_t = (df['close'] > df['open']).values
+    is_dn_arr_t = (df['close'] < df['open']).values
     open_arr = df['open'].values
     high_arr = df['high'].values
     low_arr = df['low'].values
-    ma1_values = ema_columns[request.ma1_period]
+    rev_size_arr = df['reversal_size'].values
+    brick_size_arr = df['brick_size'].values
 
     n = len(df)
     type1_count = np.zeros(n, dtype=int)
     type2_count = np.zeros(n, dtype=int)
 
-    # Internal counters track cumulative count, display arrays show only when conditions met
     internal_type1 = 0
     internal_type2 = 0
+    prev_state = None
 
     for i in range(n):
-        state = state_arr[i]
-        prstate = prstate_arr[i] if i > 0 else np.nan
-        state_changed = (i == 0 or state != prstate)
+        state = int(state_arr[i])
 
-        # Reset internal counters on state change
-        if state_changed:
+        # Reset counters on state change
+        if state != prev_state:
             internal_type1 = 0
             internal_type2 = 0
+        prev_state = state
 
-        current_is_up = is_up_arr_t[i]
-        prior_is_up = is_up_arr_t[i - 1] if i > 0 else None
+        is_up = bool(is_up_arr_t[i])
+        is_dn = bool(is_dn_arr_t[i])
+        use_3bar = rev_size_arr[i] > brick_size_arr[i]
 
-        # Type1 logic - always 3-bar pattern (DOWN, UP, UP or UP, DOWN, DOWN)
-        use_3bar = df['reversal_size'].iloc[i] > df['brick_size'].iloc[i]
-
+        # Type1: always 3-bar pattern (DOWN->UP->UP or UP->DOWN->DOWN)
         if i > 1:
-            prior2_is_up = is_up_arr_t[i - 2]
-            if state == 3 and current_is_up and prior_is_up and not prior2_is_up:
+            prior_is_up = bool(is_up_arr_t[i - 1])
+            prior_is_dn = bool(is_dn_arr_t[i - 1])
+            prior2_is_up = bool(is_up_arr_t[i - 2])
+            prior2_is_dn = bool(is_dn_arr_t[i - 2])
+
+            if state == 3 and is_up and prior_is_up and prior2_is_dn:
                 internal_type1 += 1
                 type1_count[i] = internal_type1
-            elif state == -3 and not current_is_up and not prior_is_up and prior2_is_up:
+            elif state == -3 and is_dn and prior_is_dn and prior2_is_up:
                 internal_type1 -= 1
                 type1_count[i] = internal_type1
-            else:
-                type1_count[i] = 0
-        else:
-            type1_count[i] = 0
 
-        # Type2 logic - only when reversal > brick, wick must exceed brick_size
+        # Type2: only when reversal > brick, wick must exceed brick_size
         if use_3bar and i > 0:
-            brick_size_i = df['brick_size'].iloc[i]
-            if state == 3:
-                has_wick = current_is_up and (open_arr[i] - low_arr[i]) > brick_size_i
-                prior_ok = prior_is_up
-                if has_wick and prior_ok:
-                    internal_type2 += 1
-                type2_count[i] = internal_type2 if (current_is_up and prior_ok) else 0
-            elif state == -3:
-                has_wick = not current_is_up and (high_arr[i] - open_arr[i]) > brick_size_i
-                prior_ok = not prior_is_up
-                if has_wick and prior_ok:
-                    internal_type2 -= 1
-                type2_count[i] = internal_type2 if (not current_is_up and prior_ok) else 0
-            else:
-                type2_count[i] = 0
-        else:
-            type2_count[i] = 0
+            prior_is_up_t2 = bool(is_up_arr_t[i - 1])
+            brick_i = brick_size_arr[i]
+
+            if state == 3 and is_up and round(open_arr[i] - low_arr[i], 5) > brick_i and prior_is_up_t2:
+                internal_type2 += 1
+                type2_count[i] = internal_type2
+            elif state == -3 and is_dn and round(high_arr[i] - open_arr[i], 5) > brick_i and not prior_is_up_t2:
+                internal_type2 -= 1
+                type2_count[i] = internal_type2
 
     df['Type1'] = type1_count
     df['Type2'] = type2_count
@@ -1781,11 +1777,11 @@ async def generate_stats(instrument: str, request: StatsRequest):
     # Calculate MFE_clr_ADR (ADR-normalized version)
     df['MFE_clr_ADR'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
 
-    # Calculate REAL_clr_ADR (subtract reversal_size for realistic exit)
-    df['REAL_clr_ADR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['currentADR']).round(2)
-
     # Calculate MFE_clr_RR (Reversal-normalized version)
     df['MFE_clr_RR'] = (df['MFE_clr_price'] / df['reversal_size']).round(2)
+
+    # Calculate REAL_clr_ADR (subtract reversal_size for realistic exit)
+    df['REAL_clr_ADR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['currentADR']).round(2)
 
     # Calculate REAL_clr_RR (subtract reversal_size for realistic exit)
     df['REAL_clr_RR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['reversal_size']).round(2)
@@ -2573,10 +2569,23 @@ def playground_signals(request: PlaygroundRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read parquet: {str(e)}")
 
-    # Build extra_metric_cols (same mapping as parquet-stats)
+    # Add MA1/MA2/MA3 value columns and previous-bar OHLC columns for query expressions
     ma1_period = int(df['ma1_period'].iloc[0]) if 'ma1_period' in df.columns else 20
     ma2_period = int(df['ma2_period'].iloc[0]) if 'ma2_period' in df.columns else 50
     ma3_period = int(df['ma3_period'].iloc[0]) if 'ma3_period' in df.columns else 200
+
+    for label, period in [('MA1', ma1_period), ('MA2', ma2_period), ('MA3', ma3_period)]:
+        df[label] = calculate_ema(df['close'], period).round(5)
+
+    for col in ['open', 'high', 'low', 'close']:
+        df[f'{col}1'] = df[col].shift(1)
+        df[f'{col}2'] = df[col].shift(2)
+
+    for ma in ['MA1', 'MA2', 'MA3']:
+        df[f'{ma}_1'] = df[ma].shift(1)
+        df[f'{ma}_2'] = df[ma].shift(2)
+
+    # Build extra_metric_cols (same mapping as parquet-stats)
     ma_periods = [ma1_period, ma2_period, ma3_period]
 
     extra_metric_cols = []
@@ -2643,14 +2652,14 @@ class SaveSignalRequest(BaseModel):
 
 
 def _signals_json_path(filepath: str) -> Path:
-    """Derive Playground/signals.json path from a parquet filepath inside a Stats/ folder."""
+    """Derive Panda/signals.json path from a parquet filepath inside a Stats/ folder."""
     p = Path(filepath)
     # Walk up until we find a Stats directory, then go to its parent
     for parent in [p.parent] + list(p.parents):
         if parent.name == "Stats":
-            return parent.parent / "Playground" / "signals.json"
+            return parent.parent / "Panda" / "signals.json"
     # Fallback: sibling of the file's directory
-    return p.parent.parent / "Playground" / "signals.json"
+    return p.parent.parent / "Panda" / "signals.json"
 
 
 def _read_signals(json_path: Path) -> list:
@@ -2718,6 +2727,22 @@ def backtest_signals(request: BacktestRequest):
 
     if len(df) == 0:
         raise HTTPException(status_code=400, detail="Parquet file contains no data")
+
+    # Add MA1/MA2/MA3 value columns and previous-bar OHLC columns for query expressions
+    bt_ma1 = int(df['ma1_period'].iloc[0]) if 'ma1_period' in df.columns else 20
+    bt_ma2 = int(df['ma2_period'].iloc[0]) if 'ma2_period' in df.columns else 50
+    bt_ma3 = int(df['ma3_period'].iloc[0]) if 'ma3_period' in df.columns else 200
+
+    for label, period in [('MA1', bt_ma1), ('MA2', bt_ma2), ('MA3', bt_ma3)]:
+        df[label] = calculate_ema(df['close'], period).round(5)
+
+    for col in ['open', 'high', 'low', 'close']:
+        df[f'{col}1'] = df[col].shift(1)
+        df[f'{col}2'] = df[col].shift(2)
+
+    for ma in ['MA1', 'MA2', 'MA3']:
+        df[f'{ma}_1'] = df[ma].shift(1)
+        df[f'{ma}_2'] = df[ma].shift(2)
 
     # Pre-compute arrays for fast scanning
     close_arr = df['close'].values.astype(float)
@@ -3156,6 +3181,22 @@ def train_ml_model(req: MLTrainRequest):
         except Exception as e:
             yield _sse_event({"phase": "error", "message": f"Failed to read parquet: {str(e)}"})
             return
+
+        # Add MA1/MA2/MA3 value columns and previous-bar OHLC columns for query expressions
+        ml_ma1 = int(df['ma1_period'].iloc[0]) if 'ma1_period' in df.columns else 20
+        ml_ma2 = int(df['ma2_period'].iloc[0]) if 'ma2_period' in df.columns else 50
+        ml_ma3 = int(df['ma3_period'].iloc[0]) if 'ma3_period' in df.columns else 200
+
+        for label, period in [('MA1', ml_ma1), ('MA2', ml_ma2), ('MA3', ml_ma3)]:
+            df[label] = calculate_ema(df['close'], period).round(5)
+
+        for col in ['open', 'high', 'low', 'close']:
+            df[f'{col}1'] = df[col].shift(1)
+            df[f'{col}2'] = df[col].shift(2)
+
+        for ma in ['MA1', 'MA2', 'MA3']:
+            df[f'{ma}_1'] = df[ma].shift(1)
+            df[f'{ma}_2'] = df[ma].shift(2)
 
         # Apply filter expression
         if req.filter_expr and req.filter_expr.strip():

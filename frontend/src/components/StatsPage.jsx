@@ -543,7 +543,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   }, [])
 
   const removePlaygroundSignal = useCallback((index) => {
-    setPlaygroundSignals(prev => prev.length <= 1 ? prev : prev.filter((_, i) => i !== index))
+    setPlaygroundSignals(prev => {
+      const next = prev.filter((_, i) => i !== index)
+      return next.length === 0 ? [{ name: '', expression: '', enabled: true }] : next
+    })
   }, [])
 
   const updatePlaygroundSignal = useCallback((index, field, value) => {
@@ -613,6 +616,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       if (res.ok) {
         const data = await res.json()
         setSavedSignals(data.signals || [])
+        setBtSavedSignals(data.signals || [])
       }
     } catch {}
   }, [filepath, apiBase])
@@ -779,7 +783,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   }, [])
 
   const removeBtSignal = useCallback((index) => {
-    setBtSignals(prev => prev.length <= 1 ? prev : prev.filter((_, i) => i !== index))
+    setBtSignals(prev => {
+      const next = prev.filter((_, i) => i !== index)
+      return next.length === 0 ? [{ name: '', expression: '', enabled: true }] : next
+    })
   }, [])
 
   const updateBtSignal = useCallback((index, field, value) => {
@@ -2239,7 +2246,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                             className="playground-load-delete"
                             onClick={(e) => { e.stopPropagation(); deletePlaygroundSavedSignal(s.name) }}
                             title="Delete saved signal"
-                          >&times;</button>
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12">
+                              <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                            </svg>
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -2268,11 +2279,6 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   onChange={e => updatePlaygroundSignal(i, 'name', e.target.value)}
                   placeholder="Name"
                 />
-                <button
-                  className={`playground-signal-save${savedSignals.some(s => s.name === signal.name && s.expression === signal.expression) ? ' saved' : ''}`}
-                  onClick={() => savePlaygroundSignal(signal)}
-                  title="Save signal to disk"
-                >💾</button>
                 <input
                   className="playground-signal-expr"
                   value={signal.expression}
@@ -2280,6 +2286,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   onKeyDown={e => { if (e.key === 'Enter') evaluatePlaygroundSignals() }}
                   placeholder="Pandas expression, e.g. State == 3"
                 />
+                <button
+                  className={`playground-signal-save${savedSignals.some(s => s.name === signal.name && s.expression === signal.expression) ? ' saved' : ''}`}
+                  onClick={() => savePlaygroundSignal(signal)}
+                  title="Save signal to disk"
+                >💾</button>
                 <button className="playground-signal-remove" onClick={() => removePlaygroundSignal(i)} title="Remove signal">&times;</button>
               </div>
             ))}
@@ -2445,15 +2456,67 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                 </ul>
 
                 <h4>Available Columns</h4>
+
+                <h5>System</h5>
                 <ul>
-                  <li><code>State</code> — MA alignment state (-3 to 3)</li>
-                  <li><code>Type1</code>, <code>Type2</code> — signal type (positive=UP, negative=DN, abs=Nth)</li>
-                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code> — consecutive bar count</li>
-                  <li><code>DD_RR</code>, <code>DD_ADR</code> — wick/drawdown size</li>
-                  <li><code>priorRunCount</code> — prior run count</li>
-                  <li><code>MFE_clr_RR</code>, <code>REAL_clr_RR</code> — RR metrics</li>
-                  <li><code>stateDuration</code>, <code>barDuration</code> — time in state/bar</li>
-                  <li><code>prState</code>, <code>fromState</code> — prior/from states</li>
+                  <li><code>currentADR</code>, <code>chop(rolling)</code></li>
+                </ul>
+
+                <h5>Signals</h5>
+                <ul>
+                  <li><code>Type1</code>, <code>Type2</code>, <code>is_reversal</code></li>
+                </ul>
+
+                <h5>OHLC &amp; Price</h5>
+                <ul>
+                  <li><code>open</code>, <code>high</code>, <code>low</code>, <code>close</code></li>
+                  <li><code>open1</code>, <code>high1</code>, <code>low1</code>, <code>close1</code> — prior bar</li>
+                  <li><code>open2</code>, <code>high2</code>, <code>low2</code>, <code>close2</code> — 2 bars back</li>
+                </ul>
+
+                <h5>Moving Averages</h5>
+                <ul>
+                  <li><code>EMA_rawDistance(20)</code>, <code>EMA_rawDistance(50)</code>, <code>EMA_rawDistance(200)</code></li>
+                  <li><code>EMA_adrDistance(20)</code>, <code>EMA_adrDistance(50)</code>, <code>EMA_adrDistance(200)</code></li>
+                  <li><code>EMA_rrDistance(20)</code>, <code>EMA_rrDistance(50)</code>, <code>EMA_rrDistance(200)</code></li>
+                  <li><code>MA1</code>, <code>MA2</code>, <code>MA3</code> — EMA values</li>
+                  <li><code>MA1_1</code>, <code>MA2_1</code>, <code>MA3_1</code> — prior bar's MA values</li>
+                  <li><code>MA1_2</code>, <code>MA2_2</code>, <code>MA3_2</code> — 2 bars back MA values</li>
+                </ul>
+
+                <h5>State &amp; Structure</h5>
+                <ul>
+                  <li><code>State</code> — MA alignment (-3 to 3)</li>
+                  <li><code>prState</code> — prior bar's state</li>
+                  <li><code>fromState</code> — state of previous run</li>
+                  <li><code>direction</code> — open/close relationship</li>
+                  <li><code>stateBarCount</code> — bar # in current state</li>
+                </ul>
+
+                <h5>Consecutive Bars</h5>
+                <ul>
+                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code></li>
+                  <li><code>Con_UP_bars(state)</code>, <code>Con_DN_bars(state)</code></li>
+                  <li><code>priorRunCount</code></li>
+                </ul>
+
+                <h5>Drawdown/Wick</h5>
+                <ul>
+                  <li><code>DD</code>, <code>DD_RR</code>, <code>DD_ADR</code></li>
+                </ul>
+
+                <h5>Duration</h5>
+                <ul>
+                  <li><code>barDuration</code>, <code>stateDuration</code></li>
+                </ul>
+
+                <h5>MFE / Outcome Metrics</h5>
+                <ul>
+                  <li><code>MFE_clr_Bars</code>, <code>MFE_clr_price</code>, <code>MFE_clr_ADR</code>, <code>MFE_clr_RR</code></li>
+                  <li><code>REAL_clr_ADR</code>, <code>REAL_clr_RR</code></li>
+                  <li><code>REAL_MA1_Price</code>, <code>REAL_MA1_ADR</code>, <code>REAL_MA1_RR</code></li>
+                  <li><code>REAL_MA2_Price</code>, <code>REAL_MA2_ADR</code>, <code>REAL_MA2_RR</code></li>
+                  <li><code>REAL_MA3_Price</code>, <code>REAL_MA3_ADR</code>, <code>REAL_MA3_RR</code></li>
                 </ul>
 
                 <h4>Tips</h4>
@@ -2582,7 +2645,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                             className="playground-load-delete"
                             onClick={(e) => { e.stopPropagation(); deleteBtSavedSignal(s.name) }}
                             title="Delete saved signal"
-                          >&times;</button>
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12">
+                              <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                            </svg>
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -2611,11 +2678,6 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   onChange={e => updateBtSignal(i, 'name', e.target.value)}
                   placeholder="Name"
                 />
-                <button
-                  className={`playground-signal-save${btSavedSignals.some(s => s.name === signal.name && s.expression === signal.expression) ? ' saved' : ''}`}
-                  onClick={() => saveBtSignal(signal)}
-                  title="Save signal to disk"
-                >💾</button>
                 <input
                   className="playground-signal-expr"
                   value={signal.expression}
@@ -2623,6 +2685,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   onKeyDown={e => { if (e.key === 'Enter') evaluateBacktest() }}
                   placeholder="Pandas expression, e.g. State == 3"
                 />
+                <button
+                  className={`playground-signal-save${btSavedSignals.some(s => s.name === signal.name && s.expression === signal.expression) ? ' saved' : ''}`}
+                  onClick={() => saveBtSignal(signal)}
+                  title="Save signal to disk"
+                >💾</button>
                 <button className="playground-signal-remove" onClick={() => removeBtSignal(i)} title="Remove signal">&times;</button>
               </div>
             ))}
@@ -2849,15 +2916,67 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                 </ul>
 
                 <h4>Available Columns</h4>
+
+                <h5>System</h5>
                 <ul>
-                  <li><code>State</code> — MA alignment state (-3 to 3)</li>
-                  <li><code>Type1</code>, <code>Type2</code> — signal type (positive=UP, negative=DN, abs=Nth)</li>
-                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code> — consecutive bar count</li>
-                  <li><code>DD_RR</code>, <code>DD_ADR</code> — wick/drawdown size</li>
-                  <li><code>priorRunCount</code> — prior run count</li>
-                  <li><code>MFE_clr_RR</code>, <code>REAL_clr_RR</code> — RR metrics</li>
-                  <li><code>stateDuration</code>, <code>barDuration</code> — time in state/bar</li>
-                  <li><code>prState</code>, <code>fromState</code> — prior/from states</li>
+                  <li><code>currentADR</code>, <code>chop(rolling)</code></li>
+                </ul>
+
+                <h5>Signals</h5>
+                <ul>
+                  <li><code>Type1</code>, <code>Type2</code>, <code>is_reversal</code></li>
+                </ul>
+
+                <h5>OHLC &amp; Price</h5>
+                <ul>
+                  <li><code>open</code>, <code>high</code>, <code>low</code>, <code>close</code></li>
+                  <li><code>open1</code>, <code>high1</code>, <code>low1</code>, <code>close1</code> — prior bar</li>
+                  <li><code>open2</code>, <code>high2</code>, <code>low2</code>, <code>close2</code> — 2 bars back</li>
+                </ul>
+
+                <h5>Moving Averages</h5>
+                <ul>
+                  <li><code>EMA_rawDistance(20)</code>, <code>EMA_rawDistance(50)</code>, <code>EMA_rawDistance(200)</code></li>
+                  <li><code>EMA_adrDistance(20)</code>, <code>EMA_adrDistance(50)</code>, <code>EMA_adrDistance(200)</code></li>
+                  <li><code>EMA_rrDistance(20)</code>, <code>EMA_rrDistance(50)</code>, <code>EMA_rrDistance(200)</code></li>
+                  <li><code>MA1</code>, <code>MA2</code>, <code>MA3</code> — EMA values</li>
+                  <li><code>MA1_1</code>, <code>MA2_1</code>, <code>MA3_1</code> — prior bar's MA values</li>
+                  <li><code>MA1_2</code>, <code>MA2_2</code>, <code>MA3_2</code> — 2 bars back MA values</li>
+                </ul>
+
+                <h5>State &amp; Structure</h5>
+                <ul>
+                  <li><code>State</code> — MA alignment (-3 to 3)</li>
+                  <li><code>prState</code> — prior bar's state</li>
+                  <li><code>fromState</code> — state of previous run</li>
+                  <li><code>direction</code> — open/close relationship</li>
+                  <li><code>stateBarCount</code> — bar # in current state</li>
+                </ul>
+
+                <h5>Consecutive Bars</h5>
+                <ul>
+                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code></li>
+                  <li><code>Con_UP_bars(state)</code>, <code>Con_DN_bars(state)</code></li>
+                  <li><code>priorRunCount</code></li>
+                </ul>
+
+                <h5>Drawdown/Wick</h5>
+                <ul>
+                  <li><code>DD</code>, <code>DD_RR</code>, <code>DD_ADR</code></li>
+                </ul>
+
+                <h5>Duration</h5>
+                <ul>
+                  <li><code>barDuration</code>, <code>stateDuration</code></li>
+                </ul>
+
+                <h5>MFE / Outcome Metrics</h5>
+                <ul>
+                  <li><code>MFE_clr_Bars</code>, <code>MFE_clr_price</code>, <code>MFE_clr_ADR</code>, <code>MFE_clr_RR</code></li>
+                  <li><code>REAL_clr_ADR</code>, <code>REAL_clr_RR</code></li>
+                  <li><code>REAL_MA1_Price</code>, <code>REAL_MA1_ADR</code>, <code>REAL_MA1_RR</code></li>
+                  <li><code>REAL_MA2_Price</code>, <code>REAL_MA2_ADR</code>, <code>REAL_MA2_RR</code></li>
+                  <li><code>REAL_MA3_Price</code>, <code>REAL_MA3_ADR</code>, <code>REAL_MA3_RR</code></li>
                 </ul>
 
                 <h4>Tips</h4>
