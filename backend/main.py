@@ -2577,7 +2577,7 @@ def playground_signals(request: PlaygroundRequest):
     for label, period in [('MA1', ma1_period), ('MA2', ma2_period), ('MA3', ma3_period)]:
         df[label] = calculate_ema(df['close'], period).round(5)
 
-    for col in ['open', 'high', 'low', 'close']:
+    for col in ['open', 'high', 'low', 'close', 'direction']:
         df[f'{col}1'] = df[col].shift(1)
         df[f'{col}2'] = df[col].shift(2)
 
@@ -2736,7 +2736,7 @@ def backtest_signals(request: BacktestRequest):
     for label, period in [('MA1', bt_ma1), ('MA2', bt_ma2), ('MA3', bt_ma3)]:
         df[label] = calculate_ema(df['close'], period).round(5)
 
-    for col in ['open', 'high', 'low', 'close']:
+    for col in ['open', 'high', 'low', 'close', 'direction']:
         df[f'{col}1'] = df[col].shift(1)
         df[f'{col}2'] = df[col].shift(2)
 
@@ -3190,7 +3190,7 @@ def train_ml_model(req: MLTrainRequest):
         for label, period in [('MA1', ml_ma1), ('MA2', ml_ma2), ('MA3', ml_ma3)]:
             df[label] = calculate_ema(df['close'], period).round(5)
 
-        for col in ['open', 'high', 'low', 'close']:
+        for col in ['open', 'high', 'low', 'close', 'direction']:
             df[f'{col}1'] = df[col].shift(1)
             df[f'{col}2'] = df[col].shift(2)
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom'
 import Plot from 'react-plotly.js'
+import { COLUMN_DESCRIPTIONS, ColumnItem } from '../utils/columnDescriptions'
 import './StatsPage.css'
 
 const STORAGE_PREFIX = 'RenkoDiscovery_'
@@ -600,6 +601,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       if (res.ok) {
         const data = await res.json()
         setSavedSignals(data.signals || [])
+        setBtSavedSignals(data.signals || [])
         clearTimeout(saveToastTimer.current)
         setSaveToastVisible(true)
         saveToastTimer.current = setTimeout(() => setSaveToastVisible(false), 1500)
@@ -2459,64 +2461,74 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
 
                 <h5>System</h5>
                 <ul>
-                  <li><code>currentADR</code>, <code>chop(rolling)</code></li>
+                  <ColumnItem label="currentADR" desc={COLUMN_DESCRIPTIONS['currentADR']} />
+                  <ColumnItem label="chop(rolling)" desc={COLUMN_DESCRIPTIONS['chop(rolling)']} />
                 </ul>
 
                 <h5>Signals</h5>
                 <ul>
-                  <li><code>Type1</code>, <code>Type2</code>, <code>is_reversal</code></li>
+                  <ColumnItem label="Type1" desc={COLUMN_DESCRIPTIONS['Type1']} />
+                  <ColumnItem label="Type2" desc={COLUMN_DESCRIPTIONS['Type2']} />
                 </ul>
 
                 <h5>OHLC &amp; Price</h5>
                 <ul>
-                  <li><code>open</code>, <code>high</code>, <code>low</code>, <code>close</code></li>
-                  <li><code>open1</code>, <code>high1</code>, <code>low1</code>, <code>close1</code> — prior bar</li>
-                  <li><code>open2</code>, <code>high2</code>, <code>low2</code>, <code>close2</code> — 2 bars back</li>
+                  <ColumnItem label="open, high, low, close, direction" desc={COLUMN_DESCRIPTIONS['open, high, low, close, direction']} />
+                  <ColumnItem label="open1, high1, low1, close1, direction1" desc={COLUMN_DESCRIPTIONS['open1, high1, low1, close1, direction1']} />
+                  <ColumnItem label="open2, high2, low2, close2, direction2" desc={COLUMN_DESCRIPTIONS['open2, high2, low2, close2, direction2']} />
                 </ul>
 
                 <h5>Moving Averages</h5>
                 <ul>
-                  <li><code>EMA_rawDistance(20)</code>, <code>EMA_rawDistance(50)</code>, <code>EMA_rawDistance(200)</code></li>
-                  <li><code>EMA_adrDistance(20)</code>, <code>EMA_adrDistance(50)</code>, <code>EMA_adrDistance(200)</code></li>
-                  <li><code>EMA_rrDistance(20)</code>, <code>EMA_rrDistance(50)</code>, <code>EMA_rrDistance(200)</code></li>
-                  <li><code>MA1</code>, <code>MA2</code>, <code>MA3</code> — EMA values</li>
-                  <li><code>MA1_1</code>, <code>MA2_1</code>, <code>MA3_1</code> — prior bar's MA values</li>
-                  <li><code>MA1_2</code>, <code>MA2_2</code>, <code>MA3_2</code> — 2 bars back MA values</li>
+                  <ColumnItem label="EMA_rawDistance(20/50/200)" desc={COLUMN_DESCRIPTIONS['EMA_rawDistance(20/50/200)']} />
+                  <ColumnItem label="EMA_adrDistance(20/50/200)" desc={COLUMN_DESCRIPTIONS['EMA_adrDistance(20/50/200)']} />
+                  <ColumnItem label="EMA_rrDistance(20/50/200)" desc={COLUMN_DESCRIPTIONS['EMA_rrDistance(20/50/200)']} />
+                  <ColumnItem label="MA1, MA2, MA3" desc={COLUMN_DESCRIPTIONS['MA1, MA2, MA3']} />
+                  <ColumnItem label="MA1_1, MA2_1, MA3_1" desc={COLUMN_DESCRIPTIONS['MA1_1, MA2_1, MA3_1']} />
+                  <ColumnItem label="MA1_2, MA2_2, MA3_2" desc={COLUMN_DESCRIPTIONS['MA1_2, MA2_2, MA3_2']} />
                 </ul>
 
                 <h5>State &amp; Structure</h5>
                 <ul>
-                  <li><code>State</code> — MA alignment (-3 to 3)</li>
-                  <li><code>prState</code> — prior bar's state</li>
-                  <li><code>fromState</code> — state of previous run</li>
-                  <li><code>direction</code> — open/close relationship</li>
-                  <li><code>stateBarCount</code> — bar # in current state</li>
+                  <ColumnItem label="State" desc={COLUMN_DESCRIPTIONS['State']} />
+                  <ColumnItem label="prState" desc={COLUMN_DESCRIPTIONS['prState']} />
+                  <ColumnItem label="fromState" desc={COLUMN_DESCRIPTIONS['fromState']} />
+                  <ColumnItem label="stateBarCount" desc={COLUMN_DESCRIPTIONS['stateBarCount']} />
                 </ul>
 
                 <h5>Consecutive Bars</h5>
                 <ul>
-                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code></li>
-                  <li><code>Con_UP_bars(state)</code>, <code>Con_DN_bars(state)</code></li>
-                  <li><code>priorRunCount</code></li>
+                  <ColumnItem label="Con_UP_bars" desc={COLUMN_DESCRIPTIONS['Con_UP_bars']} />
+                  <ColumnItem label="Con_DN_bars" desc={COLUMN_DESCRIPTIONS['Con_DN_bars']} />
+                  <ColumnItem label="Con_UP_bars(state)" desc={COLUMN_DESCRIPTIONS['Con_UP_bars(state)']} />
+                  <ColumnItem label="Con_DN_bars(state)" desc={COLUMN_DESCRIPTIONS['Con_DN_bars(state)']} />
+                  <ColumnItem label="priorRunCount" desc={COLUMN_DESCRIPTIONS['priorRunCount']} />
                 </ul>
 
                 <h5>Drawdown/Wick</h5>
                 <ul>
-                  <li><code>DD</code>, <code>DD_RR</code>, <code>DD_ADR</code></li>
+                  <ColumnItem label="DD" desc={COLUMN_DESCRIPTIONS['DD']} />
+                  <ColumnItem label="DD_RR" desc={COLUMN_DESCRIPTIONS['DD_RR']} />
+                  <ColumnItem label="DD_ADR" desc={COLUMN_DESCRIPTIONS['DD_ADR']} />
                 </ul>
 
                 <h5>Duration</h5>
                 <ul>
-                  <li><code>barDuration</code>, <code>stateDuration</code></li>
+                  <ColumnItem label="barDuration" desc={COLUMN_DESCRIPTIONS['barDuration']} />
+                  <ColumnItem label="stateDuration" desc={COLUMN_DESCRIPTIONS['stateDuration']} />
                 </ul>
 
                 <h5>MFE / Outcome Metrics</h5>
                 <ul>
-                  <li><code>MFE_clr_Bars</code>, <code>MFE_clr_price</code>, <code>MFE_clr_ADR</code>, <code>MFE_clr_RR</code></li>
-                  <li><code>REAL_clr_ADR</code>, <code>REAL_clr_RR</code></li>
-                  <li><code>REAL_MA1_Price</code>, <code>REAL_MA1_ADR</code>, <code>REAL_MA1_RR</code></li>
-                  <li><code>REAL_MA2_Price</code>, <code>REAL_MA2_ADR</code>, <code>REAL_MA2_RR</code></li>
-                  <li><code>REAL_MA3_Price</code>, <code>REAL_MA3_ADR</code>, <code>REAL_MA3_RR</code></li>
+                  <ColumnItem label="MFE_clr_Bars" desc={COLUMN_DESCRIPTIONS['MFE_clr_Bars']} />
+                  <ColumnItem label="MFE_clr_price" desc={COLUMN_DESCRIPTIONS['MFE_clr_price']} />
+                  <ColumnItem label="MFE_clr_ADR" desc={COLUMN_DESCRIPTIONS['MFE_clr_ADR']} />
+                  <ColumnItem label="MFE_clr_RR" desc={COLUMN_DESCRIPTIONS['MFE_clr_RR']} />
+                  <ColumnItem label="REAL_clr_ADR" desc={COLUMN_DESCRIPTIONS['REAL_clr_ADR']} />
+                  <ColumnItem label="REAL_clr_RR" desc={COLUMN_DESCRIPTIONS['REAL_clr_RR']} />
+                  <ColumnItem label="REAL_MA1_Price, REAL_MA1_ADR, REAL_MA1_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA1_Price, REAL_MA1_ADR, REAL_MA1_RR']} />
+                  <ColumnItem label="REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR']} />
+                  <ColumnItem label="REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR']} />
                 </ul>
 
                 <h4>Tips</h4>
@@ -2919,64 +2931,74 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
 
                 <h5>System</h5>
                 <ul>
-                  <li><code>currentADR</code>, <code>chop(rolling)</code></li>
+                  <ColumnItem label="currentADR" desc={COLUMN_DESCRIPTIONS['currentADR']} />
+                  <ColumnItem label="chop(rolling)" desc={COLUMN_DESCRIPTIONS['chop(rolling)']} />
                 </ul>
 
                 <h5>Signals</h5>
                 <ul>
-                  <li><code>Type1</code>, <code>Type2</code>, <code>is_reversal</code></li>
+                  <ColumnItem label="Type1" desc={COLUMN_DESCRIPTIONS['Type1']} />
+                  <ColumnItem label="Type2" desc={COLUMN_DESCRIPTIONS['Type2']} />
                 </ul>
 
                 <h5>OHLC &amp; Price</h5>
                 <ul>
-                  <li><code>open</code>, <code>high</code>, <code>low</code>, <code>close</code></li>
-                  <li><code>open1</code>, <code>high1</code>, <code>low1</code>, <code>close1</code> — prior bar</li>
-                  <li><code>open2</code>, <code>high2</code>, <code>low2</code>, <code>close2</code> — 2 bars back</li>
+                  <ColumnItem label="open, high, low, close, direction" desc={COLUMN_DESCRIPTIONS['open, high, low, close, direction']} />
+                  <ColumnItem label="open1, high1, low1, close1, direction1" desc={COLUMN_DESCRIPTIONS['open1, high1, low1, close1, direction1']} />
+                  <ColumnItem label="open2, high2, low2, close2, direction2" desc={COLUMN_DESCRIPTIONS['open2, high2, low2, close2, direction2']} />
                 </ul>
 
                 <h5>Moving Averages</h5>
                 <ul>
-                  <li><code>EMA_rawDistance(20)</code>, <code>EMA_rawDistance(50)</code>, <code>EMA_rawDistance(200)</code></li>
-                  <li><code>EMA_adrDistance(20)</code>, <code>EMA_adrDistance(50)</code>, <code>EMA_adrDistance(200)</code></li>
-                  <li><code>EMA_rrDistance(20)</code>, <code>EMA_rrDistance(50)</code>, <code>EMA_rrDistance(200)</code></li>
-                  <li><code>MA1</code>, <code>MA2</code>, <code>MA3</code> — EMA values</li>
-                  <li><code>MA1_1</code>, <code>MA2_1</code>, <code>MA3_1</code> — prior bar's MA values</li>
-                  <li><code>MA1_2</code>, <code>MA2_2</code>, <code>MA3_2</code> — 2 bars back MA values</li>
+                  <ColumnItem label="EMA_rawDistance(20/50/200)" desc={COLUMN_DESCRIPTIONS['EMA_rawDistance(20/50/200)']} />
+                  <ColumnItem label="EMA_adrDistance(20/50/200)" desc={COLUMN_DESCRIPTIONS['EMA_adrDistance(20/50/200)']} />
+                  <ColumnItem label="EMA_rrDistance(20/50/200)" desc={COLUMN_DESCRIPTIONS['EMA_rrDistance(20/50/200)']} />
+                  <ColumnItem label="MA1, MA2, MA3" desc={COLUMN_DESCRIPTIONS['MA1, MA2, MA3']} />
+                  <ColumnItem label="MA1_1, MA2_1, MA3_1" desc={COLUMN_DESCRIPTIONS['MA1_1, MA2_1, MA3_1']} />
+                  <ColumnItem label="MA1_2, MA2_2, MA3_2" desc={COLUMN_DESCRIPTIONS['MA1_2, MA2_2, MA3_2']} />
                 </ul>
 
                 <h5>State &amp; Structure</h5>
                 <ul>
-                  <li><code>State</code> — MA alignment (-3 to 3)</li>
-                  <li><code>prState</code> — prior bar's state</li>
-                  <li><code>fromState</code> — state of previous run</li>
-                  <li><code>direction</code> — open/close relationship</li>
-                  <li><code>stateBarCount</code> — bar # in current state</li>
+                  <ColumnItem label="State" desc={COLUMN_DESCRIPTIONS['State']} />
+                  <ColumnItem label="prState" desc={COLUMN_DESCRIPTIONS['prState']} />
+                  <ColumnItem label="fromState" desc={COLUMN_DESCRIPTIONS['fromState']} />
+                  <ColumnItem label="stateBarCount" desc={COLUMN_DESCRIPTIONS['stateBarCount']} />
                 </ul>
 
                 <h5>Consecutive Bars</h5>
                 <ul>
-                  <li><code>Con_UP_bars</code>, <code>Con_DN_bars</code></li>
-                  <li><code>Con_UP_bars(state)</code>, <code>Con_DN_bars(state)</code></li>
-                  <li><code>priorRunCount</code></li>
+                  <ColumnItem label="Con_UP_bars" desc={COLUMN_DESCRIPTIONS['Con_UP_bars']} />
+                  <ColumnItem label="Con_DN_bars" desc={COLUMN_DESCRIPTIONS['Con_DN_bars']} />
+                  <ColumnItem label="Con_UP_bars(state)" desc={COLUMN_DESCRIPTIONS['Con_UP_bars(state)']} />
+                  <ColumnItem label="Con_DN_bars(state)" desc={COLUMN_DESCRIPTIONS['Con_DN_bars(state)']} />
+                  <ColumnItem label="priorRunCount" desc={COLUMN_DESCRIPTIONS['priorRunCount']} />
                 </ul>
 
                 <h5>Drawdown/Wick</h5>
                 <ul>
-                  <li><code>DD</code>, <code>DD_RR</code>, <code>DD_ADR</code></li>
+                  <ColumnItem label="DD" desc={COLUMN_DESCRIPTIONS['DD']} />
+                  <ColumnItem label="DD_RR" desc={COLUMN_DESCRIPTIONS['DD_RR']} />
+                  <ColumnItem label="DD_ADR" desc={COLUMN_DESCRIPTIONS['DD_ADR']} />
                 </ul>
 
                 <h5>Duration</h5>
                 <ul>
-                  <li><code>barDuration</code>, <code>stateDuration</code></li>
+                  <ColumnItem label="barDuration" desc={COLUMN_DESCRIPTIONS['barDuration']} />
+                  <ColumnItem label="stateDuration" desc={COLUMN_DESCRIPTIONS['stateDuration']} />
                 </ul>
 
                 <h5>MFE / Outcome Metrics</h5>
                 <ul>
-                  <li><code>MFE_clr_Bars</code>, <code>MFE_clr_price</code>, <code>MFE_clr_ADR</code>, <code>MFE_clr_RR</code></li>
-                  <li><code>REAL_clr_ADR</code>, <code>REAL_clr_RR</code></li>
-                  <li><code>REAL_MA1_Price</code>, <code>REAL_MA1_ADR</code>, <code>REAL_MA1_RR</code></li>
-                  <li><code>REAL_MA2_Price</code>, <code>REAL_MA2_ADR</code>, <code>REAL_MA2_RR</code></li>
-                  <li><code>REAL_MA3_Price</code>, <code>REAL_MA3_ADR</code>, <code>REAL_MA3_RR</code></li>
+                  <ColumnItem label="MFE_clr_Bars" desc={COLUMN_DESCRIPTIONS['MFE_clr_Bars']} />
+                  <ColumnItem label="MFE_clr_price" desc={COLUMN_DESCRIPTIONS['MFE_clr_price']} />
+                  <ColumnItem label="MFE_clr_ADR" desc={COLUMN_DESCRIPTIONS['MFE_clr_ADR']} />
+                  <ColumnItem label="MFE_clr_RR" desc={COLUMN_DESCRIPTIONS['MFE_clr_RR']} />
+                  <ColumnItem label="REAL_clr_ADR" desc={COLUMN_DESCRIPTIONS['REAL_clr_ADR']} />
+                  <ColumnItem label="REAL_clr_RR" desc={COLUMN_DESCRIPTIONS['REAL_clr_RR']} />
+                  <ColumnItem label="REAL_MA1_Price, REAL_MA1_ADR, REAL_MA1_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA1_Price, REAL_MA1_ADR, REAL_MA1_RR']} />
+                  <ColumnItem label="REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR']} />
+                  <ColumnItem label="REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR']} />
                 </ul>
 
                 <h4>Tips</h4>
