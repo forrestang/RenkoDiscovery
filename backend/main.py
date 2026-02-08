@@ -1817,9 +1817,17 @@ async def generate_stats(instrument: str, request: StatsRequest):
         df[f'REAL_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
         df[f'REAL_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
 
-    # Drop rows where currentADR or EMA distances couldn't be calculated (insufficient history)
-    required_columns = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods] + [f'REAL_MA{idx}_Price' for idx in range(1, len(ma_periods) + 1)]
-    df = df.dropna(subset=required_columns)
+    # LEFT CUT: find first row where all warmup columns are valid
+    left_cols = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
+    left_valid = df[left_cols].notna().all(axis=1)
+    left_cut = left_valid.idxmax()  # first True index
+
+    # RIGHT CUT: find last row where all forward-scan columns are valid
+    right_cols = [f'REAL_MA{idx}_Price' for idx in range(1, len(ma_periods) + 1)]
+    right_valid = df[right_cols].notna().all(axis=1)
+    right_cut = right_valid[::-1].idxmax()  # last True index
+
+    df = df.loc[left_cut:right_cut].reset_index(drop=True)
 
     # Clean up helper column
     df = df.drop(columns=['utc_date'])
@@ -1859,7 +1867,12 @@ def get_parquet_data(filepath: str):
     columns = df.columns.tolist()
     rows = df.values.tolist()
 
-    return {"columns": columns, "rows": rows, "totalRows": len(rows)}
+    result = {"columns": columns, "rows": rows, "totalRows": len(rows)}
+    from starlette.responses import Response
+    json_str = json.dumps(result, allow_nan=True, default=str)
+    json_str = re.sub(r'\bNaN\b', 'null', json_str)
+    json_str = re.sub(r'\b-?Infinity\b', 'null', json_str)
+    return Response(content=json_str, media_type="application/json")
 
 
 @app.get("/export-csv")
@@ -1975,7 +1988,8 @@ def get_parquet_stats(filepath: str):
                     con_mask = df['Con_DN_bars'] == con
                 cell_mask = state_mask & con_mask
                 count = int(cell_mask.sum())
-                avg_rr = round(float(df.loc[cell_mask, 'REAL_clr_RR'].mean()), 2) if count > 0 else None
+                mean_val = df.loc[cell_mask, 'REAL_clr_RR'].mean()
+                avg_rr = round(float(mean_val), 2) if pd.notna(mean_val) else None
                 row[f"s{state}_count"] = count
                 row[f"s{state}_avgRR"] = avg_rr
             heatmap_rows.append(row)
@@ -2465,7 +2479,8 @@ def get_parquet_stats(filepath: str):
                 for i in range(len(n_vals)):
                     pt = {"n": int(n_vals[i]), "rr": float(rr_vals[i]), "idx": int(idx_vals[i])}
                     for col_name, field_name in extra_metric_cols:
-                        pt[field_name] = round(float(subset[col_name].iloc[i]), 2)
+                        val = subset[col_name].iloc[i]
+                        pt[field_name] = round(float(val), 2) if pd.notna(val) else None
                     if 'chop(rolling)' in subset.columns:
                         chop_val = subset['chop(rolling)'].iloc[i]
                         pt["chop"] = round(float(chop_val), 2) if pd.notna(chop_val) else None
@@ -2519,7 +2534,7 @@ def get_parquet_stats(filepath: str):
             arr = df[rr_col].tolist()
             bar_data[f'emaRr{period}'] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
 
-    return {
+    result = {
         "totalBars": total_bars,
         "upBars": up_bars,
         "dnBars": dn_bars,
@@ -2555,6 +2570,13 @@ def get_parquet_stats(filepath: str):
         "barData": bar_data,
         "maPeriods": ma_periods
     }
+
+    # Serialize with allow_nan=True, then replace NaN/Infinity with null
+    from starlette.responses import Response
+    json_str = json.dumps(result, allow_nan=True, default=str)
+    json_str = re.sub(r'\bNaN\b', 'null', json_str)
+    json_str = re.sub(r'\b-?Infinity\b', 'null', json_str)
+    return Response(content=json_str, media_type="application/json")
 
 
 @app.post("/playground-signals")
