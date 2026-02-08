@@ -509,6 +509,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   const [playgroundData, setPlaygroundData] = useState({ signals: {}, errors: {} })
   const [playgroundLoading, setPlaygroundLoading] = useState(false)
   const [playgroundRRField, setPlaygroundRRField] = useState('rr')
+  const [pgComboMode, setPgComboMode] = useState(false)
   const [showPlaygroundHelp, setShowPlaygroundHelp] = useState(false)
   const [pgHelpPos, setPgHelpPos] = useState({ x: 200, y: 100 })
   const [pgDragging, setPgDragging] = useState(false)
@@ -675,6 +676,36 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     return traces
   }, [playgroundData, playgroundSignals, playgroundRRField])
 
+  // Memoized combo R-Curve trace for playground
+  const pgComboCurveTraces = useMemo(() => {
+    const sigs = playgroundData.signals || {}
+    const rrKey = playgroundRRField
+    const allPoints = []
+    playgroundSignals.forEach((signal) => {
+      if (signal.enabled === false) return
+      const points = sigs[signal.name]
+      if (!points || points.length === 0) return
+      points.forEach(pt => allPoints.push({ idx: pt.idx, rr: pt[rrKey] ?? 0 }))
+    })
+    if (allPoints.length === 0) return []
+    allPoints.sort((a, b) => a.idx - b.idx)
+    let cumulative = 0
+    const x = []
+    const y = []
+    allPoints.forEach((pt, j) => {
+      cumulative += pt.rr
+      x.push(j + 1)
+      y.push(parseFloat(cumulative.toFixed(2)))
+    })
+    return [{
+      x, y,
+      type: 'scatter',
+      mode: 'lines',
+      name: 'Combo',
+      line: { color: '#facc15', width: 1.5 },
+    }]
+  }, [playgroundData, playgroundSignals, playgroundRRField])
+
   // Memoized stats for playground signals
   const playgroundStats = useMemo(() => {
     const sigs = playgroundData.signals || {}
@@ -697,6 +728,30 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       result[signal.name] = { count, avgRR, winRate, dist }
     })
     return result
+  }, [playgroundData, playgroundSignals, playgroundRRField])
+
+  // Memoized combo stats for playground
+  const pgComboStats = useMemo(() => {
+    const sigs = playgroundData.signals || {}
+    const rrKey = playgroundRRField
+    const allValues = []
+    playgroundSignals.forEach((signal) => {
+      if (signal.enabled === false) return
+      const points = sigs[signal.name]
+      if (!points || points.length === 0) return
+      points.forEach(p => allValues.push(p[rrKey] ?? 0))
+    })
+    if (allValues.length === 0) return null
+    const count = allValues.length
+    const sum = allValues.reduce((s, v) => s + v, 0)
+    const avgRR = (sum / count).toFixed(2)
+    const wins = allValues.filter(v => v > 0).length
+    const winRate = (wins / count * 100).toFixed(0)
+    const dist = RR_BUCKETS.map(b => {
+      const cnt = allValues.filter(b.test).length
+      return { label: b.label, count: cnt, pct: count > 0 ? (cnt / count * 100).toFixed(1) : '0.0' }
+    })
+    return { count, avgRR, winRate, dist }
   }, [playgroundData, playgroundSignals, playgroundRRField])
 
   // ==================== Backtest Tab State ====================
@@ -734,6 +789,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     const v = localStorage.getItem(`${STORAGE_PREFIX}btAllowOverlap`)
     return v === null ? true : v === 'true'
   })
+  const [btComboMode, setBtComboMode] = useState(false)
   const [showBtHelp, setShowBtHelp] = useState(false)
   const [btHelpPos, setBtHelpPos] = useState({ x: 200, y: 100 })
   const [btDragging, setBtDragging] = useState(false)
@@ -923,6 +979,104 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       })
     })
     return traces
+  }, [btData, btSignals])
+
+  // Memoized combo equity curve for backtest (sorted by exit_idx)
+  const btComboCurveTraces = useMemo(() => {
+    const sigs = btData.signals || {}
+    const allTrades = []
+    btSignals.forEach((signal) => {
+      if (signal.enabled === false) return
+      const sigData = sigs[signal.name]
+      if (!sigData || !sigData.trades) return
+      sigData.trades.forEach(t => allTrades.push(t))
+    })
+    if (allTrades.length === 0) return []
+    allTrades.sort((a, b) => (a.exit_idx ?? a.idx) - (b.exit_idx ?? b.idx))
+    let cumulative = 0
+    const x = [0]
+    const y = [0]
+    allTrades.forEach((t, j) => {
+      cumulative += t.result
+      x.push(j + 1)
+      y.push(parseFloat(cumulative.toFixed(2)))
+    })
+    return [{
+      x, y,
+      type: 'scatter',
+      mode: 'lines',
+      name: 'Combo',
+      line: { color: '#facc15', width: 1.5 },
+    }]
+  }, [btData, btSignals])
+
+  // Memoized combo summary stats for backtest
+  const btComboStats = useMemo(() => {
+    const sigs = btData.signals || {}
+    const allTrades = []
+    btSignals.forEach((signal) => {
+      if (signal.enabled === false) return
+      const sigData = sigs[signal.name]
+      if (!sigData || !sigData.trades) return
+      sigData.trades.forEach(t => allTrades.push(t))
+    })
+    if (allTrades.length === 0) return null
+    allTrades.sort((a, b) => (a.exit_idx ?? a.idx) - (b.exit_idx ?? b.idx))
+    const count = allTrades.length
+    const closed = allTrades.filter(t => t.outcome !== 'open')
+    const open = allTrades.filter(t => t.outcome === 'open').length
+    const wins = closed.filter(t => t.result > 0)
+    const losses = closed.filter(t => t.result <= 0)
+    const winCount = wins.length
+    const lossCount = losses.length
+    const winRate = closed.length > 0 ? winCount / closed.length : 0
+    const avgWin = winCount > 0 ? (wins.reduce((s, t) => s + t.result, 0) / winCount) : 0
+    const avgLoss = lossCount > 0 ? (losses.reduce((s, t) => s + t.result, 0) / lossCount) : 0
+    const grossWin = wins.reduce((s, t) => s + t.result, 0)
+    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.result, 0))
+    const profitFactor = grossLoss > 0 ? (grossWin / grossLoss) : grossWin > 0 ? Infinity : 0
+    const totalR = allTrades.reduce((s, t) => s + t.result, 0)
+    const expectancy = closed.length > 0 ? (closed.reduce((s, t) => s + t.result, 0) / closed.length) : 0
+    // Max drawdown
+    let peak = 0, maxDD = 0, cum = 0
+    allTrades.forEach(t => {
+      cum += t.result
+      if (cum > peak) peak = cum
+      const dd = peak - cum
+      if (dd > maxDD) maxDD = dd
+    })
+    // Sharpe
+    const results = closed.map(t => t.result)
+    const mean = results.length > 0 ? results.reduce((s, v) => s + v, 0) / results.length : 0
+    const variance = results.length > 1 ? results.reduce((s, v) => s + (v - mean) ** 2, 0) / (results.length - 1) : 0
+    const stdDev = Math.sqrt(variance)
+    const sharpe = stdDev > 0 ? (mean / stdDev) : null
+    // Streaks
+    let maxConsecWins = 0, maxConsecLosses = 0, cw = 0, cl = 0
+    closed.forEach(t => {
+      if (t.result > 0) { cw++; cl = 0; if (cw > maxConsecWins) maxConsecWins = cw }
+      else { cl++; cw = 0; if (cl > maxConsecLosses) maxConsecLosses = cl }
+    })
+    // Avg bars held
+    const barsArr = allTrades.filter(t => t.bars_held != null).map(t => t.bars_held)
+    const avgBarsHeld = barsArr.length > 0 ? (barsArr.reduce((s, v) => s + v, 0) / barsArr.length) : 0
+    return {
+      count,
+      wins: winCount,
+      losses: lossCount,
+      open,
+      win_rate: winRate,
+      avg_win: parseFloat(avgWin.toFixed(2)),
+      avg_loss: parseFloat(avgLoss.toFixed(2)),
+      profit_factor: profitFactor === Infinity ? '∞' : parseFloat(profitFactor.toFixed(2)),
+      expectancy: parseFloat(expectancy.toFixed(2)),
+      total_r: parseFloat(totalR.toFixed(2)),
+      max_drawdown: parseFloat(maxDD.toFixed(2)),
+      sharpe: sharpe != null ? parseFloat(sharpe.toFixed(2)) : null,
+      max_consec_wins: maxConsecWins,
+      max_consec_losses: maxConsecLosses,
+      avg_bars_held: parseFloat(avgBarsHeld.toFixed(1)),
+    }
   }, [btData, btSignals])
 
   // Active chop filter based on current tab
@@ -2308,18 +2462,24 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
           <div className="stats-module module-box playground-rcurve-module">
             <div className="equity-curve-header">
               <span className="module-title-text">CUMULATIVE R CURVE</span>
-              <select
-                className="fx-column-select"
-                value={playgroundRRField}
-                onChange={e => setPlaygroundRRField(e.target.value)}
-              >
-                {RR_FIELDS.map(f => (
-                  <option key={f.value} value={f.value} title={f.desc}>{f.label}</option>
-                ))}
-              </select>
+              <span>
+                <select
+                  className="fx-column-select"
+                  value={playgroundRRField}
+                  onChange={e => setPlaygroundRRField(e.target.value)}
+                >
+                  {RR_FIELDS.map(f => (
+                    <option key={f.value} value={f.value} title={f.desc}>{f.label}</option>
+                  ))}
+                </select>
+                <button
+                  className={`filter-action-btn ${pgComboMode ? 'active' : ''}`}
+                  onClick={() => setPgComboMode(prev => !prev)}
+                >Combo</button>
+              </span>
             </div>
             <Plot
-              data={playgroundCurveTraces}
+              data={pgComboMode ? pgComboCurveTraces : playgroundCurveTraces}
               layout={{
                 height: 300,
                 margin: { t: 8, r: 16, b: 40, l: 50 },
@@ -2348,6 +2508,45 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
           {/* Signal Performance Table */}
           {(() => {
             const enabledSignals = playgroundSignals.filter(s => s.enabled !== false)
+            if (pgComboMode && pgComboStats) {
+              return (
+              <div className="stats-module">
+                <table className="stats-table">
+                  <thead>
+                    <tr className="module-title-row">
+                      <th colSpan={2} className="module-title">SIGNAL PERFORMANCE</th>
+                    </tr>
+                    <tr>
+                      <th></th>
+                      <th style={{ color: '#facc15' }}>Combo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>Count</td><td>{pgComboStats.count}</td></tr>
+                    <tr><td>Avg RR</td><td>{pgComboStats.avgRR}</td></tr>
+                    <tr><td>Win Rate</td><td>{pgComboStats.winRate}%</td></tr>
+                  </tbody>
+                </table>
+                <table className="stats-table" style={{ marginTop: '8px' }}>
+                  <thead>
+                    <tr className="module-title-row">
+                      <th colSpan={2} className="module-title">RR DISTRIBUTION</th>
+                    </tr>
+                    <tr>
+                      <th>Bucket</th>
+                      <th style={{ color: '#facc15' }}>Combo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RR_BUCKETS.map(bucket => {
+                      const d = pgComboStats.dist?.find(d => d.label === bucket.label)
+                      return <tr key={bucket.label}><td>{bucket.label}</td><td>{d ? `${d.count} (${d.pct}%)` : '—'}</td></tr>
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              )
+            }
             return (
             <div className="stats-module">
               <table className="stats-table">
@@ -2713,13 +2912,21 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
           </div>
 
           {/* Equity Curve */}
-          {btCurveTraces.length > 0 && (
+          {btCurveTraces.length > 0 && (() => {
+            const btShowCombo = !btAllowOverlap || btComboMode
+            return (
             <div className="stats-module module-box backtest-curve-module">
               <div className="equity-curve-header">
                 <span className="module-title-text">EQUITY CURVE (CUMULATIVE {btReportUnit.toUpperCase()})</span>
+                {btAllowOverlap && (
+                  <button
+                    className={`filter-action-btn ${btComboMode ? 'active' : ''}`}
+                    onClick={() => setBtComboMode(prev => !prev)}
+                  >Combo</button>
+                )}
               </div>
               <Plot
-                data={btCurveTraces}
+                data={btShowCombo ? btComboCurveTraces : btCurveTraces}
                 layout={{
                   height: 300,
                   margin: { t: 8, r: 16, b: 40, l: 50 },
@@ -2744,13 +2951,15 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                 style={{ width: '100%' }}
               />
             </div>
-          )}
+            )
+          })()}
 
           {/* Summary Stats Table */}
           {(() => {
             const enabledSignals = btSignals.filter(s => s.enabled !== false)
             const hasSummary = enabledSignals.some(s => btData.signals?.[s.name]?.summary)
             if (!hasSummary) return null
+            const btShowCombo = !btAllowOverlap || btComboMode
             return (
               <div className="stats-module module-box backtest-stats-module">
                 <table className="stats-table">
@@ -2802,6 +3011,26 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                         </tr>
                       )
                     })}
+                    {btShowCombo && btComboStats && (
+                      <tr style={{ borderTop: '2px solid rgba(250,204,21,0.3)' }}>
+                        <td style={{ color: '#facc15', fontWeight: 600 }}>Combo</td>
+                        <td>{btComboStats.count}</td>
+                        <td className="up">{btComboStats.wins}</td>
+                        <td className="dn">{btComboStats.losses}</td>
+                        <td>{btComboStats.open}</td>
+                        <td>{(btComboStats.win_rate * 100).toFixed(1)}%</td>
+                        <td className="up">{btComboStats.avg_win}</td>
+                        <td className="dn">{btComboStats.avg_loss}</td>
+                        <td>{btComboStats.profit_factor}</td>
+                        <td style={{ color: btComboStats.expectancy >= 0 ? '#22c55e' : '#ef4444' }}>{btComboStats.expectancy}</td>
+                        <td style={{ fontWeight: 600, color: btComboStats.total_r >= 0 ? '#22c55e' : '#ef4444' }}>{btComboStats.total_r}</td>
+                        <td className="dn">{btComboStats.max_drawdown}</td>
+                        <td>{btComboStats.sharpe != null ? btComboStats.sharpe : '\u2014'}</td>
+                        <td className="up">{btComboStats.max_consec_wins}</td>
+                        <td className="dn">{btComboStats.max_consec_losses}</td>
+                        <td>{btComboStats.avg_bars_held}</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
