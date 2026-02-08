@@ -3156,15 +3156,18 @@ def backtest_signals(request: BacktestRequest):
             exit_idx = n - 1
             exit_dt = dt_arr[n - 1]
 
+        exit_price = close_arr[exit_idx] if exit_idx is not None else close_arr[n - 1]
         trade = {
             "idx": i,
             "entry_dt": dt_arr[i],
+            "entry_price": round(float(entry_close), 5),
             "direction": direction,
             "outcome": outcome,
             "result": round(float(result), 2),
             "bars_held": bars_held,
             "exit_idx": exit_idx,
             "exit_dt": exit_dt,
+            "exit_price": round(float(exit_price), 5),
         }
         if sig_name not in trades_by_signal:
             trades_by_signal[sig_name] = []

@@ -49,11 +49,11 @@ export const COLUMN_DESCRIPTIONS = {
   'MFE_clr_price': 'MFE price value (raw) at color change.',
   'MFE_clr_ADR': 'MFE normalized by ADR at color change.',
   'MFE_clr_RR': 'MFE normalized by reversal size at color change.',
-  'REAL_clr_ADR': 'Realistic MFE (MFE minus 1 reversal) in ADR units \u2014 accounts for entry cost.',
-  'REAL_clr_RR': 'Realistic MFE in RR units \u2014 accounts for entry cost.',
-  'REAL_MA1_Price, REAL_MA1_ADR, REAL_MA1_RR': 'MFE measured to MA1 (fast EMA) in price/ADR/RR.',
-  'REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR': 'MFE measured to MA2 (medium EMA) in price/ADR/RR.',
-  'REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR': 'MFE measured to MA3 (slow EMA) in price/ADR/RR.',
+  'REAL_clr_ADR': 'Realistic Exit accounts for color change (MFE minus 1 reversal) in ADR units.',
+  'REAL_clr_RR': 'Realistic Exit accounts for color change (MFE minus 1 reversal) in RR units.',
+  'REAL_MA1_Price, REAL_MA1_ADR, REAL_MA1_RR': 'Exit on first close back thru MA1 (fast EMA) in price/ADR/RR.',
+  'REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR': 'Exit on first close back thru MA2 (medium EMA) in price/ADR/RR.',
+  'REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR': 'Exit on first close back thru MA3 (slow EMA) in price/ADR/RR.',
 };
 
 export function ColumnItem({ label, desc }) {

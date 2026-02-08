@@ -2648,12 +2648,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
 
                 <h4>Examples</h4>
                 <ul>
-                  <li><code>State == 3</code> — strongest bullish MA alignment</li>
-                  <li><code>State == -3</code> — strongest bearish MA alignment</li>
-                  <li><code>Type1 &gt; 0 and State &gt;= 2</code> — Type1 UP in strong trend</li>
-                  <li><code>DD_RR &lt; 0.3 and State in [2, 3]</code> — small wicks in trend</li>
+                  <li><code>State == 3</code> — fast &gt; med &gt; slow</li>
+                  <li><code>State == -3</code> — fast &lt; med &lt; slow</li>
+                  <li><code>Type1 &gt; 0 and low &lt; MA1</code> — Type1 UP w/low below MA1</li>
+                  <li><code>DD_RR &lt; 0.3 and State in [2, 3]</code> — small wicks in states 2 or 3</li>
                   <li><code>Con_UP_bars &gt;= 3</code> — 3+ consecutive UP bars</li>
-                  <li><code>priorRunCount == 1</code> — first occurrence in a run</li>
                 </ul>
 
                 <h4>Available Columns</h4>
@@ -3075,12 +3074,14 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                         <th>#</th>
                         <th>Signal</th>
                         <th>Entry Date</th>
+                        <th>Entry Price</th>
                         <th>Bar#</th>
                         <th>Dir</th>
                         <th>Outcome</th>
                         <th>Result</th>
                         <th>Bars</th>
                         <th>Exit Date</th>
+                        <th>Exit Price</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3096,6 +3097,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                           <td>{i + 1}</td>
                           <td style={{ color: PLAYGROUND_COLORS[t.signalIdx % PLAYGROUND_COLORS.length] }}>{t.signalName}</td>
                           <td>{t.entry_dt}</td>
+                          <td>{t.entry_price}</td>
                           <td>{t.idx}</td>
                           <td className={t.direction === 'long' ? 'up' : 'dn'}>{t.direction === 'long' ? 'L' : 'S'}</td>
                           <td>{t.outcome === 'target' ? 'W' : t.outcome === 'stop' ? 'L' : 'Open'}</td>
@@ -3104,6 +3106,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                           </td>
                           <td>{t.bars_held}</td>
                           <td>{t.exit_dt}</td>
+                          <td>{t.exit_price}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3148,12 +3151,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
 
                 <h4>Examples</h4>
                 <ul>
-                  <li><code>State == 3</code> — strongest bullish MA alignment</li>
-                  <li><code>State == -3</code> — strongest bearish MA alignment</li>
-                  <li><code>Type1 &gt; 0 and State &gt;= 2</code> — Type1 UP in strong trend</li>
-                  <li><code>DD_RR &lt; 0.3 and State in [2, 3]</code> — small wicks in trend</li>
+                  <li><code>State == 3</code> — fast &gt; med &gt; slow</li>
+                  <li><code>State == -3</code> — fast &lt; med &lt; slow</li>
+                  <li><code>Type1 &gt; 0 and low &lt; MA1</code> — Type1 UP w/low below MA1</li>
+                  <li><code>DD_RR &lt; 0.3 and State in [2, 3]</code> — small wicks in states 2 or 3</li>
                   <li><code>Con_UP_bars &gt;= 3</code> — 3+ consecutive UP bars</li>
-                  <li><code>priorRunCount == 1</code> — first occurrence in a run</li>
                 </ul>
 
                 <h4>Available Columns</h4>
