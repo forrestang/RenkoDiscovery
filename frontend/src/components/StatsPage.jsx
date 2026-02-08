@@ -3015,6 +3015,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
 
         </div>
       )}
+
     </div>
   )
 }

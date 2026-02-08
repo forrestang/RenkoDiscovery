@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactDOM from 'react-dom'
 import SessionControls from './SessionControls'
 import { COLUMN_DESCRIPTIONS, ColumnItem } from '../utils/columnDescriptions'
@@ -86,7 +86,8 @@ function Sidebar({
   onDeleteMLModel,
   onDeleteAllMLModels,
   mlError,
-  apiBase
+  apiBase,
+  onDirectGenerate
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -117,6 +118,197 @@ function Sidebar({
     setWorkingDirCollapsed(newValue)
     localStorage.setItem(`${STORAGE_PREFIX}workingDirCollapsed`, newValue.toString())
   }
+
+  const [bypassJobsCollapsed, setBypassJobsCollapsed] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}bypassJobsCollapsed`)
+    return saved === 'true'
+  })
+
+  const toggleBypassJobsCollapsed = () => {
+    const newValue = !bypassJobsCollapsed
+    setBypassJobsCollapsed(newValue)
+    localStorage.setItem(`${STORAGE_PREFIX}bypassJobsCollapsed`, newValue.toString())
+  }
+
+  // ── Bypass sub-tab state ──────────────────────────────────────────────────
+  const [statsMode, setStatsMode] = useState(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}statsMode`) || 'standard'
+  })
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}statsMode`, statsMode)
+  }, [statsMode])
+
+  const createDefaultBypassJob = useCallback(() => ({
+    id: Date.now() + Math.random(),
+    instrument: '',
+    filename: '',
+    filenameManual: false,
+    sizingMode: 'price',
+    brickSize: 0.0010,
+    reversalSize: 0.0020,
+    brickPct: 5.0,
+    reversalPct: 10.0,
+    adrPeriod: 14,
+    wickMode: 'all',
+    ma1Period: 20,
+    ma2Period: 50,
+    ma3Period: 200,
+    chopPeriod: 20,
+    templateName: '',
+  }), [])
+
+  const [bypassJobs, setBypassJobs] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}bypassJobs`)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch {}
+    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0020, brickPct: 5.0, reversalPct: 10.0, adrPeriod: 14, wickMode: 'all', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20 }]
+  })
+  const [isBypassing, setIsBypassing] = useState(false)
+  const [bypassResults, setBypassResults] = useState(null)
+  const [bypassTemplates, setBypassTemplates] = useState([])
+  const [bypassTemplateName, setBypassTemplateName] = useState('')
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}bypassJobs`, JSON.stringify(bypassJobs))
+  }, [bypassJobs])
+
+  const autoBypassFilename = useCallback((job) => {
+    if (!job.instrument) return ''
+    if (job.sizingMode === 'adr') {
+      return `${job.instrument}_ADR${job.adrPeriod}_${job.brickPct}pct_${job.reversalPct}pct`
+    }
+    return `${job.instrument}_${job.brickSize}_${job.reversalSize}`
+  }, [])
+
+  const updateBypassJob = useCallback((id, field, value) => {
+    setBypassJobs(prev => prev.map(j => {
+      if (j.id !== id) return j
+      const updated = { ...j, [field]: value }
+      if (field === 'filename') {
+        updated.filenameManual = value !== '' && value !== autoBypassFilename(j)
+      } else if (['instrument', 'sizingMode', 'brickSize', 'reversalSize', 'brickPct', 'reversalPct', 'adrPeriod'].includes(field) && !j.filenameManual) {
+        updated.filename = autoBypassFilename(updated)
+      }
+      return updated
+    }))
+  }, [autoBypassFilename])
+
+  const addBypassJob = useCallback(() => {
+    setBypassJobs(prev => [...prev, createDefaultBypassJob()])
+  }, [createDefaultBypassJob])
+
+  const removeBypassJob = useCallback((id) => {
+    setBypassJobs(prev => prev.length > 1 ? prev.filter(j => j.id !== id) : prev)
+  }, [])
+
+  const duplicateBypassJob = useCallback((id) => {
+    setBypassJobs(prev => {
+      const src = prev.find(j => j.id === id)
+      if (!src) return prev
+      return [...prev, { ...src, id: Date.now() + Math.random() }]
+    })
+  }, [])
+
+  const fetchBypassTemplates = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/bypass-templates?working_dir=${encodeURIComponent(workingDir || '')}`)
+      if (res.ok) {
+        const data = await res.json()
+        setBypassTemplates(data.templates || [])
+      }
+    } catch {}
+  }, [apiBase, workingDir])
+
+  useEffect(() => { fetchBypassTemplates() }, [fetchBypassTemplates])
+
+  const saveBypassTemplate = useCallback(async (name, job) => {
+    if (!name.trim()) return
+    try {
+      await fetch(`${apiBase}/bypass-templates?working_dir=${encodeURIComponent(workingDir || '')}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          sizing_mode: job.sizingMode,
+          brick_size: job.brickSize,
+          reversal_size: job.reversalSize,
+          brick_pct: job.brickPct,
+          reversal_pct: job.reversalPct,
+          adr_period: job.adrPeriod,
+          wick_mode: job.wickMode,
+          ma1_period: job.ma1Period,
+          ma2_period: job.ma2Period,
+          ma3_period: job.ma3Period,
+          chop_period: job.chopPeriod,
+        })
+      })
+      fetchBypassTemplates()
+    } catch {}
+  }, [apiBase, workingDir, fetchBypassTemplates])
+
+  const deleteBypassTemplate = useCallback(async (name) => {
+    try {
+      await fetch(`${apiBase}/bypass-templates?name=${encodeURIComponent(name)}&working_dir=${encodeURIComponent(workingDir || '')}`, { method: 'DELETE' })
+      fetchBypassTemplates()
+    } catch {}
+  }, [apiBase, workingDir, fetchBypassTemplates])
+
+  const loadBypassTemplate = useCallback((jobId, template) => {
+    setBypassJobs(prev => prev.map(j => {
+      if (j.id !== jobId) return j
+      const updated = {
+        ...j,
+        sizingMode: template.sizing_mode,
+        brickSize: template.brick_size,
+        reversalSize: template.reversal_size,
+        brickPct: template.brick_pct,
+        reversalPct: template.reversal_pct,
+        adrPeriod: template.adr_period,
+        wickMode: template.wick_mode,
+        ma1Period: template.ma1_period,
+        ma2Period: template.ma2_period,
+        ma3Period: template.ma3_period,
+        chopPeriod: template.chop_period,
+        templateName: template.name,
+        filenameManual: false,
+      }
+      updated.filename = autoBypassFilename(updated)
+      return updated
+    }))
+  }, [autoBypassFilename])
+
+  const handleBypassGenerate = useCallback(async () => {
+    const validJobs = bypassJobs.filter(j => j.instrument)
+    if (validJobs.length === 0 || !onDirectGenerate) return
+    setIsBypassing(true)
+    setBypassResults(null)
+    try {
+      const payload = validJobs.map(j => ({
+        instrument: j.instrument,
+        filename: j.filename || autoBypassFilename(j),
+        sizing_mode: j.sizingMode,
+        brick_size: j.brickSize,
+        reversal_size: j.reversalSize,
+        brick_pct: j.brickPct,
+        reversal_pct: j.reversalPct,
+        adr_period: j.adrPeriod,
+        wick_mode: j.wickMode,
+        ma1_period: j.ma1Period,
+        ma2_period: j.ma2Period,
+        ma3_period: j.ma3Period,
+        chop_period: j.chopPeriod,
+      }))
+      const results = await onDirectGenerate(payload)
+      setBypassResults(results)
+    } finally {
+      setIsBypassing(false)
+    }
+  }, [bypassJobs, onDirectGenerate, autoBypassFilename])
 
   useEffect(() => {
     if (!dragging) return
@@ -690,226 +882,436 @@ function Sidebar({
 
       {activeTab === 'stats' && (
         <div className="tab-content stats-tab">
-          <div className="section">
-            <div className="section-header">
-              <span className="section-title">User Settings</span>
-            </div>
-            <div className="stats-input-group">
-              <label className="option-label">ADR Period</label>
-              <input
-                type="number"
-                className="stats-input mono"
-                value={adrPeriod}
-                onChange={(e) => {
-                  const value = parseInt(e.target.value) || 1
-                  setAdrPeriod(value)
-                  localStorage.setItem(`${STORAGE_PREFIX}adrPeriod`, value.toString())
-                }}
-                min="1"
-                max="100"
-              />
-            </div>
-            <div className="stats-input-group">
-              <label className="option-label">Chop Period</label>
-              <input
-                type="number"
-                className="stats-input mono"
-                value={chopPeriod}
-                onChange={(e) => {
-                  const value = parseInt(e.target.value) || 2
-                  setChopPeriod(value)
-                  localStorage.setItem(`${STORAGE_PREFIX}chopPeriod`, value.toString())
-                }}
-                min="2"
-                max="200"
-              />
-            </div>
+          {/* Sub-tab selector */}
+          <div className="stats-mode-tabs">
+            <button className={statsMode === 'standard' ? 'active' : ''} onClick={() => setStatsMode('standard')}>Standard</button>
+            <button className={statsMode === 'bypass' ? 'active' : ''} onClick={() => setStatsMode('bypass')}>Bypass</button>
           </div>
 
-          <div className="stats-spacer" />
+          {statsMode === 'standard' && (
+            <>
+              <div className="section">
+                <div className="section-header">
+                  <span className="section-title">User Settings</span>
+                </div>
+                <div className="stats-input-group stats-input-row">
+                  <label className="option-label">ADR</label>
+                  <input
+                    type="number"
+                    className="stats-input mono no-spinners"
+                    value={adrPeriod}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value) || 1
+                      setAdrPeriod(value)
+                      localStorage.setItem(`${STORAGE_PREFIX}adrPeriod`, value.toString())
+                    }}
+                    min="1"
+                    max="100"
+                  />
+                  <label className="option-label">Chop</label>
+                  <input
+                    type="number"
+                    className="stats-input mono no-spinners"
+                    value={chopPeriod}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value) || 2
+                      setChopPeriod(value)
+                      localStorage.setItem(`${STORAGE_PREFIX}chopPeriod`, value.toString())
+                    }}
+                    min="2"
+                    max="200"
+                  />
+                </div>
+              </div>
 
-          <div className="stats-actions">
-            <div className="stats-input-group">
-              <label className="option-label">Output Filename</label>
-              <input
-                type="text"
-                className="stats-input mono"
-                value={statsFilename}
-                onChange={(e) => setStatsFilename(e.target.value)}
-                placeholder="stats_output"
-              />
-              <span className="stats-file-hint">.parquet</span>
-            </div>
-            <button
-              className="run-stats-btn"
-              onClick={() => onRunStats?.({
-                filename: statsFilename || 'stats_output',
-                adrPeriod,
-                chopPeriod,
-                brickSize: renkoSettings?.brickSize,
-                reversalSize: renkoSettings?.reversalSize,
-                wickMode: renkoSettings?.wickMode,
-                ma1Period: maSettings?.ma1?.period,
-                ma2Period: maSettings?.ma2?.period,
-                ma3Period: maSettings?.ma3?.period
-              })}
-              disabled={isRunningStats}
-            >
-              {isRunningStats ? (
-                <>
-                  <span className="spinner" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polygon points="5 3 19 12 5 21 5 3" />
-                  </svg>
-                  Generate Parquet
-                </>
-              )}
-            </button>
-          </div>
+              <div className="stats-spacer" />
 
-        {/* Stats Files Section */}
-        <div className="section stats-files-section">
-          <div className="section-header">
-            <span className="section-title">Parquet Files</span>
-            <span className="file-count">{statsFiles?.length || 0} files</span>
-            {statsFiles?.length > 0 && (
-              <button
-                className="delete-all-btn"
-                onClick={() => {
-                  if (window.confirm(`Delete all ${statsFiles.length} parquet files?`)) {
-                    onDeleteAllStatsFiles?.()
-                  }
-                }}
-                title="Delete all parquet files"
-              >
-                Delete All
-              </button>
-            )}
-          </div>
-          <div className="scrollable-content">
-            <div className="file-list">
-              {statsFiles?.length > 0 ? (
-                statsFiles.map(file => (
-                  <div
-                    key={file.filepath}
-                    className={`file-item stats-file-item ${selectedStatsFile === file.filepath ? 'selected' : ''}`}
-                  >
-                    <div
-                      className="stats-file-main"
-                      onClick={() => onStatsFileSelect(file.filepath)}
-                    >
-                      <span className={`radio ${selectedStatsFile === file.filepath ? 'checked' : ''}`}>
-                        {selectedStatsFile === file.filepath && (
-                          <span className="radio-dot" />
-                        )}
-                      </span>
-                      <span className="file-name mono truncate" title={file.filename}>
-                        {file.filename}
-                      </span>
-                      <span className="file-size mono">
-                        {(file.size_bytes / 1024 / 1024).toFixed(1)}MB
-                      </span>
-                    </div>
+              <div className="stats-actions">
+                <div className="stats-input-group">
+                  <label className="option-label">Output Filename</label>
+                  <input
+                    type="text"
+                    className="stats-input mono"
+                    value={statsFilename}
+                    onChange={(e) => setStatsFilename(e.target.value)}
+                    placeholder="stats_output"
+                  />
+                  <span className="stats-file-hint">.parquet</span>
+                </div>
+                <button
+                  className="run-stats-btn"
+                  onClick={() => onRunStats?.({
+                    filename: statsFilename || 'stats_output',
+                    adrPeriod,
+                    chopPeriod,
+                    brickSize: renkoSettings?.brickSize,
+                    reversalSize: renkoSettings?.reversalSize,
+                    wickMode: renkoSettings?.wickMode,
+                    ma1Period: maSettings?.ma1?.period,
+                    ma2Period: maSettings?.ma2?.period,
+                    ma3Period: maSettings?.ma3?.period
+                  })}
+                  disabled={isRunningStats}
+                >
+                  {isRunningStats ? (
+                    <>
+                      <span className="spinner" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polygon points="5 3 19 12 5 21 5 3" />
+                      </svg>
+                      Generate Parquet
+                    </>
+                  )}
+                </button>
+              </div>
+            </>
+          )}
+
+          {statsMode === 'bypass' && (
+            <div className="bypass-content">
+              {/* Template bar */}
+              <div className="section">
+                <div className="section-header">
+                  <span className="section-title">Templates</span>
+                </div>
+                <div className="bypass-template-bar">
+                  <input
+                    type="text"
+                    className="stats-input mono"
+                    placeholder="Template name..."
+                    value={bypassTemplateName}
+                    onChange={e => setBypassTemplateName(e.target.value)}
+                  />
+                  <div className="bypass-template-actions">
                     <button
-                      className="stats-file-delete-btn"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (window.confirm(`Delete ${file.filename}?`)) {
-                          onDeleteStatsFile?.(file.filepath)
+                      className="bypass-btn"
+                      disabled={!bypassTemplateName.trim() || bypassJobs.length === 0}
+                      onClick={() => {
+                        if (bypassJobs.length > 0) {
+                          saveBypassTemplate(bypassTemplateName, bypassJobs[0])
+                          setBypassTemplateName('')
                         }
                       }}
-                      title={`Delete ${file.filename}`}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
-                    </button>
+                    >Save</button>
+                    {bypassTemplates.length > 0 && (
+                      <button
+                        className="bypass-btn bypass-btn-danger"
+                        disabled={!bypassTemplateName.trim()}
+                        onClick={() => {
+                          if (bypassTemplateName.trim()) {
+                            deleteBypassTemplate(bypassTemplateName.trim())
+                            setBypassTemplateName('')
+                          }
+                        }}
+                      >Del</button>
+                    )}
                   </div>
-                ))
-              ) : (
-                <div className="empty-state">
-                  <span className="empty-text">No parquet files in Stats folder</span>
+                </div>
+              </div>
+
+              {/* Job cards */}
+              <div className="section collapsible-section">
+                <div
+                  className="section-header clickable"
+                  onClick={toggleBypassJobsCollapsed}
+                >
+                  <div className="section-header-left">
+                    <svg
+                      className={`collapse-chevron ${bypassJobsCollapsed ? 'collapsed' : ''}`}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                    <span className="section-title">Jobs</span>
+                  </div>
+                  <span className="file-count">{bypassJobs.length}</span>
+                </div>
+                {!bypassJobsCollapsed && bypassJobs.map((job, i) => (
+                  <div key={job.id} className="bypass-job-card">
+                    <div className="bypass-job-header">
+                      <span className="bypass-job-number">#{i + 1}</span>
+                      <div className="bypass-job-actions">
+                        <button className="bypass-btn bypass-btn-sm" title="Duplicate" onClick={() => duplicateBypassJob(job.id)}>Dup</button>
+                        <button className="bypass-btn bypass-btn-sm bypass-btn-danger" title="Remove" onClick={() => removeBypassJob(job.id)} disabled={bypassJobs.length <= 1}>Del</button>
+                      </div>
+                    </div>
+                    {bypassTemplates.length > 0 && (
+                      <div className="bypass-job-row">
+                        <label className="option-label">Template</label>
+                        <select
+                          className="stats-input mono"
+                          value={job.templateName || ''}
+                          onChange={e => {
+                            const tmpl = bypassTemplates.find(t => t.name === e.target.value)
+                            if (tmpl) loadBypassTemplate(job.id, tmpl)
+                          }}
+                        >
+                          <option value="" disabled>Apply...</option>
+                          {bypassTemplates.map(t => (
+                            <option key={t.name} value={t.name}>{t.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div className="bypass-job-row">
+                      <label className="option-label">.Feather File</label>
+                      <select
+                        className="stats-input mono"
+                        value={job.instrument}
+                        onChange={e => updateBypassJob(job.id, 'instrument', e.target.value)}
+                      >
+                        <option value="">Select...</option>
+                        {(cachedInstruments || []).map(c => (
+                          <option key={c.instrument} value={c.instrument}>{c.instrument}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="bypass-job-row">
+                      <label className="option-label">Sizing</label>
+                      <select
+                        className="stats-input mono bypass-half-select"
+                        value={job.sizingMode}
+                        onChange={e => updateBypassJob(job.id, 'sizingMode', e.target.value)}
+                      >
+                        <option value="price">Price</option>
+                        <option value="adr">ADR</option>
+                      </select>
+                      <select className="stats-input mono bypass-half-select" value={job.wickMode} onChange={e => updateBypassJob(job.id, 'wickMode', e.target.value)}>
+                        <option value="all">Wick: All</option>
+                        <option value="big">Wick: Big</option>
+                        <option value="none">Wick: None</option>
+                      </select>
+                    </div>
+                    {job.sizingMode === 'price' ? (
+                      <div className="bypass-job-row">
+                        <label className="option-label">Brick</label>
+                        <input type="number" className="stats-input mono" step="0.0001" value={job.brickSize} onChange={e => updateBypassJob(job.id, 'brickSize', parseFloat(e.target.value) || 0)} />
+                        <label className="option-label">Rev</label>
+                        <input type="number" className="stats-input mono" step="0.0001" value={job.reversalSize} onChange={e => updateBypassJob(job.id, 'reversalSize', parseFloat(e.target.value) || 0)} />
+                      </div>
+                    ) : (
+                      <div className="bypass-job-row">
+                        <label className="option-label">Brick%</label>
+                        <input type="number" className="stats-input mono" step="0.5" value={job.brickPct} onChange={e => updateBypassJob(job.id, 'brickPct', parseFloat(e.target.value) || 0)} />
+                        <label className="option-label">Rev%</label>
+                        <input type="number" className="stats-input mono" step="0.5" value={job.reversalPct} onChange={e => updateBypassJob(job.id, 'reversalPct', parseFloat(e.target.value) || 0)} />
+                      </div>
+                    )}
+                    <div className="bypass-job-row">
+                      <label className="option-label">MA1</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" value={job.ma1Period} onChange={e => updateBypassJob(job.id, 'ma1Period', parseInt(e.target.value) || 20)} />
+                      <label className="option-label">MA2</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" value={job.ma2Period} onChange={e => updateBypassJob(job.id, 'ma2Period', parseInt(e.target.value) || 50)} />
+                      <label className="option-label">MA3</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" value={job.ma3Period} onChange={e => updateBypassJob(job.id, 'ma3Period', parseInt(e.target.value) || 200)} />
+                    </div>
+                    <div className="bypass-job-row">
+                      <label className="option-label">ADR</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" value={job.adrPeriod} onChange={e => updateBypassJob(job.id, 'adrPeriod', parseInt(e.target.value) || 14)} />
+                      <label className="option-label">Chop</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" value={job.chopPeriod} onChange={e => updateBypassJob(job.id, 'chopPeriod', parseInt(e.target.value) || 20)} />
+                    </div>
+                    <div className="bypass-job-row">
+                      <label className="option-label">File</label>
+                      <input
+                        type="text"
+                        className="stats-input mono"
+                        value={job.filename}
+                        placeholder={autoBypassFilename(job) || 'filename'}
+                        onChange={e => updateBypassJob(job.id, 'filename', e.target.value)}
+                      />
+                      <span className="stats-file-hint">.parquet</span>
+                    </div>
+                  </div>
+                ))}
+                {!bypassJobsCollapsed && (
+                  <button className="bypass-btn bypass-add-btn" onClick={addBypassJob}>+ Add Job</button>
+                )}
+              </div>
+
+              {/* Generate button */}
+              <button
+                className="run-stats-btn"
+                disabled={isBypassing || bypassJobs.filter(j => j.instrument).length === 0}
+                onClick={handleBypassGenerate}
+              >
+                {isBypassing ? (
+                  <>
+                    <span className="spinner" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    Generate {bypassJobs.filter(j => j.instrument).length} Parquet(s)
+                  </>
+                )}
+              </button>
+
+              {/* Results */}
+              {bypassResults && (
+                <div className="bypass-results">
+                  {bypassResults.map((r, i) => (
+                    <div key={i} className={`bypass-result-item ${r.status === 'success' ? 'success' : 'error'}`}>
+                      {r.status === 'success'
+                        ? `${r.instrument} → ${r.filename}.parquet (${r.rows} rows)`
+                        : `${r.instrument || 'Error'}: ${r.error}`
+                      }
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
+          )}
+
+          {/* Parquet Files section — SHARED, always visible regardless of mode */}
+          <div className="section stats-files-section">
+            <div className="section-header">
+              <span className="section-title">Parquet Files</span>
+              <span className="file-count">{statsFiles?.length || 0} files</span>
+              {statsFiles?.length > 0 && (
+                <button
+                  className="delete-all-btn"
+                  onClick={() => {
+                    if (window.confirm(`Delete all ${statsFiles.length} parquet files?`)) {
+                      onDeleteAllStatsFiles?.()
+                    }
+                  }}
+                  title="Delete all parquet files"
+                >
+                  Delete All
+                </button>
+              )}
+            </div>
+            <div className="scrollable-content">
+              <div className="file-list">
+                {statsFiles?.length > 0 ? (
+                  statsFiles.map(file => (
+                    <div
+                      key={file.filepath}
+                      className={`file-item stats-file-item ${selectedStatsFile === file.filepath ? 'selected' : ''}`}
+                    >
+                      <div
+                        className="stats-file-main"
+                        onClick={() => onStatsFileSelect(file.filepath)}
+                      >
+                        <span className={`radio ${selectedStatsFile === file.filepath ? 'checked' : ''}`}>
+                          {selectedStatsFile === file.filepath && (
+                            <span className="radio-dot" />
+                          )}
+                        </span>
+                        <span className="file-name mono truncate" title={file.filename}>
+                          {file.filename}
+                        </span>
+                        <span className="file-size mono">
+                          {(file.size_bytes / 1024 / 1024).toFixed(1)}MB
+                        </span>
+                      </div>
+                      <button
+                        className="stats-file-delete-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (window.confirm(`Delete ${file.filename}?`)) {
+                            onDeleteStatsFile?.(file.filepath)
+                          }
+                        }}
+                        title={`Delete ${file.filename}`}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 6L6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty-state">
+                    <span className="empty-text">No parquet files in Stats folder</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            {selectedStatsFile && (
+              <button
+                className="show-stats-btn"
+                onClick={() => onShowStats?.(selectedStatsFile)}
+                disabled={isLoadingStats}
+              >
+                {isLoadingStats ? (
+                  <>
+                    <span className="spinner" />
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M18 20V10" />
+                      <path d="M12 20V4" />
+                      <path d="M6 20v-6" />
+                    </svg>
+                    Show Stats
+                  </>
+                )}
+              </button>
+            )}
+            {selectedStatsFile && (
+              <button
+                className="show-stats-btn"
+                onClick={() => onShowParquet?.(selectedStatsFile)}
+                disabled={isLoadingParquet}
+              >
+                {isLoadingParquet ? (
+                  <>
+                    <span className="spinner" />
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                      <line x1="16" y1="13" x2="8" y2="13" />
+                      <line x1="16" y1="17" x2="8" y2="17" />
+                      <polyline points="10 9 9 9 8 9" />
+                    </svg>
+                    Show Parquet
+                  </>
+                )}
+              </button>
+            )}
+            {selectedStatsFile && (
+              <button
+                className="show-stats-btn"
+                onClick={() => onExportCSV?.(selectedStatsFile)}
+                disabled={isExportingCSV}
+              >
+                {isExportingCSV ? (
+                  <>
+                    <span className="spinner" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Export CSV
+                  </>
+                )}
+              </button>
+            )}
           </div>
-          {selectedStatsFile && (
-            <button
-              className="show-stats-btn"
-              onClick={() => onShowStats?.(selectedStatsFile)}
-              disabled={isLoadingStats}
-            >
-              {isLoadingStats ? (
-                <>
-                  <span className="spinner" />
-                  Loading...
-                </>
-              ) : (
-                <>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 20V10" />
-                    <path d="M12 20V4" />
-                    <path d="M6 20v-6" />
-                  </svg>
-                  Show Stats
-                </>
-              )}
-            </button>
-          )}
-          {selectedStatsFile && (
-            <button
-              className="show-stats-btn"
-              onClick={() => onShowParquet?.(selectedStatsFile)}
-              disabled={isLoadingParquet}
-            >
-              {isLoadingParquet ? (
-                <>
-                  <span className="spinner" />
-                  Loading...
-                </>
-              ) : (
-                <>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" y1="13" x2="8" y2="13" />
-                    <line x1="16" y1="17" x2="8" y2="17" />
-                    <polyline points="10 9 9 9 8 9" />
-                  </svg>
-                  Show Parquet
-                </>
-              )}
-            </button>
-          )}
-          {selectedStatsFile && (
-            <button
-              className="show-stats-btn"
-              onClick={() => onExportCSV?.(selectedStatsFile)}
-              disabled={isExportingCSV}
-            >
-              {isExportingCSV ? (
-                <>
-                  <span className="spinner" />
-                  Exporting...
-                </>
-              ) : (
-                <>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  Export CSV
-                </>
-              )}
-            </button>
-          )}
         </div>
-      </div>
       )}
 
       {activeTab === 'ml' && (

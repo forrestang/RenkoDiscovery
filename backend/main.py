@@ -138,6 +138,44 @@ class BacktestRequest(BaseModel):
     allow_overlap: bool = True  # when False, skip entries while a trade is open
 
 
+class DirectGenerateJob(BaseModel):
+    instrument: str              # cached feather stem, e.g. "EURUSD_MT4_M"
+    filename: str                # output parquet filename (without .parquet)
+    sizing_mode: str = "price"   # "price" | "adr"
+    brick_size: float = 0.0010
+    reversal_size: float = 0.0020
+    brick_pct: float = 5.0
+    reversal_pct: float = 10.0
+    adr_period: int = 14
+    wick_mode: str = "all"
+    ma1_period: int = 20
+    ma2_period: int = 50
+    ma3_period: int = 200
+    chop_period: int = 20
+    session_schedule: Optional[dict] = None
+
+
+class DirectGenerateRequest(BaseModel):
+    jobs: list[DirectGenerateJob]
+    working_dir: Optional[str] = None
+
+
+class BypassTemplate(BaseModel):
+    name: str
+    sizing_mode: str = "price"
+    brick_size: float = 0.0010
+    reversal_size: float = 0.0020
+    brick_pct: float = 5.0
+    reversal_pct: float = 10.0
+    adr_period: int = 14
+    wick_mode: str = "all"
+    ma1_period: int = 20
+    ma2_period: int = 50
+    ma3_period: int = 200
+    chop_period: int = 20
+    session_schedule: Optional[dict] = None
+
+
 def extract_instrument(filename: str) -> Optional[str]:
     """Extract instrument symbol from filename."""
     filename_upper = filename.upper()
@@ -1460,6 +1498,291 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     }
 
 
+def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2_period, ma3_period, chop_period):
+    """Compute all stats/ML columns on a renko DataFrame.
+    df: must already have datetime, OHLC, brick_size, reversal_size, settings columns.
+    raw_df: raw M1 OHLC (with 'datetime' column) for ADR computation.
+    Returns enriched df with all columns, trimmed, utc_date dropped."""
+    adr_series = compute_adr_lookup(raw_df, adr_period, session_sched)
+
+    # Map currentADR back to renko bars based on their session date
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    df['utc_date'] = df['datetime'].apply(lambda dt: _get_session_date(dt, session_sched))
+    df['currentADR'] = df['utc_date'].map(adr_series).round(5)
+
+    # Calculate EMA values and distances for each MA period
+    ma_periods = [ma1_period, ma2_period, ma3_period]
+    ema_columns = {}
+
+    for period in ma_periods:
+        ema_values = calculate_ema(df['close'], period)
+        ema_columns[period] = ema_values  # Store for State calculation
+        df[f'EMA_rawDistance({period})'] = (df['close'] - ema_values).round(5)
+        df[f'EMA_adrDistance({period})'] = ((df['close'] - ema_values) / df['currentADR']).round(5)
+        df[f'EMA_rrDistance({period})'] = ((df['close'] - ema_values) / df['reversal_size']).round(5)
+
+    # Calculate DD (drawdown/wick size in price units)
+    df['DD'] = np.where(
+        df['close'] > df['open'],
+        df['open'] - df['low'],
+        df['high'] - df['open']
+    )
+    df['DD'] = df['DD'].round(5)
+    df['DD_ADR'] = (df['DD'] / df['currentADR']).round(5)
+    df['DD_RR'] = (df['DD'] / df['reversal_size']).round(5)
+
+    # Calculate State based on MA order
+    fast_ema = ema_columns[ma1_period]
+    med_ema = ema_columns[ma2_period]
+    slow_ema = ema_columns[ma3_period]
+
+    def get_state(fast, med, slow):
+        if fast > med > slow: return 3
+        if fast > slow > med: return 2
+        if slow > fast > med: return 1
+        if med > fast > slow: return -1
+        if med > slow > fast: return -2
+        if slow > med > fast: return -3
+        return 0
+
+    df['State'] = [get_state(f, m, s) for f, m, s in zip(fast_ema, med_ema, slow_ema)]
+    df['prState'] = df['State'].shift(1)
+
+    # fromState: the state of the previous run
+    state_list = df['State'].tolist()
+    from_state = [None] * len(state_list)
+    last_state = None
+    for i in range(1, len(state_list)):
+        if state_list[i] != state_list[i - 1]:
+            last_state = state_list[i - 1]
+        from_state[i] = last_state
+    df['fromState'] = from_state
+
+    # Calculate Type1 and Type2 pullback counters
+    state_arr = df['State'].values
+    is_up_arr_t = (df['close'] > df['open']).values
+    is_dn_arr_t = (df['close'] < df['open']).values
+    open_arr = df['open'].values
+    high_arr = df['high'].values
+    low_arr = df['low'].values
+    rev_size_arr = df['reversal_size'].values
+    brick_size_arr = df['brick_size'].values
+
+    n = len(df)
+    type1_count = np.zeros(n, dtype=int)
+    type2_count = np.zeros(n, dtype=int)
+
+    internal_type1 = 0
+    internal_type2 = 0
+    prev_state = None
+
+    for i in range(n):
+        state = int(state_arr[i])
+        if state != prev_state:
+            internal_type1 = 0
+            internal_type2 = 0
+        prev_state = state
+
+        is_up = bool(is_up_arr_t[i])
+        is_dn = bool(is_dn_arr_t[i])
+        use_3bar = rev_size_arr[i] > brick_size_arr[i]
+
+        if i > 1:
+            prior_is_up = bool(is_up_arr_t[i - 1])
+            prior_is_dn = bool(is_dn_arr_t[i - 1])
+            prior2_is_up = bool(is_up_arr_t[i - 2])
+            prior2_is_dn = bool(is_dn_arr_t[i - 2])
+
+            if state == 3 and is_up and prior_is_up and prior2_is_dn:
+                internal_type1 += 1
+                type1_count[i] = internal_type1
+            elif state == -3 and is_dn and prior_is_dn and prior2_is_up:
+                internal_type1 -= 1
+                type1_count[i] = internal_type1
+
+        if use_3bar and i > 0:
+            prior_is_up_t2 = bool(is_up_arr_t[i - 1])
+            brick_i = brick_size_arr[i]
+
+            if state == 3 and is_up and round(open_arr[i] - low_arr[i], 5) > brick_i and prior_is_up_t2:
+                internal_type2 += 1
+                type2_count[i] = internal_type2
+            elif state == -3 and is_dn and round(high_arr[i] - open_arr[i], 5) > brick_i and not prior_is_up_t2:
+                internal_type2 -= 1
+                type2_count[i] = internal_type2
+
+    df['Type1'] = type1_count
+    df['Type2'] = type2_count
+
+    # Calculate consecutive bar counters
+    is_up = df['close'] > df['open']
+
+    con_up = []
+    con_dn = []
+    up_count = 0
+    dn_count = 0
+
+    for up in is_up:
+        if up:
+            up_count += 1
+            dn_count = 0
+        else:
+            dn_count += 1
+            up_count = 0
+        con_up.append(up_count)
+        con_dn.append(dn_count)
+
+    df['Con_UP_bars'] = con_up
+    df['Con_DN_bars'] = con_dn
+
+    df['direction'] = is_up.map({True: 1, False: -1}).astype(int)
+
+    # priorRunCount
+    prior_run = [0] * len(is_up)
+    last_run_length = 0
+    is_up_list = is_up.tolist()
+    for i in range(1, len(is_up_list)):
+        if is_up_list[i] != is_up_list[i - 1]:
+            last_run_length = con_up[i - 1] if is_up_list[i - 1] else con_dn[i - 1]
+        prior_run[i] = last_run_length
+    df['priorRunCount'] = prior_run
+
+    # Con_UP_bars(state) and Con_DN_bars(state)
+    state_values = df['State'].tolist()
+    con_up_state = []
+    con_dn_state = []
+    up_count_state = 0
+    dn_count_state = 0
+    prev_state = None
+
+    for i, (up, state) in enumerate(zip(is_up, state_values)):
+        if prev_state is not None and state != prev_state:
+            up_count_state = 0
+            dn_count_state = 0
+        if up:
+            up_count_state += 1
+            dn_count_state = 0
+        else:
+            dn_count_state += 1
+            up_count_state = 0
+        con_up_state.append(up_count_state)
+        con_dn_state.append(dn_count_state)
+        prev_state = state
+
+    df['Con_UP_bars(state)'] = con_up_state
+    df['Con_DN_bars(state)'] = con_dn_state
+
+    # Bar duration in minutes
+    bar_duration_td = df['datetime'] - df['datetime'].shift(1)
+    df['barDuration'] = (bar_duration_td.dt.total_seconds() / 60).round(2)
+
+    # stateBarCount and stateDuration
+    state_values = df['State'].tolist()
+    bar_durations = df['barDuration'].tolist()
+    state_bar_count = []
+    state_duration = []
+    bar_count = 0
+    duration_sum = 0.0
+    prev_state_dur = None
+
+    for i, (state, bar_dur) in enumerate(zip(state_values, bar_durations)):
+        if prev_state_dur is not None and state != prev_state_dur:
+            bar_count = 0
+            duration_sum = 0.0
+        bar_count += 1
+        if pd.notna(bar_dur):
+            duration_sum += bar_dur
+        state_bar_count.append(bar_count)
+        state_duration.append(round(duration_sum, 2))
+        prev_state_dur = state
+
+    df['stateBarCount'] = state_bar_count
+    df['stateDuration'] = state_duration
+
+    # Chop index
+    directions = (df['close'] > df['open']).astype(int)
+    reversals = (directions != directions.shift(1)).astype(int)
+    reversals.iloc[0] = 0
+    df['chop(rolling)'] = (reversals.rolling(window=chop_period, min_periods=chop_period).sum() / chop_period).round(2)
+
+    # MFE_clr_Bars
+    is_up_arr = is_up.values
+    n = len(is_up_arr)
+    mfe_clr_bars = np.zeros(n, dtype=int)
+
+    for i in range(n):
+        count = 0
+        current_color = is_up_arr[i]
+        for j in range(i + 1, n):
+            if is_up_arr[j] == current_color:
+                count += 1
+            else:
+                break
+        if count == 0:
+            mfe_clr_bars[i] = 0
+        else:
+            mfe_clr_bars[i] = count
+
+    df['MFE_clr_Bars'] = mfe_clr_bars
+
+    # MFE_clr_price
+    close_arr = df['close'].values
+    mfe_clr_price = np.zeros(n, dtype=float)
+
+    for i in range(n):
+        if mfe_clr_bars[i] > 0:
+            last_match_idx = i + mfe_clr_bars[i]
+            mfe_clr_price[i] = abs(close_arr[last_match_idx] - close_arr[i])
+        else:
+            mfe_clr_price[i] = 0
+
+    df['MFE_clr_price'] = pd.Series(mfe_clr_price).round(5).values
+    df['MFE_clr_ADR'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
+    df['MFE_clr_RR'] = (df['MFE_clr_price'] / df['reversal_size']).round(2)
+    df['REAL_clr_ADR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['currentADR']).round(2)
+    df['REAL_clr_RR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['reversal_size']).round(2)
+
+    # REAL_MA columns
+    for idx, period in enumerate(ma_periods, start=1):
+        ema_values = calculate_ema(df['close'], period)
+        mfe_ma_price = np.full(n, np.nan, dtype=float)
+
+        for i in range(n):
+            current_is_up = is_up_arr[i]
+            current_close = close_arr[i]
+            rev_size = df['reversal_size'].iloc[i]
+
+            for j in range(i + 1, n):
+                if is_up_arr[j] != current_is_up:
+                    if current_is_up:
+                        if close_arr[j] < ema_values[j]:
+                            mfe_ma_price[i] = max(close_arr[j] - current_close, -rev_size)
+                            break
+                    else:
+                        if close_arr[j] > ema_values[j]:
+                            mfe_ma_price[i] = max(current_close - close_arr[j], -rev_size)
+                            break
+
+        df[f'REAL_MA{idx}_Price'] = pd.Series(mfe_ma_price).round(5).values
+        df[f'REAL_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
+        df[f'REAL_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
+
+    # LEFT CUT: first row where all warmup columns are valid
+    left_cols = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
+    left_valid = df[left_cols].notna().all(axis=1)
+    left_cut = left_valid.idxmax()
+
+    # RIGHT CUT: last row where all forward-scan columns are valid
+    right_cols = [f'REAL_MA{idx}_Price' for idx in range(1, len(ma_periods) + 1)]
+    right_valid = df[right_cols].notna().all(axis=1)
+    right_cut = right_valid[::-1].idxmax()
+
+    df = df.loc[left_cut:right_cut].reset_index(drop=True)
+    df = df.drop(columns=['utc_date'])
+
+    return df
+
+
 @app.post("/stats/{instrument}")
 async def generate_stats(instrument: str, request: StatsRequest):
     """Generate a parquet file with chart statistics for ML training."""
@@ -1503,334 +1826,17 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['ma3_period'] = request.ma3_period
     df['chopPeriod'] = request.chop_period
 
-    # Calculate currentADR (Average Daily Range) from RAW price data
+    # Compute all stats columns using shared helper
     cache_dir = base_dir / "cache"
     feather_path = cache_dir / f"{instrument}.feather"
     raw_df = pd.read_feather(feather_path)
-
     session_sched = request.session_schedule or _default_schedule()
-    adr_series = compute_adr_lookup(raw_df, request.adr_period, session_sched)
 
-    # Map currentADR back to renko bars based on their session date
-    df['datetime'] = pd.to_datetime(df['datetime'])
-    df['utc_date'] = df['datetime'].apply(lambda dt: _get_session_date(dt, session_sched))
-    df['currentADR'] = df['utc_date'].map(adr_series).round(5)
-
-    # Calculate EMA values and distances for each MA period
-    ma_periods = [request.ma1_period, request.ma2_period, request.ma3_period]
-    ema_columns = {}
-
-    for period in ma_periods:
-        ema_values = calculate_ema(df['close'], period)
-        ema_columns[period] = ema_values  # Store for State calculation
-        df[f'EMA_rawDistance({period})'] = (df['close'] - ema_values).round(5)
-        df[f'EMA_adrDistance({period})'] = ((df['close'] - ema_values) / df['currentADR']).round(5)
-        df[f'EMA_rrDistance({period})'] = ((df['close'] - ema_values) / df['reversal_size']).round(5)
-
-    # Calculate DD (drawdown/wick size in price units)
-    # UP brick (close > open): wick extends below open -> DD = open - low
-    # DOWN brick (close < open): wick extends above open -> DD = high - open
-    df['DD'] = np.where(
-        df['close'] > df['open'],
-        df['open'] - df['low'],
-        df['high'] - df['open']
+    df = compute_stats_columns(
+        df, raw_df, session_sched,
+        request.adr_period, request.ma1_period, request.ma2_period,
+        request.ma3_period, request.chop_period
     )
-    df['DD'] = df['DD'].round(5)
-
-    # Normalize DD by currentADR
-    df['DD_ADR'] = (df['DD'] / df['currentADR']).round(5)
-    # Normalize DD by reversal size
-    df['DD_RR'] = (df['DD'] / df['reversal_size']).round(5)
-
-    # Calculate State based on MA order
-    # Fast=ma1_period, Med=ma2_period, Slow=ma3_period
-    fast_ema = ema_columns[request.ma1_period]
-    med_ema = ema_columns[request.ma2_period]
-    slow_ema = ema_columns[request.ma3_period]
-
-    def get_state(fast, med, slow):
-        if fast > med > slow: return 3
-        if fast > slow > med: return 2
-        if slow > fast > med: return 1    # 63% UP - transitional bullish
-        if med > fast > slow: return -1   # 34% UP - transitional bearish
-        if med > slow > fast: return -2   # Fast lowest (deep bearish)
-        if slow > med > fast: return -3
-        return 0  # Edge case: equal values
-
-    df['State'] = [get_state(f, m, s) for f, m, s in zip(fast_ema, med_ema, slow_ema)]
-
-    # Prior state (shifted by 1)
-    df['prState'] = df['State'].shift(1)
-
-    # fromState: the state of the previous run (persists throughout current state run)
-    state_list = df['State'].tolist()
-    from_state = [None] * len(state_list)
-    last_state = None
-    for i in range(1, len(state_list)):
-        if state_list[i] != state_list[i - 1]:  # State changed
-            last_state = state_list[i - 1]       # Capture the state we came from
-        from_state[i] = last_state
-    df['fromState'] = from_state
-
-    # Calculate Type1 and Type2 pullback counters
-    # Logic ported from ChartArea.jsx indicator panel (lines 1186-1222)
-    # Nth occurrence counters accumulate in +3/-3 states, reset on state change
-    state_arr = df['State'].values
-    is_up_arr_t = (df['close'] > df['open']).values
-    is_dn_arr_t = (df['close'] < df['open']).values
-    open_arr = df['open'].values
-    high_arr = df['high'].values
-    low_arr = df['low'].values
-    rev_size_arr = df['reversal_size'].values
-    brick_size_arr = df['brick_size'].values
-
-    n = len(df)
-    type1_count = np.zeros(n, dtype=int)
-    type2_count = np.zeros(n, dtype=int)
-
-    internal_type1 = 0
-    internal_type2 = 0
-    prev_state = None
-
-    for i in range(n):
-        state = int(state_arr[i])
-
-        # Reset counters on state change
-        if state != prev_state:
-            internal_type1 = 0
-            internal_type2 = 0
-        prev_state = state
-
-        is_up = bool(is_up_arr_t[i])
-        is_dn = bool(is_dn_arr_t[i])
-        use_3bar = rev_size_arr[i] > brick_size_arr[i]
-
-        # Type1: always 3-bar pattern (DOWN->UP->UP or UP->DOWN->DOWN)
-        if i > 1:
-            prior_is_up = bool(is_up_arr_t[i - 1])
-            prior_is_dn = bool(is_dn_arr_t[i - 1])
-            prior2_is_up = bool(is_up_arr_t[i - 2])
-            prior2_is_dn = bool(is_dn_arr_t[i - 2])
-
-            if state == 3 and is_up and prior_is_up and prior2_is_dn:
-                internal_type1 += 1
-                type1_count[i] = internal_type1
-            elif state == -3 and is_dn and prior_is_dn and prior2_is_up:
-                internal_type1 -= 1
-                type1_count[i] = internal_type1
-
-        # Type2: only when reversal > brick, wick must exceed brick_size
-        if use_3bar and i > 0:
-            prior_is_up_t2 = bool(is_up_arr_t[i - 1])
-            brick_i = brick_size_arr[i]
-
-            if state == 3 and is_up and round(open_arr[i] - low_arr[i], 5) > brick_i and prior_is_up_t2:
-                internal_type2 += 1
-                type2_count[i] = internal_type2
-            elif state == -3 and is_dn and round(high_arr[i] - open_arr[i], 5) > brick_i and not prior_is_up_t2:
-                internal_type2 -= 1
-                type2_count[i] = internal_type2
-
-    df['Type1'] = type1_count
-    df['Type2'] = type2_count
-
-    # Calculate consecutive bar counters
-    is_up = df['close'] > df['open']
-
-    # Con_UP_bars and Con_DN_bars - reset on direction change only
-    con_up = []
-    con_dn = []
-    up_count = 0
-    dn_count = 0
-
-    for up in is_up:
-        if up:
-            up_count += 1
-            dn_count = 0
-        else:
-            dn_count += 1
-            up_count = 0
-        con_up.append(up_count)
-        con_dn.append(dn_count)
-
-    df['Con_UP_bars'] = con_up
-    df['Con_DN_bars'] = con_dn
-
-    # direction: +1 for UP bar, -1 for DN bar
-    df['direction'] = is_up.map({True: 1, False: -1}).astype(int)
-
-    # priorRunCount: length of the consecutive run that just ended (prior direction)
-    prior_run = [0] * len(is_up)
-    last_run_length = 0
-    is_up_list = is_up.tolist()
-    for i in range(1, len(is_up_list)):
-        if is_up_list[i] != is_up_list[i - 1]:
-            last_run_length = con_up[i - 1] if is_up_list[i - 1] else con_dn[i - 1]
-        prior_run[i] = last_run_length
-    df['priorRunCount'] = prior_run
-
-    # Con_UP_bars(state) and Con_DN_bars(state) - reset on state change OR direction change
-    state_values = df['State'].tolist()
-    con_up_state = []
-    con_dn_state = []
-    up_count_state = 0
-    dn_count_state = 0
-    prev_state = None
-
-    for i, (up, state) in enumerate(zip(is_up, state_values)):
-        # Reset on state change
-        if prev_state is not None and state != prev_state:
-            up_count_state = 0
-            dn_count_state = 0
-
-        # Then apply direction logic
-        if up:
-            up_count_state += 1
-            dn_count_state = 0
-        else:
-            dn_count_state += 1
-            up_count_state = 0
-
-        con_up_state.append(up_count_state)
-        con_dn_state.append(dn_count_state)
-        prev_state = state
-
-    df['Con_UP_bars(state)'] = con_up_state
-    df['Con_DN_bars(state)'] = con_dn_state
-
-    # Calculate bar duration (time between consecutive bars) in minutes
-    bar_duration_td = df['datetime'] - df['datetime'].shift(1)
-    df['barDuration'] = (bar_duration_td.dt.total_seconds() / 60).round(2)
-
-    # Calculate stateBarCount and stateDuration
-    state_values = df['State'].tolist()
-    bar_durations = df['barDuration'].tolist()
-    state_bar_count = []
-    state_duration = []
-    bar_count = 0
-    duration_sum = 0.0
-    prev_state_dur = None
-
-    for i, (state, bar_dur) in enumerate(zip(state_values, bar_durations)):
-        # Reset on state change
-        if prev_state_dur is not None and state != prev_state_dur:
-            bar_count = 0
-            duration_sum = 0.0
-
-        bar_count += 1
-        if pd.notna(bar_dur):
-            duration_sum += bar_dur
-
-        state_bar_count.append(bar_count)
-        state_duration.append(round(duration_sum, 2))
-        prev_state_dur = state
-
-    df['stateBarCount'] = state_bar_count
-    df['stateDuration'] = state_duration
-
-    # Calculate reversal bars and rolling chop index
-    # A reversal bar occurs when current direction differs from previous direction
-    # Direction: UP if close > open, DOWN if close < open
-    directions = (df['close'] > df['open']).astype(int)
-    reversals = (directions != directions.shift(1)).astype(int)
-    # First bar cannot be a reversal
-    reversals.iloc[0] = 0
-
-    # Rolling sum of reversals over chop_period, then divide by period
-    df['chop(rolling)'] = (reversals.rolling(window=request.chop_period, min_periods=request.chop_period).sum() / request.chop_period).round(2)
-
-    # Calculate FX_clr_Bars (forward-looking consecutive same-color bars)
-    # For each bar, count how many subsequent bars match its color
-    is_up_arr = is_up.values
-    n = len(is_up_arr)
-    mfe_clr_bars = np.zeros(n, dtype=int)
-
-    for i in range(n):
-        count = 0
-        current_color = is_up_arr[i]
-        for j in range(i + 1, n):
-            if is_up_arr[j] == current_color:
-                count += 1
-            else:
-                break
-        if count == 0:
-            mfe_clr_bars[i] = 0
-        else:
-            mfe_clr_bars[i] = count
-
-    df['MFE_clr_Bars'] = mfe_clr_bars
-
-    # Calculate FX_clr_price (price move during consecutive same-color run)
-    # For each bar, find price difference to the last consecutive same-color bar
-    close_arr = df['close'].values
-    mfe_clr_price = np.zeros(n, dtype=float)
-
-    for i in range(n):
-        if mfe_clr_bars[i] > 0:
-            last_match_idx = i + mfe_clr_bars[i]
-            mfe_clr_price[i] = abs(close_arr[last_match_idx] - close_arr[i])
-        else:
-            mfe_clr_price[i] = 0
-
-    df['MFE_clr_price'] = pd.Series(mfe_clr_price).round(5).values
-
-    # Calculate MFE_clr_ADR (ADR-normalized version)
-    df['MFE_clr_ADR'] = (df['MFE_clr_price'] / df['currentADR']).round(2)
-
-    # Calculate MFE_clr_RR (Reversal-normalized version)
-    df['MFE_clr_RR'] = (df['MFE_clr_price'] / df['reversal_size']).round(2)
-
-    # Calculate REAL_clr_ADR (subtract reversal_size for realistic exit)
-    df['REAL_clr_ADR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['currentADR']).round(2)
-
-    # Calculate REAL_clr_RR (subtract reversal_size for realistic exit)
-    df['REAL_clr_RR'] = ((df['MFE_clr_price'] - df['reversal_size']) / df['reversal_size']).round(2)
-
-    # Calculate FX_MA columns (price move until first opposite-color bar closes beyond MA)
-    for idx, period in enumerate(ma_periods, start=1):
-        # Get EMA values for this period
-        ema_values = calculate_ema(df['close'], period)
-
-        mfe_ma_price = np.full(n, np.nan, dtype=float)
-
-        for i in range(n):
-            current_is_up = is_up_arr[i]
-            current_close = close_arr[i]
-            rev_size = df['reversal_size'].iloc[i]
-
-            # Look forward for first opposite-color bar closing beyond MA
-            for j in range(i + 1, n):
-                if is_up_arr[j] != current_is_up:  # Opposite color
-                    if current_is_up:
-                        # Current is UP, looking for DOWN bar closing below MA
-                        if close_arr[j] < ema_values[j]:
-                            mfe_ma_price[i] = max(close_arr[j] - current_close, -rev_size)
-                            break
-                    else:
-                        # Current is DOWN, looking for UP bar closing above MA
-                        if close_arr[j] > ema_values[j]:
-                            mfe_ma_price[i] = max(current_close - close_arr[j], -rev_size)
-                            break
-            # If no qualifying bar found, remains NaN
-
-        df[f'REAL_MA{idx}_Price'] = pd.Series(mfe_ma_price).round(5).values
-        df[f'REAL_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
-        df[f'REAL_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
-
-    # LEFT CUT: find first row where all warmup columns are valid
-    left_cols = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
-    left_valid = df[left_cols].notna().all(axis=1)
-    left_cut = left_valid.idxmax()  # first True index
-
-    # RIGHT CUT: find last row where all forward-scan columns are valid
-    right_cols = [f'REAL_MA{idx}_Price' for idx in range(1, len(ma_periods) + 1)]
-    right_valid = df[right_cols].notna().all(axis=1)
-    right_cut = right_valid[::-1].idxmax()  # last True index
-
-    df = df.loc[left_cut:right_cut].reset_index(drop=True)
-
-    # Clean up helper column
-    df = df.drop(columns=['utc_date'])
 
     # Write to parquet
     df.to_parquet(output_path, engine='pyarrow', index=False)
@@ -1841,6 +1847,211 @@ async def generate_stats(instrument: str, request: StatsRequest):
         "rows": len(df),
         "instrument": instrument
     }
+
+
+# ── Bypass Template Persistence ─────────────────────────────────────────────────
+
+def _templates_json_path(working_dir=None):
+    base_dir = Path(working_dir) if working_dir else WORKING_DIR
+    return base_dir / "Bypass" / "templates.json"
+
+
+def _read_templates(json_path):
+    if json_path.exists():
+        try:
+            return json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+    return []
+
+
+def _write_templates(json_path, templates):
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(templates, indent=2), encoding="utf-8")
+
+
+@app.get("/bypass-templates")
+def get_bypass_templates(working_dir: Optional[str] = None):
+    json_path = _templates_json_path(working_dir)
+    return {"templates": _read_templates(json_path)}
+
+
+@app.post("/bypass-templates")
+def save_bypass_template(template: BypassTemplate, working_dir: Optional[str] = None):
+    json_path = _templates_json_path(working_dir)
+    templates = _read_templates(json_path)
+    found = False
+    for t in templates:
+        if t["name"] == template.name:
+            t.update(template.dict())
+            found = True
+            break
+    if not found:
+        templates.append(template.dict())
+    _write_templates(json_path, templates)
+    return {"templates": templates}
+
+
+@app.delete("/bypass-templates")
+def delete_bypass_template(name: str, working_dir: Optional[str] = None):
+    json_path = _templates_json_path(working_dir)
+    templates = _read_templates(json_path)
+    templates = [t for t in templates if t["name"] != name]
+    _write_templates(json_path, templates)
+    return {"templates": templates}
+
+
+# ── Direct Generate Endpoint ───────────────────────────────────────────────────
+
+@app.post("/direct-generate")
+def direct_generate(request: DirectGenerateRequest):
+    """Generate parquets directly from cached feather files without loading the chart."""
+    base_dir = Path(request.working_dir) if request.working_dir else WORKING_DIR
+    cache_dir = base_dir / "cache"
+    stats_dir = base_dir / "Stats"
+    stats_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+
+    for job in request.jobs:
+        try:
+            feather_path = cache_dir / f"{job.instrument}.feather"
+            if not feather_path.exists():
+                results.append({"instrument": job.instrument, "filename": job.filename,
+                                "status": "error", "error": f"No cached data for {job.instrument}"})
+                continue
+
+            # Read feather
+            raw_df = pd.read_feather(feather_path)
+
+            # Resolve session_schedule: job override → feather .meta.json → default
+            session_sched = job.session_schedule
+            if session_sched is None:
+                meta = load_cache_metadata(feather_path)
+                if meta and "session_schedule" in meta:
+                    session_sched = meta["session_schedule"]
+            if session_sched is None:
+                session_sched = _default_schedule()
+
+            # Prepare M1 data (same as /renko)
+            df = raw_df.copy()
+            df = df.set_index('datetime')
+            df = df.dropna()
+            df = df.sort_index()
+
+            # Build size_schedule for ADR mode
+            size_schedule = None
+            if job.sizing_mode == "adr":
+                raw_for_adr = raw_df.copy()
+                raw_for_adr = raw_for_adr.set_index('datetime').dropna().sort_index().reset_index()
+                adr_series = compute_adr_lookup(raw_for_adr, job.adr_period, session_sched)
+
+                size_schedule = []
+                prev_date_adr = None
+                for idx in range(len(df)):
+                    dt = _get_session_date(df.index[idx], session_sched)
+                    adr_val = adr_series.get(dt)
+                    if adr_val is not None and not np.isnan(adr_val) and adr_val != prev_date_adr:
+                        bs = round(adr_val * job.brick_pct / 100, 6)
+                        rs = round(adr_val * job.reversal_pct / 100, 6)
+                        size_schedule.append((idx, bs, rs, round(adr_val, 6)))
+                        prev_date_adr = adr_val
+
+                if not size_schedule:
+                    results.append({"instrument": job.instrument, "filename": job.filename,
+                                    "status": "error",
+                                    "error": f"Insufficient history for ADR({job.adr_period})"})
+                    continue
+
+                brick_size = size_schedule[0][1]
+                reversal_size = size_schedule[0][2]
+            else:
+                brick_size = job.brick_size
+                reversal_size = job.reversal_size
+
+            # Validate brick size
+            if brick_size is None or np.isnan(brick_size) or brick_size <= 0:
+                results.append({"instrument": job.instrument, "filename": job.filename,
+                                "status": "error", "error": f"Invalid brick size: {brick_size}"})
+                continue
+
+            price_range = df['close'].max() - df['close'].min()
+            estimated_bricks = price_range / brick_size
+            if estimated_bricks > 100000:
+                results.append({"instrument": job.instrument, "filename": job.filename,
+                                "status": "error",
+                                "error": f"Brick size too small ({brick_size:.6f}). Would create ~{int(estimated_bricks)} bricks."})
+                continue
+
+            # Generate renko
+            brick_size = float(brick_size)
+            reversal_size = float(reversal_size)
+            reversal_mult = reversal_size / brick_size
+
+            renko_df, _ = generate_renko_custom(
+                df, brick_size, reversal_mult, job.wick_mode, size_schedule=size_schedule
+            )
+
+            if renko_df.empty:
+                results.append({"instrument": job.instrument, "filename": job.filename,
+                                "status": "error", "error": "No Renko bricks generated"})
+                continue
+
+            # Build stats DataFrame from renko
+            renko_df = renko_df.reset_index()
+            stats_df = pd.DataFrame({
+                'datetime': renko_df['datetime'] if 'datetime' in renko_df.columns else renko_df.index,
+                'open': renko_df['open'],
+                'high': renko_df['high'],
+                'low': renko_df['low'],
+                'close': renko_df['close'],
+            })
+            for col in ['open', 'high', 'low', 'close']:
+                stats_df[col] = stats_df[col].round(5)
+
+            # Add settings columns
+            stats_df['adr_period'] = job.adr_period
+            if 'brick_size' in renko_df.columns:
+                stats_df['brick_size'] = renko_df['brick_size'].values
+                stats_df['reversal_size'] = renko_df['reversal_size'].values
+            else:
+                stats_df['brick_size'] = brick_size
+                stats_df['reversal_size'] = reversal_size
+            stats_df['wick_mode'] = job.wick_mode
+            stats_df['ma1_period'] = job.ma1_period
+            stats_df['ma2_period'] = job.ma2_period
+            stats_df['ma3_period'] = job.ma3_period
+            stats_df['chopPeriod'] = job.chop_period
+
+            # Compute stats columns
+            stats_df = compute_stats_columns(
+                stats_df, raw_df, session_sched,
+                job.adr_period, job.ma1_period, job.ma2_period,
+                job.ma3_period, job.chop_period
+            )
+
+            # Save parquet
+            fname = job.filename.replace('.parquet', '')
+            output_path = stats_dir / f"{fname}.parquet"
+            stats_df.to_parquet(output_path, engine='pyarrow', index=False)
+
+            results.append({
+                "instrument": job.instrument,
+                "filename": fname,
+                "status": "success",
+                "rows": len(stats_df),
+                "filepath": str(output_path)
+            })
+
+        except Exception as e:
+            results.append({
+                "instrument": job.instrument,
+                "filename": job.filename,
+                "status": "error",
+                "error": str(e)
+            })
+
+    return {"results": results}
 
 
 @app.get("/parquet-data")

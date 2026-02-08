@@ -690,6 +690,28 @@ function App() {
     }
   }
 
+  const handleDirectGenerate = async (jobs) => {
+    try {
+      const res = await fetch(`${apiBase}/direct-generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs, working_dir: workingDir })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        fetchStatsFiles()
+        return data.results
+      } else {
+        const error = await res.json()
+        console.error('Direct generate failed:', error.detail)
+        return [{ status: 'error', error: error.detail }]
+      }
+    } catch (err) {
+      console.error('Direct generate failed:', err)
+      return [{ status: 'error', error: err.message }]
+    }
+  }
+
   const loadChart = async (instrument) => {
     if (instrument === activeInstrument && chartData) return;  // already loaded
     setActiveInstrument(instrument)
@@ -1048,6 +1070,7 @@ function App() {
             onDeleteAllMLModels={handleDeleteAllMLModels}
             mlError={mlError}
             apiBase={apiBase}
+            onDirectGenerate={handleDirectGenerate}
           />
 
           {!sidebarCollapsed && (
