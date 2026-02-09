@@ -1146,11 +1146,11 @@ function Sidebar({
                       <input type="number" className="stats-input mono bypass-input-sm" value={job.chopPeriod} onChange={e => updateBypassJob(job.id, 'chopPeriod', parseInt(e.target.value) || 20)} />
                     </div>
                     <div className="bypass-job-row">
-                      <label className="option-label">E1</label>
+                      <label className="option-label">ENV1</label>
                       <input type="number" className="stats-input mono bypass-input-sm" value={job.smae1Period} onChange={e => updateBypassJob(job.id, 'smae1Period', parseInt(e.target.value) || 20)} />
                       <label className="option-label">Dev</label>
                       <input type="number" className="stats-input mono bypass-input-sm" step="0.1" value={job.smae1Deviation} onChange={e => updateBypassJob(job.id, 'smae1Deviation', parseFloat(e.target.value) || 1.0)} />
-                      <label className="option-label">E2</label>
+                      <label className="option-label">ENV2</label>
                       <input type="number" className="stats-input mono bypass-input-sm" value={job.smae2Period} onChange={e => updateBypassJob(job.id, 'smae2Period', parseInt(e.target.value) || 50)} />
                       <label className="option-label">Dev</label>
                       <input type="number" className="stats-input mono bypass-input-sm" step="0.1" value={job.smae2Deviation} onChange={e => updateBypassJob(job.id, 'smae2Deviation', parseFloat(e.target.value) || 1.0)} />

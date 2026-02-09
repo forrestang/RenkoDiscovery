@@ -1582,7 +1582,6 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
         </div>
         {settings && (
           <div className="settings-inline">
-            <span className="settings-inline-item"><span className="settings-inline-val stats-total">{totalBars.toLocaleString()} bars</span></span>
             <span className="settings-inline-item"><span className="settings-inline-label">Brick:</span><span className="settings-inline-val">{settings.brickSize}</span></span>
             <span className="settings-inline-item"><span className="settings-inline-label">Rev:</span><span className="settings-inline-val">{settings.reversalSize}</span></span>
             <span className="settings-inline-item"><span className="settings-inline-label">Wicks:</span><span className="settings-inline-val">{settings.wickMode}</span></span>
@@ -1593,13 +1592,13 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             <span className="settings-inline-item"><span className="settings-inline-label">MA3:</span><span className="settings-inline-val">{settings.ma3Period}</span></span>
             {settings.smae1Period != null && (
               <span className="settings-inline-item">
-                <span className="settings-inline-label">SMAE1:</span>
+                <span className="settings-inline-label">ENV1:</span>
                 <span className="settings-inline-val">{settings.smae1Period}/{settings.smae1Deviation}</span>
               </span>
             )}
             {settings.smae2Period != null && (
               <span className="settings-inline-item">
-                <span className="settings-inline-label">SMAE2:</span>
+                <span className="settings-inline-label">ENV2:</span>
                 <span className="settings-inline-val">{settings.smae2Period}/{settings.smae2Deviation}</span>
               </span>
             )}

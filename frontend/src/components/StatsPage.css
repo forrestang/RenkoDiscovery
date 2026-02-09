@@ -88,11 +88,12 @@
 /* Inline Settings */
 .settings-inline {
   display: grid;
-  grid-template-columns: repeat(6, auto);
-  gap: 2px 10px;
+  grid-template-columns: repeat(6, max-content);
+  gap: 2px 12px;
   margin-left: auto;
   flex-shrink: 0;
   line-height: 1;
+  justify-items: start;
 }
 
 .settings-inline-item {

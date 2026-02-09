@@ -263,12 +263,12 @@ function MAControls({ settings, onChange, smaeSettings, onSmaeChange, pwapSettin
             {smaeSettings && (
               <>
                 <SMAERow
-                  label="E1"
+                  label="ENV1"
                   smae={smaeSettings.smae1}
                   onChange={(v) => handleSmaeChange('smae1', v)}
                 />
                 <SMAERow
-                  label="E2"
+                  label="ENV2"
                   smae={smaeSettings.smae2}
                   onChange={(v) => handleSmaeChange('smae2', v)}
                 />

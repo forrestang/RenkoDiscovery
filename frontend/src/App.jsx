@@ -986,8 +986,11 @@ function App() {
                 <circle cx="12" cy="8" r="2" />
                 <circle cx="16" cy="12" r="2" />
               </svg>
-              Ind
+              T1/2
             </button>
+          )}
+          {activeInstrument && (
+            <MAControls settings={maSettings} onChange={setMASettings} smaeSettings={smaeSettings} onSmaeChange={setSmaeSettings} pwapSettings={pwapSettings} onPwapChange={setPwapSettings} />
           )}
           {activeInstrument && (
             <select
@@ -1015,9 +1018,6 @@ function App() {
                 </option>
               ))}
             </select>
-          )}
-          {activeInstrument && (
-            <MAControls settings={maSettings} onChange={setMASettings} smaeSettings={smaeSettings} onSmaeChange={setSmaeSettings} pwapSettings={pwapSettings} onPwapChange={setPwapSettings} />
           )}
         </div>
       </header>
