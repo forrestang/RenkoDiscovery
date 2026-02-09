@@ -2842,6 +2842,7 @@ def get_parquet_stats(filepath: str):
         'REAL_MA3_RR': 'realMA3RR', 'REAL_MA3_ADR': 'realMA3ADR',
         'datetime': 'datetime',
         'brick_size': 'brickSizeArr', 'reversal_size': 'reversalSizeArr',
+        'Type1': 'type1', 'Type2': 'type2',
     }
     bar_data = {}
     for src_col, dest_key in bar_data_cols.items():
@@ -2864,6 +2865,22 @@ def get_parquet_stats(filepath: str):
         if rr_col in df.columns:
             arr = df[rr_col].tolist()
             bar_data[f'emaRr{period}'] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
+
+    # Add chart overlay columns (EMAs, SMAE, PWAP) from parquet
+    overlay_cols = {
+        'EMA1_Price': 'ema1Price', 'EMA2_Price': 'ema2Price', 'EMA3_Price': 'ema3Price',
+        'SMAE1_Center': 'smae1Center', 'SMAE1_Upper': 'smae1Upper', 'SMAE1_Lower': 'smae1Lower',
+        'SMAE2_Center': 'smae2Center', 'SMAE2_Upper': 'smae2Upper', 'SMAE2_Lower': 'smae2Lower',
+        'PWAP_Mean': 'pwapMean',
+        'PWAP_Upper1': 'pwapUpper1', 'PWAP_Upper2': 'pwapUpper2',
+        'PWAP_Upper3': 'pwapUpper3', 'PWAP_Upper4': 'pwapUpper4',
+        'PWAP_Lower1': 'pwapLower1', 'PWAP_Lower2': 'pwapLower2',
+        'PWAP_Lower3': 'pwapLower3', 'PWAP_Lower4': 'pwapLower4',
+    }
+    for src_col, dest_key in overlay_cols.items():
+        if src_col in df.columns:
+            arr = df[src_col].tolist()
+            bar_data[dest_key] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
 
     # Compute session break indices from session_date column
     session_breaks = []

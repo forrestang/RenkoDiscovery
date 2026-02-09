@@ -29,26 +29,6 @@ function formatTickMark(isoString) {
   return `${month}-${day}`
 }
 
-function calculateEMA(data, period) {
-  const result = []
-  const multiplier = 2 / (period + 1)
-  let ema = null
-  for (let i = 0; i < data.length; i++) {
-    if (i < period - 1) {
-      result.push(null)
-    } else if (i === period - 1) {
-      let sum = 0
-      for (let j = 0; j < period; j++) sum += data[i - j]
-      ema = sum / period
-      result.push(ema)
-    } else {
-      ema = (data[i] - ema) * multiplier + ema
-      result.push(ema)
-    }
-  }
-  return result
-}
-
 // ── Custom Primitives ────────────────────────────────────────────────────────
 
 // Type markers ("1" / "2" text) in indicator pane
@@ -344,7 +324,7 @@ class DayBoundaryGridRenderer {
   }
 }
 
-function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, showIndicator, focusBar, lineWeight, lineStyle, markerSize, sessionBreaks }) {
+function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBar, lineWeight, lineStyle, markerSize, sessionBreaks, showEMA, showSMAE, showPWAP }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
@@ -421,31 +401,103 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
 
     chartRef.current = chart
 
-    // MA line series (added first so bars render on top)
-    const periods = maPeriods || []
-    for (let m = 0; m < 3; m++) {
-      const period = periods[m]
-      if (!period || period <= 0) continue
-      const emaValues = calculateEMA(close, period)
-      const maData = []
-      for (let i = 0; i < len; i++) {
-        if (emaValues[i] !== null) maData.push({ time: i, value: emaValues[i] })
+    // MA line series from parquet (added first so bars render on top)
+    if (showEMA !== false) {
+      const emaKeys = ['ema1Price', 'ema2Price', 'ema3Price']
+      for (let m = 0; m < 3; m++) {
+        const emaArr = barData[emaKeys[m]]
+        if (!emaArr) continue
+        const maData = []
+        for (let i = 0; i < len; i++) {
+          if (emaArr[i] != null) maData.push({ time: i, value: emaArr[i] })
+        }
+        if (maData.length === 0) continue
+        const maSeries = chart.addSeries(LineSeries, {
+          color: MA_COLORS[m],
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          priceFormat: {
+            type: 'price',
+            precision: pricePrecision,
+            minMove: Math.pow(10, -pricePrecision),
+          },
+        })
+        maSeries.setData(maData)
+        maSeriesRefs.current[m] = maSeries
       }
-      if (maData.length === 0) continue
-      const maSeries = chart.addSeries(LineSeries, {
-        color: MA_COLORS[m],
-        lineWidth: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-        priceFormat: {
-          type: 'price',
-          precision: pricePrecision,
-          minMove: Math.pow(10, -pricePrecision),
-        },
-      })
-      maSeries.setData(maData)
-      maSeriesRefs.current[m] = maSeries
+    }
+
+    // SMAE (ENV1/ENV2) overlay series
+    if (showSMAE) {
+      const envConfigs = [
+        { prefix: 'smae1', color: '#22d3ee' },  // ENV1 = cyan
+        { prefix: 'smae2', color: '#fb923c' },  // ENV2 = orange
+      ]
+      for (const { prefix, color } of envConfigs) {
+        const centerArr = barData[`${prefix}Center`]
+        if (!centerArr) continue
+        const upperArr = barData[`${prefix}Upper`]
+        const lowerArr = barData[`${prefix}Lower`]
+        const priceFormat = { type: 'price', precision: pricePrecision, minMove: Math.pow(10, -pricePrecision) }
+        const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, priceFormat }
+        // Center line (solid)
+        const centerData = []
+        for (let i = 0; i < len; i++) if (centerArr[i] != null) centerData.push({ time: i, value: centerArr[i] })
+        if (centerData.length > 0) {
+          const s = chart.addSeries(LineSeries, { ...baseOpts, color, lineWidth: 1, lineStyle: 0 })
+          s.setData(centerData)
+        }
+        // Upper band (dashed)
+        if (upperArr) {
+          const d = []
+          for (let i = 0; i < len; i++) if (upperArr[i] != null) d.push({ time: i, value: upperArr[i] })
+          if (d.length > 0) {
+            const s = chart.addSeries(LineSeries, { ...baseOpts, color, lineWidth: 1, lineStyle: 2 })
+            s.setData(d)
+          }
+        }
+        // Lower band (dashed)
+        if (lowerArr) {
+          const d = []
+          for (let i = 0; i < len; i++) if (lowerArr[i] != null) d.push({ time: i, value: lowerArr[i] })
+          if (d.length > 0) {
+            const s = chart.addSeries(LineSeries, { ...baseOpts, color, lineWidth: 1, lineStyle: 2 })
+            s.setData(d)
+          }
+        }
+      }
+    }
+
+    // PWAP overlay series
+    if (showPWAP) {
+      const pwapColor = '#f472b6'
+      const priceFormat = { type: 'price', precision: pricePrecision, minMove: Math.pow(10, -pricePrecision) }
+      const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, priceFormat }
+      // Mean line (solid, thicker)
+      const meanArr = barData.pwapMean
+      if (meanArr) {
+        const d = []
+        for (let i = 0; i < len; i++) if (meanArr[i] != null) d.push({ time: i, value: meanArr[i] })
+        if (d.length > 0) {
+          const s = chart.addSeries(LineSeries, { ...baseOpts, color: pwapColor, lineWidth: 2, lineStyle: 0 })
+          s.setData(d)
+        }
+      }
+      // Upper/Lower bands (dashed)
+      for (let b = 1; b <= 4; b++) {
+        for (const side of ['Upper', 'Lower']) {
+          const arr = barData[`pwap${side}${b}`]
+          if (!arr) continue
+          const d = []
+          for (let i = 0; i < len; i++) if (arr[i] != null) d.push({ time: i, value: arr[i] })
+          if (d.length > 0) {
+            const s = chart.addSeries(LineSeries, { ...baseOpts, color: pwapColor, lineWidth: 1, lineStyle: 2 })
+            s.setData(d)
+          }
+        }
+      }
     }
 
     // Candlestick series (renko: white up, gray down) — added after MAs so bars are on top
@@ -564,7 +616,7 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
       tradeLinePrimRef.current = null
       tradeMarkerPrimRef.current = null
     }
-  }, [barData, maPeriods, trades, pricePrecision, lineWeight, lineStyle, markerSize, sessionBreaks])
+  }, [barData, trades, pricePrecision, lineWeight, lineStyle, markerSize, sessionBreaks, showEMA, showSMAE, showPWAP])
 
   // Indicator pane (togglable)
   useEffect(() => {
@@ -580,15 +632,12 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
 
     if (!showIndicator) return
 
-    const { open, close, high, low, state } = barData
-    const brickSizeArr = barData.brickSizeArr
-    const reversalSizeArr = barData.reversalSizeArr
-    const scalarBrick = settings?.brickSize
-    const scalarReversal = settings?.reversalSize
-    const len = open.length
-    const round = (v, d) => { const m = Math.pow(10, d); return Math.round(v * m) / m }
+    const { state } = barData
+    const type1 = barData.type1
+    const type2 = barData.type2
+    const len = barData.open.length
 
-    // Build state data + type markers
+    // Build state data + type markers from parquet columns
     const stateData = []
     const typeMarkers = []
 
@@ -597,42 +646,16 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
       if (st == null || st === 0) continue
       stateData.push({ time: i, value: st })
 
-      const isUp = close[i] > open[i]
-      const isDown = close[i] < open[i]
-
-      // Per-bar brick/reversal for Type2 check
-      const brickAtI = brickSizeArr ? brickSizeArr[i] : scalarBrick
-      const revAtI = reversalSizeArr ? reversalSizeArr[i] : scalarReversal
-      const use3bar = revAtI != null && brickAtI != null && revAtI > brickAtI
-
-      // Type1 (3-bar pattern)
-      if (i > 1) {
-        const priorIsUp = close[i - 1] > open[i - 1]
-        const priorIsDown = close[i - 1] < open[i - 1]
-        const prior2IsUp = close[i - 2] > open[i - 2]
-        const prior2IsDown = close[i - 2] < open[i - 2]
-
-        if (st === 3 && isUp && priorIsUp && prior2IsDown) {
-          typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
-        }
-        if (st === -3 && isDown && priorIsDown && prior2IsUp) {
-          typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
-        }
+      // Type1 from parquet
+      if (type1) {
+        if (type1[i] > 0) typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
+        if (type1[i] < 0) typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
       }
 
-      // Type2 (wick pattern, only when reversal > brick)
-      if (use3bar) {
-        const priorIsUpT2 = i > 0 ? close[i - 1] > open[i - 1] : false
-        if (st === 3 && isUp && round(open[i] - low[i], pricePrecision) > brickAtI) {
-          if (priorIsUpT2) {
-            typeMarkers.push({ time: i, value: -4, text: '2', color: '#10b981' })
-          }
-        }
-        if (st === -3 && isDown && round(high[i] - open[i], pricePrecision) > brickAtI) {
-          if (!priorIsUpT2) {
-            typeMarkers.push({ time: i, value: 4, text: '2', color: '#f43f5e' })
-          }
-        }
+      // Type2 from parquet
+      if (type2) {
+        if (type2[i] > 0) typeMarkers.push({ time: i, value: -4, text: '2', color: '#10b981' })
+        if (type2[i] < 0) typeMarkers.push({ time: i, value: 4, text: '2', color: '#f43f5e' })
       }
     }
 
@@ -680,7 +703,7 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
 
     // Force redraw
     chart.timeScale().applyOptions({})
-  }, [barData, showIndicator, settings, pricePrecision, sessionBreaks])
+  }, [barData, showIndicator, pricePrecision, sessionBreaks])
 
   // Focus bar (scroll to trade from trade log click)
   useEffect(() => {

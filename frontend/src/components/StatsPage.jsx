@@ -794,6 +794,12 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   const [btShowChart, setBtShowChart] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowChart`) === 'true')
   const [btChartDecimals, setBtChartDecimals] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btChartDecimals`)) || 5)
   const [btShowIndicator, setBtShowIndicator] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowIndicator`) === 'true')
+  const [btShowEMA, setBtShowEMA] = useState(() => {
+    const v = localStorage.getItem(`${STORAGE_PREFIX}btShowEMA`)
+    return v === null ? true : v === 'true'
+  })
+  const [btShowSMAE, setBtShowSMAE] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowSMAE`) === 'true')
+  const [btShowPWAP, setBtShowPWAP] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowPWAP`) === 'true')
   const [btLineWeight, setBtLineWeight] = useState(() => parseFloat(localStorage.getItem(`${STORAGE_PREFIX}btLineWeight`)) || 1.5)
   const [btLineStyle, setBtLineStyle] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btLineStyle`) || 'dotted')
   const [btMarkerSize, setBtMarkerSize] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btMarkerSize`)) || 4)
@@ -876,6 +882,15 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btShowIndicator`, btShowIndicator.toString())
   }, [btShowIndicator])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btShowEMA`, btShowEMA.toString())
+  }, [btShowEMA])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btShowSMAE`, btShowSMAE.toString())
+  }, [btShowSMAE])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btShowPWAP`, btShowPWAP.toString())
+  }, [btShowPWAP])
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btLineWeight`, btLineWeight.toString())
   }, [btLineWeight])
@@ -3170,6 +3185,20 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                         className={`filter-action-btn${btShowIndicator ? ' active' : ''}`}
                         onClick={() => setBtShowIndicator(p => !p)}
                       >Indicator</button>
+                      <button
+                        className={`filter-action-btn${btShowEMA ? ' active' : ''}`}
+                        onClick={() => setBtShowEMA(p => !p)}
+                      >EMA</button>
+                      <button
+                        className={`filter-action-btn${btShowSMAE ? ' active' : ''}`}
+                        onClick={() => setBtShowSMAE(p => !p)}
+                        disabled={!stats?.barData?.smae1Center}
+                      >ENV</button>
+                      <button
+                        className={`filter-action-btn${btShowPWAP ? ' active' : ''}`}
+                        onClick={() => setBtShowPWAP(p => !p)}
+                        disabled={!stats?.barData?.pwapMean}
+                      >PWAP</button>
                     </>
                   )}
                   <button
@@ -3183,8 +3212,6 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <div className="backtest-chart-container" style={{ height: btChartHeight }}>
                     <BacktestChart
                       barData={stats.barData}
-                      maPeriods={stats.maPeriods || []}
-                      settings={stats.settings || {}}
                       trades={btChartTrades}
                       pricePrecision={btChartDecimals}
                       showIndicator={btShowIndicator}
@@ -3192,6 +3219,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       lineWeight={btLineWeight}
                       lineStyle={btLineStyle}
                       markerSize={btMarkerSize}
+                      showEMA={btShowEMA}
+                      showSMAE={btShowSMAE}
+                      showPWAP={btShowPWAP}
                       sessionBreaks={stats.sessionBreaks || []}
                     />
                   </div>
