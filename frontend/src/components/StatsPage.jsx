@@ -3183,7 +3183,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       markerSize={btMarkerSize}
                     />
                   </div>
-                  <div className="backtest-chart-resize-handle" onMouseDown={handleChartResizeMouseDown} />
+                  <div className="backtest-chart-resize-handle" onMouseDown={handleChartResizeMouseDown}>
+                    <div className="resize-handle-grip" />
+                  </div>
                   {(() => {
                     const enabledSignals = btSignals.filter(s => s.enabled !== false)
                     const allTrades = []
