@@ -2726,13 +2726,19 @@ def get_parquet_stats(filepath: str):
         'REAL_MA1_RR': 'realMA1RR', 'REAL_MA1_ADR': 'realMA1ADR',
         'REAL_MA2_RR': 'realMA2RR', 'REAL_MA2_ADR': 'realMA2ADR',
         'REAL_MA3_RR': 'realMA3RR', 'REAL_MA3_ADR': 'realMA3ADR',
+        'datetime': 'datetime',
+        'brick_size': 'brickSizeArr', 'reversal_size': 'reversalSizeArr',
     }
     bar_data = {}
     for src_col, dest_key in bar_data_cols.items():
         if src_col in df.columns:
-            arr = df[src_col].tolist()
-            # Convert NaN to None for JSON serialization
-            bar_data[dest_key] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
+            # Convert datetime columns to strings before serialization
+            if pd.api.types.is_datetime64_any_dtype(df[src_col]):
+                bar_data[dest_key] = df[src_col].astype(str).tolist()
+            else:
+                arr = df[src_col].tolist()
+                # Convert NaN to None for JSON serialization
+                bar_data[dest_key] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
 
     # Add dynamic EMA columns based on detected MA periods
     for period in ma_periods:

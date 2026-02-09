@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom'
 import Plot from 'react-plotly.js'
 import { COLUMN_DESCRIPTIONS, ColumnItem } from '../utils/columnDescriptions'
+import BacktestChart from './BacktestChart'
 import './StatsPage.css'
 
 const STORAGE_PREFIX = 'RenkoDiscovery_'
@@ -790,6 +791,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     return v === null ? true : v === 'true'
   })
   const [btComboMode, setBtComboMode] = useState(false)
+  const [btShowChart, setBtShowChart] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowChart`) === 'true')
+  const [btChartDecimals, setBtChartDecimals] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btChartDecimals`)) || 5)
+  const [btShowIndicator, setBtShowIndicator] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowIndicator`) === 'true')
+  const [btLineWeight, setBtLineWeight] = useState(() => parseFloat(localStorage.getItem(`${STORAGE_PREFIX}btLineWeight`)) || 1.5)
+  const [btLineStyle, setBtLineStyle] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btLineStyle`) || 'dotted')
+  const [btMarkerSize, setBtMarkerSize] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btMarkerSize`)) || 4)
+  const [btChartHeight, setBtChartHeight] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btChartHeight`)) || 500)
+  const btChartResizing = useRef(false)
+  const btChartStartY = useRef(0)
+  const btChartStartH = useRef(0)
+  const [btFocusBar, setBtFocusBar] = useState(null)  // { idx, ts } to allow re-clicks
   const [showBtHelp, setShowBtHelp] = useState(false)
   const [btHelpPos, setBtHelpPos] = useState({ x: 200, y: 100 })
   const [btDragging, setBtDragging] = useState(false)
@@ -809,6 +821,26 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       window.removeEventListener('mouseup', onMouseUp)
     }
   }, [btDragging])
+
+  // Backtest chart resize drag handler
+  const handleChartResizeMouseDown = useCallback((e) => {
+    e.preventDefault()
+    btChartResizing.current = true
+    btChartStartY.current = e.clientY
+    btChartStartH.current = btChartHeight
+    const onMouseMove = (ev) => {
+      if (!btChartResizing.current) return
+      const newH = Math.min(1200, Math.max(200, btChartStartH.current + (ev.clientY - btChartStartY.current)))
+      setBtChartHeight(newH)
+    }
+    const onMouseUp = () => {
+      btChartResizing.current = false
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }, [btChartHeight])
 
   // Persist backtest config to localStorage
   useEffect(() => {
@@ -835,6 +867,27 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btAllowOverlap`, btAllowOverlap.toString())
   }, [btAllowOverlap])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btShowChart`, btShowChart.toString())
+  }, [btShowChart])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btChartDecimals`, btChartDecimals.toString())
+  }, [btChartDecimals])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btShowIndicator`, btShowIndicator.toString())
+  }, [btShowIndicator])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btLineWeight`, btLineWeight.toString())
+  }, [btLineWeight])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btLineStyle`, btLineStyle)
+  }, [btLineStyle])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btMarkerSize`, btMarkerSize.toString())
+  }, [btMarkerSize])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btChartHeight`, btChartHeight.toString())
+  }, [btChartHeight])
 
   const addBtSignal = useCallback(() => {
     setBtSignals(prev => [...prev, { name: `Signal ${prev.length + 1}`, expression: '', enabled: true }])
@@ -1008,6 +1061,21 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       name: 'Combo',
       line: { color: '#facc15', width: 1.5 },
     }]
+  }, [btData, btSignals])
+
+  // Flat trade list for backtest chart
+  const btChartTrades = useMemo(() => {
+    if (!btData?.signals) return []
+    const all = []
+    btSignals.forEach((sig, i) => {
+      if (sig.enabled === false) return
+      const sigData = btData.signals[sig.name]
+      if (!sigData?.trades) return
+      sigData.trades.forEach(t => {
+        all.push({ ...t, signalColor: PLAYGROUND_COLORS[i % PLAYGROUND_COLORS.length] })
+      })
+    })
+    return all
   }, [btData, btSignals])
 
   // Memoized combo summary stats for backtest
@@ -2953,13 +3021,15 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             )
           })()}
 
-          {/* Summary Stats Table */}
+          {/* Summary Stats Table + Chart wrapper */}
           {(() => {
             const enabledSignals = btSignals.filter(s => s.enabled !== false)
             const hasSummary = enabledSignals.some(s => btData.signals?.[s.name]?.summary)
-            if (!hasSummary) return null
+            if (!hasSummary && !(btChartTrades.length > 0 && stats?.barData)) return null
             const btShowCombo = !btAllowOverlap || btComboMode
             return (
+              <div className="backtest-summary-chart-wrapper">
+                {hasSummary && (
               <div className="stats-module module-box backtest-stats-module">
                 <table className="stats-table">
                   <thead>
@@ -3033,85 +3103,171 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   </tbody>
                 </table>
               </div>
-            )
-          })()}
-
-          {/* Trade Log Table */}
-          {(() => {
-            const enabledSignals = btSignals.filter(s => s.enabled !== false)
-            const allTrades = []
-            enabledSignals.forEach(s => {
-              const sigData = btData.signals?.[s.name]
-              if (sigData?.trades) {
-                sigData.trades.forEach(t => allTrades.push({ ...t, signalName: s.name, signalIdx: btSignals.indexOf(s) }))
-              }
-            })
-            if (allTrades.length === 0) return null
-
-            const filteredTrades = btSignalFilter === 'all'
-              ? allTrades.sort((a, b) => a.idx - b.idx)
-              : allTrades.filter(t => t.signalName === btSignalFilter).sort((a, b) => a.idx - b.idx)
-
-            return (
-              <div className="stats-module module-box backtest-tradelog-module">
-                <div className="backtest-tradelog-header">
-                  <span className="module-title-text">TRADE LOG ({filteredTrades.length} trades)</span>
-                  <select
-                    className="backtest-config-select"
-                    value={btSignalFilter}
-                    onChange={e => setBtSignalFilter(e.target.value)}
-                  >
-                    <option value="all">All Signals</option>
-                    {enabledSignals.map(s => (
-                      <option key={s.name} value={s.name}>{s.name}</option>
-                    ))}
-                  </select>
+                )}
+          {btChartTrades.length > 0 && stats?.barData && (
+            <div className="stats-module module-box backtest-chart-module">
+              <div className="backtest-chart-header">
+                <span className="module-title-text"></span>
+                <div className="backtest-chart-controls">
+                  {btShowChart && (
+                    <>
+                      <label className="backtest-config-label">Decimals</label>
+                      <select
+                        className="backtest-config-select"
+                        value={btChartDecimals}
+                        onChange={e => setBtChartDecimals(parseInt(e.target.value))}
+                      >
+                        <option value={1}>1</option>
+                        <option value={2}>2</option>
+                        <option value={3}>3</option>
+                        <option value={4}>4</option>
+                        <option value={5}>5</option>
+                      </select>
+                      <label className="backtest-config-label">Line</label>
+                      <select
+                        className="backtest-config-select"
+                        value={btLineWeight}
+                        onChange={e => setBtLineWeight(parseFloat(e.target.value))}
+                      >
+                        <option value={1}>1</option>
+                        <option value={1.5}>1.5</option>
+                        <option value={2}>2</option>
+                        <option value={3}>3</option>
+                      </select>
+                      <select
+                        className="backtest-config-select"
+                        value={btLineStyle}
+                        onChange={e => setBtLineStyle(e.target.value)}
+                      >
+                        <option value="solid">Solid</option>
+                        <option value="dashed">Dashed</option>
+                        <option value="dotted">Dotted</option>
+                      </select>
+                      <label className="backtest-config-label">Marker</label>
+                      <select
+                        className="backtest-config-select"
+                        value={btMarkerSize}
+                        onChange={e => setBtMarkerSize(parseInt(e.target.value))}
+                      >
+                        <option value={2}>2</option>
+                        <option value={3}>3</option>
+                        <option value={4}>4</option>
+                        <option value={5}>5</option>
+                        <option value={6}>6</option>
+                      </select>
+                      <button
+                        className={`filter-action-btn${btShowIndicator ? ' active' : ''}`}
+                        onClick={() => setBtShowIndicator(p => !p)}
+                      >Indicator</button>
+                    </>
+                  )}
+                  <button
+                    className={`filter-action-btn${btShowChart ? ' active' : ''}`}
+                    onClick={() => setBtShowChart(p => !p)}
+                  >{btShowChart ? 'Hide' : 'Show Chart'}</button>
                 </div>
-                <div className="backtest-tradelog-scroll">
-                  <table className="stats-table backtest-tradelog-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Signal</th>
-                        <th>Entry Date</th>
-                        <th>Entry Price</th>
-                        <th>Bar#</th>
-                        <th>Dir</th>
-                        <th>Outcome</th>
-                        <th>Result</th>
-                        <th>Bars</th>
-                        <th>Exit Date</th>
-                        <th>Exit Price</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredTrades.map((t, i) => (
-                        <tr
-                          key={i}
-                          className={
-                            t.outcome === 'target' && t.result > 0 ? 'backtest-trade-win' :
-                            t.outcome === 'stop' ? 'backtest-trade-loss' :
-                            'backtest-trade-open'
-                          }
-                        >
-                          <td>{i + 1}</td>
-                          <td style={{ color: PLAYGROUND_COLORS[t.signalIdx % PLAYGROUND_COLORS.length] }}>{t.signalName}</td>
-                          <td>{t.entry_dt}</td>
-                          <td>{t.entry_price}</td>
-                          <td>{t.idx}</td>
-                          <td className={t.direction === 'long' ? 'up' : 'dn'}>{t.direction === 'long' ? 'L' : 'S'}</td>
-                          <td>{t.outcome === 'target' ? 'W' : t.outcome === 'stop' ? 'L' : 'Open'}</td>
-                          <td style={{ color: t.result >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
-                            {t.result >= 0 ? '+' : ''}{t.result}
-                          </td>
-                          <td>{t.bars_held}</td>
-                          <td>{t.exit_dt}</td>
-                          <td>{t.exit_price}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              </div>
+              {btShowChart && (
+                <div className="backtest-chart-tradelog-wrapper">
+                  <div className="backtest-chart-container" style={{ height: btChartHeight }}>
+                    <BacktestChart
+                      barData={stats.barData}
+                      maPeriods={stats.maPeriods || []}
+                      settings={stats.settings || {}}
+                      trades={btChartTrades}
+                      pricePrecision={btChartDecimals}
+                      showIndicator={btShowIndicator}
+                      focusBar={btFocusBar}
+                      lineWeight={btLineWeight}
+                      lineStyle={btLineStyle}
+                      markerSize={btMarkerSize}
+                    />
+                  </div>
+                  <div className="backtest-chart-resize-handle" onMouseDown={handleChartResizeMouseDown} />
+                  {(() => {
+                    const enabledSignals = btSignals.filter(s => s.enabled !== false)
+                    const allTrades = []
+                    enabledSignals.forEach(s => {
+                      const sigData = btData.signals?.[s.name]
+                      if (sigData?.trades) {
+                        sigData.trades.forEach(t => allTrades.push({ ...t, signalName: s.name, signalIdx: btSignals.indexOf(s) }))
+                      }
+                    })
+                    if (allTrades.length === 0) return null
+
+                    const filteredTrades = btSignalFilter === 'all'
+                      ? allTrades.sort((a, b) => a.idx - b.idx)
+                      : allTrades.filter(t => t.signalName === btSignalFilter).sort((a, b) => a.idx - b.idx)
+
+                    return (
+                      <div className="stats-module module-box backtest-tradelog-module">
+                        <div className="backtest-tradelog-header">
+                          <span className="module-title-text">TRADE LOG ({filteredTrades.length} trades)</span>
+                          <select
+                            className="backtest-config-select"
+                            value={btSignalFilter}
+                            onChange={e => setBtSignalFilter(e.target.value)}
+                          >
+                            <option value="all">All Signals</option>
+                            {enabledSignals.map(s => (
+                              <option key={s.name} value={s.name}>{s.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="backtest-tradelog-scroll">
+                          <table className="stats-table backtest-tradelog-table">
+                            <thead>
+                              <tr>
+                                <th>#</th>
+                                <th>Signal</th>
+                                <th>Entry Date</th>
+                                <th>Entry Price</th>
+                                <th>Bar#</th>
+                                <th>Dir</th>
+                                <th>Outcome</th>
+                                <th>Result</th>
+                                <th>Bars</th>
+                                <th>Exit Date</th>
+                                <th>Exit Price</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredTrades.map((t, i) => (
+                                <tr
+                                  key={i}
+                                  className={
+                                    t.outcome === 'target' && t.result > 0 ? 'backtest-trade-win' :
+                                    t.outcome === 'stop' ? 'backtest-trade-loss' :
+                                    'backtest-trade-open'
+                                  }
+                                  style={{ cursor: 'pointer' }}
+                                  onClick={() => setBtFocusBar({ idx: t.idx, ts: Date.now() })}
+                                >
+                                  <td>{i + 1}</td>
+                                  <td style={{ color: PLAYGROUND_COLORS[t.signalIdx % PLAYGROUND_COLORS.length] }}>{t.signalName}</td>
+                                  <td>{t.entry_dt}</td>
+                                  <td>{t.entry_price}</td>
+                                  <td>{t.idx}</td>
+                                  <td className={t.direction === 'long' ? 'up' : 'dn'}>{t.direction === 'long' ? 'L' : 'S'}</td>
+                                  <td>{t.outcome === 'target' ? 'W' : t.outcome === 'stop' ? 'L' : 'Open'}</td>
+                                  <td style={{ color: t.result >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
+                                    {t.result >= 0 ? '+' : ''}{t.result}
+                                  </td>
+                                  <td>{t.bars_held}</td>
+                                  <td>{t.exit_dt}</td>
+                                  <td>{t.exit_price}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
+              )}
+            </div>
+          )}
               </div>
             )
           })()}
