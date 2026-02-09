@@ -538,9 +538,70 @@ function calculateEMA(data, period) {
   return result
 }
 
+// Calculate SMAE (Simple Moving Average Envelope)
+function calculateSMAE(closes, period, deviation) {
+  const center = calculateSMA(closes, period)
+  const upper = center.map(v => v === null ? null : v * (1 + deviation / 100))
+  const lower = center.map(v => v === null ? null : v * (1 - deviation / 100))
+  return { center, upper, lower }
+}
+
+// Calculate PWAP (Price-Weighted Average Price) per session
+function calculatePWAP(highs, lows, closes, datetimes, schedule) {
+  const n = highs.length
+  const mean = new Array(n).fill(null)
+  const stdDev = new Array(n).fill(null)
+
+  if (!schedule || !datetimes || n === 0) return { mean, stdDev }
+
+  // Compute typical price
+  const tp = highs.map((h, i) => (h + lows[i] + closes[i]) / 3)
+
+  // Track indices where a new session starts
+  const sessionBreaks = new Set()
+
+  // Group by session and compute running mean + population std dev
+  let lastSessionId = null
+  let sessionTps = []
+
+  for (let i = 0; i < n; i++) {
+    const dt = parseUTC(datetimes[i])
+    const sid = getSessionId(dt, schedule)
+
+    if (sid !== lastSessionId) {
+      if (lastSessionId !== null && i > 0) {
+        sessionBreaks.add(i)
+      }
+      sessionTps = []
+      lastSessionId = sid
+    }
+
+    sessionTps.push(tp[i])
+    const count = sessionTps.length
+
+    let sum = 0
+    for (let j = 0; j < count; j++) sum += sessionTps[j]
+    const m = sum / count
+    mean[i] = m
+
+    if (count < 2) {
+      stdDev[i] = 0
+    } else {
+      let sqSum = 0
+      for (let j = 0; j < count; j++) {
+        const diff = sessionTps[j] - m
+        sqSum += diff * diff
+      }
+      stdDev[i] = Math.sqrt(sqSum / count)
+    }
+  }
+
+  return { mean, stdDev, sessionBreaks }
+}
+
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
-function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002, renkoPerBrickSizes = null, renkoPerReversalSizes = null, sessionSchedule = null }) {
+function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, smaeSettings = null, pwapSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002, renkoPerBrickSizes = null, renkoPerReversalSizes = null, sessionSchedule = null }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const indicatorPaneHeightRef = useRef(
@@ -553,6 +614,16 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   const ma1SeriesRef = useRef(null)
   const ma2SeriesRef = useRef(null)
   const ma3SeriesRef = useRef(null)
+  // SMAE refs: center + upper + lower for each envelope
+  const smae1CenterRef = useRef(null)
+  const smae1UpperRef = useRef(null)
+  const smae1LowerRef = useRef(null)
+  const smae2CenterRef = useRef(null)
+  const smae2UpperRef = useRef(null)
+  const smae2LowerRef = useRef(null)
+  // PWAP refs: mean + up to 4 upper + 4 lower bands
+  const pwapMeanRef = useRef(null)
+  const pwapBandRefs = useRef([null, null, null, null, null, null, null, null])
   const renkoDataRef = useRef(null)
   const indicatorStateSeriesRef = useRef(null)  // Line series for State dots (-3 to +3)
   const typeMarkersPrimitiveRef = useRef(null)  // Custom primitive for Type1/Type2 text markers
@@ -821,6 +892,14 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       ma1SeriesRef.current = null
       ma2SeriesRef.current = null
       ma3SeriesRef.current = null
+      smae1CenterRef.current = null
+      smae1UpperRef.current = null
+      smae1LowerRef.current = null
+      smae2CenterRef.current = null
+      smae2UpperRef.current = null
+      smae2LowerRef.current = null
+      pwapMeanRef.current = null
+      pwapBandRefs.current = [null, null, null, null, null, null, null, null]
       indicatorStateSeriesRef.current = null
       typeMarkersPrimitiveRef.current = null
       dayBoundaryPrimitiveRef.current = null
@@ -1103,6 +1182,236 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       updateMASeries(ma3SeriesRef, maSettings.ma3)
     }
   }, [chartData, renkoData, chartType, maSettings])
+
+  // Update SMAE series when data or settings change
+  useEffect(() => {
+    if (!chartRef.current || !seriesRef.current) return
+
+    const chart = chartRef.current
+    const dataSource = chartType === 'overlay' ? renkoData : chartData
+    if (!dataSource?.data?.close) return
+    if (chartType === 'overlay' && !chartData?.data?.datetime) return
+
+    const { close } = dataSource.data
+    const isTickData = chartData?.is_tick_data || false
+
+    const buildLineData = (values) => {
+      let data = values
+        .map((value, i) => {
+          if (value === null) return null
+          if (chartType === 'raw') {
+            if (isTickData) return { time: i, value }
+            const dt = dataSource.data.datetime[i]
+            if (dt) return { time: Math.floor(parseUTC(dt).getTime() / 1000), value }
+            return null
+          } else if (chartType === 'overlay') {
+            const dataIndex = dataSource.data.tick_index_close[i]
+            if (dataIndex === undefined || dataIndex === null) return null
+            if (isTickData) return { time: dataIndex, value }
+            const m1Datetime = chartData.data.datetime[dataIndex]
+            if (m1Datetime) return { time: Math.floor(parseUTC(m1Datetime).getTime() / 1000), value }
+            return null
+          } else {
+            return { time: i, value }
+          }
+        })
+        .filter(d => d !== null)
+
+      if (chartType === 'overlay' || (chartType === 'raw' && !isTickData)) {
+        const seenTimes = new Map()
+        for (const d of data) seenTimes.set(d.time, d.value)
+        data = Array.from(seenTimes, ([time, value]) => ({ time, value }))
+          .sort((a, b) => a.time - b.time)
+      }
+      return data
+    }
+
+    const updateLineSeries = (ref, enabled, values, color, lineWidth, lineStyle) => {
+      if (!enabled) {
+        if (ref.current) {
+          chart.removeSeries(ref.current)
+          ref.current = null
+        }
+        return
+      }
+      if (!ref.current) {
+        ref.current = chart.addSeries(LineSeries, {
+          color, lineWidth, lineStyle,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        })
+      } else {
+        ref.current.applyOptions({ color, lineWidth, lineStyle })
+      }
+      ref.current.setData(buildLineData(values))
+    }
+
+    // SMAE1
+    if (smaeSettings?.smae1) {
+      const s = smaeSettings.smae1
+      if (s.enabled) {
+        const { center, upper, lower } = calculateSMAE(close, s.period, s.deviation)
+        updateLineSeries(smae1CenterRef, s.showCenter, center, s.centerColor, s.lineWidth, s.lineStyle)
+        updateLineSeries(smae1UpperRef, true, upper, s.bandColor, s.bandLineWidth || 1, s.bandLineStyle)
+        updateLineSeries(smae1LowerRef, true, lower, s.bandColor, s.bandLineWidth || 1, s.bandLineStyle)
+      } else {
+        updateLineSeries(smae1CenterRef, false, [], '', 1, 0)
+        updateLineSeries(smae1UpperRef, false, [], '', 1, 0)
+        updateLineSeries(smae1LowerRef, false, [], '', 1, 0)
+      }
+    }
+
+    // SMAE2
+    if (smaeSettings?.smae2) {
+      const s = smaeSettings.smae2
+      if (s.enabled) {
+        const { center, upper, lower } = calculateSMAE(close, s.period, s.deviation)
+        updateLineSeries(smae2CenterRef, s.showCenter, center, s.centerColor, s.lineWidth, s.lineStyle)
+        updateLineSeries(smae2UpperRef, true, upper, s.bandColor, s.bandLineWidth || 1, s.bandLineStyle)
+        updateLineSeries(smae2LowerRef, true, lower, s.bandColor, s.bandLineWidth || 1, s.bandLineStyle)
+      } else {
+        updateLineSeries(smae2CenterRef, false, [], '', 1, 0)
+        updateLineSeries(smae2UpperRef, false, [], '', 1, 0)
+        updateLineSeries(smae2LowerRef, false, [], '', 1, 0)
+      }
+    }
+  }, [chartData, renkoData, chartType, smaeSettings])
+
+  // Update PWAP series when data or settings change
+  useEffect(() => {
+    if (!chartRef.current || !seriesRef.current) return
+
+    const chart = chartRef.current
+    const dataSource = chartType === 'overlay' ? renkoData : chartData
+    if (!dataSource?.data?.close) return
+    if (chartType === 'overlay' && !chartData?.data?.datetime) return
+
+    const { high, low, close, datetime } = dataSource.data
+    const isTickData = chartData?.is_tick_data || false
+
+    const buildLineData = (values) => {
+      let data = values
+        .map((value, i) => {
+          if (value === null) return null
+          if (chartType === 'raw') {
+            if (isTickData) return { time: i, value }
+            const dt = dataSource.data.datetime[i]
+            if (dt) return { time: Math.floor(parseUTC(dt).getTime() / 1000), value }
+            return null
+          } else if (chartType === 'overlay') {
+            const dataIndex = dataSource.data.tick_index_close[i]
+            if (dataIndex === undefined || dataIndex === null) return null
+            if (isTickData) return { time: dataIndex, value }
+            const m1Datetime = chartData.data.datetime[dataIndex]
+            if (m1Datetime) return { time: Math.floor(parseUTC(m1Datetime).getTime() / 1000), value }
+            return null
+          } else {
+            return { time: i, value }
+          }
+        })
+        .filter(d => d !== null)
+
+      if (chartType === 'overlay' || (chartType === 'raw' && !isTickData)) {
+        const seenTimes = new Map()
+        for (const d of data) seenTimes.set(d.time, d)
+        data = Array.from(seenTimes.values())
+          .sort((a, b) => a.time - b.time)
+      }
+      return data
+    }
+
+    // Remove or update mean series
+    if (!pwapSettings?.enabled) {
+      if (pwapMeanRef.current) {
+        chart.removeSeries(pwapMeanRef.current)
+        pwapMeanRef.current = null
+      }
+      for (let i = 0; i < 8; i++) {
+        if (pwapBandRefs.current[i]) {
+          chart.removeSeries(pwapBandRefs.current[i])
+          pwapBandRefs.current[i] = null
+        }
+      }
+      return
+    }
+
+    if (!high || !low || !datetime) return
+
+    const { mean, stdDev } = calculatePWAP(high, low, close, datetime, sessionSchedule)
+
+    // Mean line
+    if (!pwapMeanRef.current) {
+      pwapMeanRef.current = chart.addSeries(LineSeries, {
+        color: pwapSettings.meanColor,
+        lineWidth: pwapSettings.meanWidth,
+        lineStyle: pwapSettings.meanStyle,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      })
+    } else {
+      pwapMeanRef.current.applyOptions({
+        color: pwapSettings.meanColor,
+        lineWidth: pwapSettings.meanWidth,
+        lineStyle: pwapSettings.meanStyle,
+      })
+    }
+    pwapMeanRef.current.setData(buildLineData(mean))
+
+    // Band lines: sigmas array (up to 4)
+    const sigmas = pwapSettings.sigmas || [1.0, 2.0, 2.5, 3.0]
+    for (let s = 0; s < 4; s++) {
+      const upperIdx = s
+      const lowerIdx = s + 4
+      const sigma = sigmas[s]
+
+      if (sigma <= 0) {
+        if (pwapBandRefs.current[upperIdx]) {
+          chart.removeSeries(pwapBandRefs.current[upperIdx])
+          pwapBandRefs.current[upperIdx] = null
+        }
+        if (pwapBandRefs.current[lowerIdx]) {
+          chart.removeSeries(pwapBandRefs.current[lowerIdx])
+          pwapBandRefs.current[lowerIdx] = null
+        }
+        continue
+      }
+
+      const upperValues = mean.map((m, i) => m === null ? null : m + stdDev[i] * sigma)
+      const lowerValues = mean.map((m, i) => m === null ? null : m - stdDev[i] * sigma)
+
+      // Upper band
+      if (!pwapBandRefs.current[upperIdx]) {
+        pwapBandRefs.current[upperIdx] = chart.addSeries(LineSeries, {
+          color: pwapSettings.bandColor,
+          lineWidth: pwapSettings.bandWidth,
+          lineStyle: pwapSettings.bandStyle,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        })
+      } else {
+        pwapBandRefs.current[upperIdx].applyOptions({
+          color: pwapSettings.bandColor,
+          lineWidth: pwapSettings.bandWidth,
+          lineStyle: pwapSettings.bandStyle,
+        })
+      }
+      pwapBandRefs.current[upperIdx].setData(buildLineData(upperValues))
+
+      // Lower band
+      if (!pwapBandRefs.current[lowerIdx]) {
+        pwapBandRefs.current[lowerIdx] = chart.addSeries(LineSeries, {
+          color: pwapSettings.bandColor,
+          lineWidth: pwapSettings.bandWidth,
+          lineStyle: pwapSettings.bandStyle,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        })
+      } else {
+        pwapBandRefs.current[lowerIdx].applyOptions({
+          color: pwapSettings.bandColor,
+          lineWidth: pwapSettings.bandWidth,
+          lineStyle: pwapSettings.bandStyle,
+        })
+      }
+      pwapBandRefs.current[lowerIdx].setData(buildLineData(lowerValues))
+    }
+  }, [chartData, renkoData, chartType, pwapSettings, sessionSchedule])
 
   // State & Type Indicator Pane (Renko mode only)
   useEffect(() => {

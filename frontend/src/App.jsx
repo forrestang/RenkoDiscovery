@@ -135,6 +135,28 @@ function App() {
       ma3: { enabled: false, type: 'sma', period: 200, color: '#a855f7', lineWidth: 2, lineStyle: 0 }
     }
   })
+  const [smaeSettings, setSmaeSettings] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}smaeSettings`)
+    if (saved) return JSON.parse(saved)
+    return {
+      smae1: { enabled: false, period: 20, deviation: 1.0, showCenter: true,
+               centerColor: '#22d3ee', bandColor: '#22d3ee',
+               lineWidth: 1, lineStyle: 0, bandLineWidth: 1, bandLineStyle: 1 },
+      smae2: { enabled: false, period: 50, deviation: 1.0, showCenter: true,
+               centerColor: '#fb923c', bandColor: '#fb923c',
+               lineWidth: 1, lineStyle: 0, bandLineWidth: 1, bandLineStyle: 1 },
+    }
+  })
+  const [pwapSettings, setPwapSettings] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}pwapSettings`)
+    if (saved) return JSON.parse(saved)
+    return {
+      enabled: false,
+      sigmas: [1.0, 2.0, 2.5, 3.0],
+      meanColor: '#f472b6', meanWidth: 2, meanStyle: 0,
+      bandColor: '#f472b6', bandWidth: 1, bandStyle: 1,
+    }
+  })
   const [compressionFactor, setCompressionFactor] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}compressionFactor`)
     return saved ? parseFloat(saved) : 1.0
@@ -228,6 +250,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}maSettings`, JSON.stringify(maSettings))
   }, [maSettings])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}smaeSettings`, JSON.stringify(smaeSettings))
+  }, [smaeSettings])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}pwapSettings`, JSON.stringify(pwapSettings))
+  }, [pwapSettings])
 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}compressionFactor`, compressionFactor.toString())
@@ -670,6 +700,11 @@ function App() {
           ma1_period: statsConfig.ma1Period,
           ma2_period: statsConfig.ma2Period,
           ma3_period: statsConfig.ma3Period,
+          smae1_period: statsConfig.smae1Period ?? 20,
+          smae1_deviation: statsConfig.smae1Deviation ?? 1.0,
+          smae2_period: statsConfig.smae2Period ?? 50,
+          smae2_deviation: statsConfig.smae2Deviation ?? 1.0,
+          pwap_sigmas: statsConfig.pwapSigmas ?? [1.0, 2.0, 2.5, 3.0],
           renko_data: renkoData.data,
           session_schedule: sessionSchedule
         })
@@ -979,7 +1014,7 @@ function App() {
             </select>
           )}
           {activeInstrument && (
-            <MAControls settings={maSettings} onChange={setMASettings} />
+            <MAControls settings={maSettings} onChange={setMASettings} smaeSettings={smaeSettings} onSmaeChange={setSmaeSettings} pwapSettings={pwapSettings} onPwapChange={setPwapSettings} />
           )}
         </div>
       </header>
@@ -1034,6 +1069,8 @@ function App() {
             isRunningStats={isRunningStats}
             renkoSettings={renkoSettings}
             maSettings={maSettings}
+            smaeSettings={smaeSettings}
+            pwapSettings={pwapSettings}
             // Stats files
             statsFiles={statsFiles}
             selectedStatsFile={selectedStatsFile}
@@ -1071,6 +1108,8 @@ function App() {
             mlError={mlError}
             apiBase={apiBase}
             onDirectGenerate={handleDirectGenerate}
+            smaeSettings={smaeSettings}
+            pwapSettings={pwapSettings}
           />
 
           {!sidebarCollapsed && (
@@ -1102,6 +1141,8 @@ function App() {
               activeInstrument={activeInstrument}
               pricePrecision={pricePrecision}
               maSettings={maSettings}
+              smaeSettings={smaeSettings}
+              pwapSettings={pwapSettings}
               compressionFactor={compressionFactor}
               showIndicatorPane={showIndicatorPane}
               brickSize={renkoSettings.brickSize}

@@ -46,7 +46,7 @@
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  min-width: 440px;
+  min-width: 480px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -233,4 +233,84 @@
 .ma-color-picker::-webkit-color-swatch {
   border: none;
   border-radius: 2px;
+}
+
+/* Section dividers */
+.ma-section-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--space-2) 0;
+}
+
+.ma-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-bottom: var(--space-1);
+}
+
+/* SMAE rows */
+.ma-smae-header {
+  grid-template-columns: 48px 54px 54px 30px 34px 34px 50px 62px;
+}
+
+.ma-smae-row {
+  display: grid;
+  grid-template-columns: 48px 54px 54px 30px 34px 34px 50px 62px;
+  gap: var(--space-1);
+  align-items: center;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ma-center-toggle {
+  gap: 2px;
+}
+
+.ma-center-toggle .ma-label {
+  font-size: 10px;
+}
+
+.ma-deviation-input input {
+  width: 100%;
+}
+
+/* PWAP section */
+.ma-pwap-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-1);
+}
+
+.ma-pwap-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.ma-pwap-sigmas {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ma-sigma-input {
+  width: 48px;
+}
+
+.ma-sigma-input input {
+  width: 100%;
+}
+
+.ma-pwap-style-row {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ma-pwap-sublabel {
+  font-size: 10px;
+  color: var(--text-muted);
+  min-width: 28px;
 }

@@ -87,7 +87,9 @@ function Sidebar({
   onDeleteAllMLModels,
   mlError,
   apiBase,
-  onDirectGenerate
+  onDirectGenerate,
+  smaeSettings,
+  pwapSettings
 }) {
   const [isEditingDir, setIsEditingDir] = useState(false)
   const [dirInput, setDirInput] = useState(workingDir)
@@ -302,13 +304,18 @@ function Sidebar({
         ma2_period: j.ma2Period,
         ma3_period: j.ma3Period,
         chop_period: j.chopPeriod,
+        smae1_period: j.smae1Period ?? smaeSettings?.smae1?.period ?? 20,
+        smae1_deviation: j.smae1Deviation ?? smaeSettings?.smae1?.deviation ?? 1.0,
+        smae2_period: j.smae2Period ?? smaeSettings?.smae2?.period ?? 50,
+        smae2_deviation: j.smae2Deviation ?? smaeSettings?.smae2?.deviation ?? 1.0,
+        pwap_sigmas: j.pwapSigmas ?? pwapSettings?.sigmas ?? [1.0, 2.0, 2.5, 3.0],
       }))
       const results = await onDirectGenerate(payload)
       setBypassResults(results)
     } finally {
       setIsBypassing(false)
     }
-  }, [bypassJobs, onDirectGenerate, autoBypassFilename])
+  }, [bypassJobs, onDirectGenerate, autoBypassFilename, smaeSettings, pwapSettings])
 
   useEffect(() => {
     if (!dragging) return
@@ -949,7 +956,12 @@ function Sidebar({
                     wickMode: renkoSettings?.wickMode,
                     ma1Period: maSettings?.ma1?.period,
                     ma2Period: maSettings?.ma2?.period,
-                    ma3Period: maSettings?.ma3?.period
+                    ma3Period: maSettings?.ma3?.period,
+                    smae1Period: smaeSettings?.smae1?.period ?? 20,
+                    smae1Deviation: smaeSettings?.smae1?.deviation ?? 1.0,
+                    smae2Period: smaeSettings?.smae2?.period ?? 50,
+                    smae2Deviation: smaeSettings?.smae2?.deviation ?? 1.0,
+                    pwapSigmas: pwapSettings?.sigmas ?? [1.0, 2.0, 2.5, 3.0]
                   })}
                   disabled={isRunningStats}
                 >

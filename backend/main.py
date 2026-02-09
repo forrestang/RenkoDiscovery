@@ -101,6 +101,11 @@ class StatsRequest(BaseModel):
     ma1_period: int = 20
     ma2_period: int = 50
     ma3_period: int = 200
+    smae1_period: int = 20
+    smae1_deviation: float = 1.0
+    smae2_period: int = 50
+    smae2_deviation: float = 1.0
+    pwap_sigmas: list[float] = [1.0, 2.0, 2.5, 3.0]
     renko_data: dict  # Contains datetime, open, high, low, close arrays
     session_schedule: Optional[dict] = None  # Per-day schedule: {"monday": {"hour": 22, "minute": 0}, ...}
 
@@ -152,6 +157,11 @@ class DirectGenerateJob(BaseModel):
     ma2_period: int = 50
     ma3_period: int = 200
     chop_period: int = 20
+    smae1_period: int = 20
+    smae1_deviation: float = 1.0
+    smae2_period: int = 50
+    smae2_deviation: float = 1.0
+    pwap_sigmas: list[float] = [1.0, 2.0, 2.5, 3.0]
     session_schedule: Optional[dict] = None
 
 
@@ -173,6 +183,11 @@ class BypassTemplate(BaseModel):
     ma2_period: int = 50
     ma3_period: int = 200
     chop_period: int = 20
+    smae1_period: int = 20
+    smae1_deviation: float = 1.0
+    smae2_period: int = 50
+    smae2_deviation: float = 1.0
+    pwap_sigmas: list[float] = [1.0, 2.0, 2.5, 3.0]
     session_schedule: Optional[dict] = None
 
 
@@ -1499,11 +1514,15 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     }
 
 
-def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2_period, ma3_period, chop_period):
+def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2_period, ma3_period, chop_period,
+                           smae1_period=20, smae1_deviation=1.0, smae2_period=50, smae2_deviation=1.0,
+                           pwap_sigmas=None):
     """Compute all stats/ML columns on a renko DataFrame.
     df: must already have datetime, OHLC, brick_size, reversal_size, settings columns.
     raw_df: raw M1 OHLC (with 'datetime' column) for ADR computation.
     Returns enriched df with all columns, trimmed. Includes session_date and EMA price columns."""
+    if pwap_sigmas is None:
+        pwap_sigmas = [1.0, 2.0, 2.5, 3.0]
     adr_series = compute_adr_lookup(raw_df, adr_period, session_sched)
 
     # Map currentADR back to renko bars based on their session date
@@ -1519,6 +1538,39 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
         ema_values = calculate_ema(df['close'], period)
         ema_columns[period] = ema_values
         df[f'EMA{idx}_Price'] = ema_values.round(5)
+
+    # Calculate SMAE (Simple Moving Average Envelope) columns
+    for idx, (period, deviation) in enumerate([(smae1_period, smae1_deviation), (smae2_period, smae2_deviation)], start=1):
+        sma = df['close'].rolling(window=period).mean()
+        df[f'SMAE{idx}_Center'] = sma.round(5)
+        df[f'SMAE{idx}_Upper'] = (sma * (1 + deviation / 100)).round(5)
+        df[f'SMAE{idx}_Lower'] = (sma * (1 - deviation / 100)).round(5)
+
+    # Calculate PWAP (Price-Weighted Average Price) columns per session
+    tp = (df['high'] + df['low'] + df['close']) / 3
+    _tp_vals = tp.values
+    _sess_vals = df['session_date'].values
+    _pwap_mean = np.empty(len(df))
+    _pwap_std = np.empty(len(df))
+    _last_sess = None
+    _sess_tps = []
+    for _i in range(len(df)):
+        if _sess_vals[_i] != _last_sess:
+            _sess_tps = []
+            _last_sess = _sess_vals[_i]
+        _sess_tps.append(_tp_vals[_i])
+        _count = len(_sess_tps)
+        _m = sum(_sess_tps) / _count
+        _pwap_mean[_i] = _m
+        if _count < 2:
+            _pwap_std[_i] = 0.0
+        else:
+            _sq_sum = sum((_v - _m) ** 2 for _v in _sess_tps)
+            _pwap_std[_i] = (_sq_sum / _count) ** 0.5
+    df['PWAP_Mean'] = np.round(_pwap_mean, 5)
+    for _si, _sigma in enumerate(pwap_sigmas, start=1):
+        df[f'PWAP_Upper{_si}'] = np.round(_pwap_mean + _pwap_std * _sigma, 5)
+        df[f'PWAP_Lower{_si}'] = np.round(_pwap_mean - _pwap_std * _sigma, 5)
 
     # Calculate EMA distance columns (derived data, right side)
     for period in ma_periods:
@@ -1774,7 +1826,7 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
         df[f'REAL_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
 
     # LEFT CUT: first row where all warmup columns are valid
-    left_cols = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods]
+    left_cols = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods] + ['SMAE1_Center', 'SMAE2_Center']
     left_valid = df[left_cols].notna().all(axis=1)
     left_cut = left_valid.idxmax()
 
@@ -1840,13 +1892,23 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df = compute_stats_columns(
         df, raw_df, session_sched,
         request.adr_period, request.ma1_period, request.ma2_period,
-        request.ma3_period, request.chop_period
+        request.ma3_period, request.chop_period,
+        request.smae1_period, request.smae1_deviation,
+        request.smae2_period, request.smae2_deviation,
+        request.pwap_sigmas
     )
 
-    # Write to parquet with session_schedule in metadata
+    # Write to parquet with session_schedule and indicator params in metadata
     table = pa.Table.from_pandas(df, preserve_index=False)
     existing_meta = table.schema.metadata or {}
-    extra_meta = {b'session_schedule': json.dumps(session_sched).encode('utf-8')}
+    extra_meta = {
+        b'session_schedule': json.dumps(session_sched).encode('utf-8'),
+        b'smae_params': json.dumps({
+            'smae1': {'period': request.smae1_period, 'deviation': request.smae1_deviation},
+            'smae2': {'period': request.smae2_period, 'deviation': request.smae2_deviation},
+        }).encode('utf-8'),
+        b'pwap_sigmas': json.dumps(request.pwap_sigmas).encode('utf-8'),
+    }
     table = table.replace_schema_metadata({**existing_meta, **extra_meta})
     pq.write_table(table, output_path)
 
@@ -2036,15 +2098,25 @@ def direct_generate(request: DirectGenerateRequest):
             stats_df = compute_stats_columns(
                 stats_df, raw_df, session_sched,
                 job.adr_period, job.ma1_period, job.ma2_period,
-                job.ma3_period, job.chop_period
+                job.ma3_period, job.chop_period,
+                job.smae1_period, job.smae1_deviation,
+                job.smae2_period, job.smae2_deviation,
+                job.pwap_sigmas
             )
 
-            # Save parquet with session_schedule in metadata
+            # Save parquet with session_schedule and indicator params in metadata
             fname = job.filename.replace('.parquet', '')
             output_path = stats_dir / f"{fname}.parquet"
             table = pa.Table.from_pandas(stats_df, preserve_index=False)
             existing_meta = table.schema.metadata or {}
-            extra_meta = {b'session_schedule': json.dumps(session_sched).encode('utf-8')}
+            extra_meta = {
+                b'session_schedule': json.dumps(session_sched).encode('utf-8'),
+                b'smae_params': json.dumps({
+                    'smae1': {'period': job.smae1_period, 'deviation': job.smae1_deviation},
+                    'smae2': {'period': job.smae2_period, 'deviation': job.smae2_deviation},
+                }).encode('utf-8'),
+                b'pwap_sigmas': json.dumps(job.pwap_sigmas).encode('utf-8'),
+            }
             table = table.replace_schema_metadata({**existing_meta, **extra_meta})
             pq.write_table(table, output_path)
 
