@@ -925,6 +925,7 @@ function App() {
           <span className="header-stats-filename mono">{statsFilename}</span>
         )}
         <div className="header-status">
+          {activeTab !== 'stats' && (<>
           {activeInstrument && (
             <span className="active-instrument mono">{activeInstrument}</span>
           )}
@@ -1019,6 +1020,7 @@ function App() {
               ))}
             </select>
           )}
+          </>)}
         </div>
       </header>
 
