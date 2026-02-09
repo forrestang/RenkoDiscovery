@@ -86,14 +86,18 @@
 }
 
 /* Inline Settings */
-.settings-inline {
-  display: grid;
-  grid-template-columns: repeat(6, max-content);
-  gap: 2px 12px;
+.settings-inline-wrap {
+  display: flex;
+  flex-direction: column;
   margin-left: auto;
   flex-shrink: 0;
+  gap: 2px;
+}
+
+.settings-inline {
+  display: flex;
+  gap: 12px;
   line-height: 1;
-  justify-items: start;
 }
 
 .settings-inline-item {

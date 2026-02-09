@@ -1581,33 +1581,37 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
           >Backtest</button>
         </div>
         {settings && (
-          <div className="settings-inline">
-            <span className="settings-inline-item"><span className="settings-inline-label">Brick:</span><span className="settings-inline-val">{settings.brickSize}</span></span>
-            <span className="settings-inline-item"><span className="settings-inline-label">Rev:</span><span className="settings-inline-val">{settings.reversalSize}</span></span>
-            <span className="settings-inline-item"><span className="settings-inline-label">Wicks:</span><span className="settings-inline-val">{settings.wickMode}</span></span>
-            <span className="settings-inline-item"><span className="settings-inline-label">ADR:</span><span className="settings-inline-val">{settings.adrPeriod}</span></span>
-            <span className="settings-inline-item"><span className="settings-inline-label">Chop:</span><span className="settings-inline-val">{settings.chopPeriod}</span></span>
-            <span className="settings-inline-item"><span className="settings-inline-label">MA1:</span><span className="settings-inline-val">{settings.ma1Period}</span></span>
-            <span className="settings-inline-item"><span className="settings-inline-label">MA2:</span><span className="settings-inline-val">{settings.ma2Period}</span></span>
-            <span className="settings-inline-item"><span className="settings-inline-label">MA3:</span><span className="settings-inline-val">{settings.ma3Period}</span></span>
-            {settings.smae1Period != null && (
-              <span className="settings-inline-item">
-                <span className="settings-inline-label">ENV1:</span>
-                <span className="settings-inline-val">{settings.smae1Period}/{settings.smae1Deviation}</span>
-              </span>
-            )}
-            {settings.smae2Period != null && (
-              <span className="settings-inline-item">
-                <span className="settings-inline-label">ENV2:</span>
-                <span className="settings-inline-val">{settings.smae2Period}/{settings.smae2Deviation}</span>
-              </span>
-            )}
-            {settings.pwapSigmas != null && (
-              <span className="settings-inline-item">
-                <span className="settings-inline-label">PWAP:</span>
-                <span className="settings-inline-val">{settings.pwapSigmas.join(', ')}σ</span>
-              </span>
-            )}
+          <div className="settings-inline-wrap">
+            <div className="settings-inline">
+              <span className="settings-inline-item"><span className="settings-inline-label">Brick:</span><span className="settings-inline-val">{settings.brickSize}</span></span>
+              <span className="settings-inline-item"><span className="settings-inline-label">Rev:</span><span className="settings-inline-val">{settings.reversalSize}</span></span>
+              {settings.smae1Period != null && (
+                <span className="settings-inline-item">
+                  <span className="settings-inline-label">ENV1:</span>
+                  <span className="settings-inline-val">{settings.smae1Period}/{settings.smae1Deviation}</span>
+                </span>
+              )}
+              {settings.smae2Period != null && (
+                <span className="settings-inline-item">
+                  <span className="settings-inline-label">ENV2:</span>
+                  <span className="settings-inline-val">{settings.smae2Period}/{settings.smae2Deviation}</span>
+                </span>
+              )}
+              {settings.pwapSigmas != null && (
+                <span className="settings-inline-item">
+                  <span className="settings-inline-label">PWAP:</span>
+                  <span className="settings-inline-val">{settings.pwapSigmas.join(',')}σ</span>
+                </span>
+              )}
+            </div>
+            <div className="settings-inline">
+              <span className="settings-inline-item"><span className="settings-inline-label">Wicks:</span><span className="settings-inline-val">{settings.wickMode}</span></span>
+              <span className="settings-inline-item"><span className="settings-inline-label">ADR:</span><span className="settings-inline-val">{settings.adrPeriod}</span></span>
+              <span className="settings-inline-item"><span className="settings-inline-label">Chop:</span><span className="settings-inline-val">{settings.chopPeriod}</span></span>
+              <span className="settings-inline-item"><span className="settings-inline-label">MA1:</span><span className="settings-inline-val">{settings.ma1Period}</span></span>
+              <span className="settings-inline-item"><span className="settings-inline-label">MA2:</span><span className="settings-inline-val">{settings.ma2Period}</span></span>
+              <span className="settings-inline-item"><span className="settings-inline-label">MA3:</span><span className="settings-inline-val">{settings.ma3Period}</span></span>
+            </div>
           </div>
         )}
       </div>
