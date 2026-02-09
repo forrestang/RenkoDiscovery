@@ -475,6 +475,7 @@ def parse_csv_file(filepath: str, data_format: str = "MT4", interval_type: str =
             df['datetime'] = df['datetime'].dt.tz_localize(EET).dt.tz_convert('UTC')
     else:
         # MT4 format: semicolon or comma delimited, no header (always minute data)
+        # MT4 data is in EST (UTC-5, no daylight savings) — must convert to UTC
         df = pd.read_csv(
             filepath,
             sep=fmt['delimiter'],
@@ -486,7 +487,7 @@ def parse_csv_file(filepath: str, data_format: str = "MT4", interval_type: str =
         if ' ' in sample_dt and '.' not in sample_dt.split(' ')[0]:
             # Format: "20220102 170300" (YYYYMMDD HHMMSS)
             df['datetime'] = pd.to_datetime(df['datetime'], format='%Y%m%d %H%M%S')
-            df['datetime'] = df['datetime'].dt.tz_localize('UTC')
+            df['datetime'] = df['datetime'].dt.tz_localize('EST').dt.tz_convert('UTC')
         elif '.' in sample_dt:
             # Format: "2012.02.01,00:00" (YYYY.MM.DD with separate time column)
             df = pd.read_csv(
@@ -496,7 +497,7 @@ def parse_csv_file(filepath: str, data_format: str = "MT4", interval_type: str =
                 names=['date', 'time', 'open', 'high', 'low', 'close', 'volume'],
             )
             df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'], format='%Y.%m.%d %H:%M')
-            df['datetime'] = df['datetime'].dt.tz_localize('UTC')
+            df['datetime'] = df['datetime'].dt.tz_localize('EST').dt.tz_convert('UTC')
             df = df.drop(columns=['date', 'time'])
 
     return df
@@ -1502,21 +1503,26 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
     """Compute all stats/ML columns on a renko DataFrame.
     df: must already have datetime, OHLC, brick_size, reversal_size, settings columns.
     raw_df: raw M1 OHLC (with 'datetime' column) for ADR computation.
-    Returns enriched df with all columns, trimmed, utc_date dropped."""
+    Returns enriched df with all columns, trimmed. Includes session_date and EMA price columns."""
     adr_series = compute_adr_lookup(raw_df, adr_period, session_sched)
 
     # Map currentADR back to renko bars based on their session date
     df['datetime'] = pd.to_datetime(df['datetime'])
-    df['utc_date'] = df['datetime'].apply(lambda dt: _get_session_date(dt, session_sched))
-    df['currentADR'] = df['utc_date'].map(adr_series).round(5)
+    df['session_date'] = df['datetime'].apply(lambda dt: _get_session_date(dt, session_sched))
+    df['currentADR'] = df['session_date'].map(adr_series).round(5)
 
-    # Calculate EMA values and distances for each MA period
+    # Calculate EMA values and store price columns (metadata, grouped left)
     ma_periods = [ma1_period, ma2_period, ma3_period]
     ema_columns = {}
 
-    for period in ma_periods:
+    for idx, period in enumerate(ma_periods, start=1):
         ema_values = calculate_ema(df['close'], period)
-        ema_columns[period] = ema_values  # Store for State calculation
+        ema_columns[period] = ema_values
+        df[f'EMA{idx}_Price'] = ema_values.round(5)
+
+    # Calculate EMA distance columns (derived data, right side)
+    for period in ma_periods:
+        ema_values = ema_columns[period]
         df[f'EMA_rawDistance({period})'] = (df['close'] - ema_values).round(5)
         df[f'EMA_adrDistance({period})'] = ((df['close'] - ema_values) / df['currentADR']).round(5)
         df[f'EMA_rrDistance({period})'] = ((df['close'] - ema_values) / df['reversal_size']).round(5)
@@ -1778,7 +1784,6 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
     right_cut = right_valid[::-1].idxmax()
 
     df = df.loc[left_cut:right_cut].reset_index(drop=True)
-    df = df.drop(columns=['utc_date'])
 
     return df
 
@@ -1838,8 +1843,12 @@ async def generate_stats(instrument: str, request: StatsRequest):
         request.ma3_period, request.chop_period
     )
 
-    # Write to parquet
-    df.to_parquet(output_path, engine='pyarrow', index=False)
+    # Write to parquet with session_schedule in metadata
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    existing_meta = table.schema.metadata or {}
+    extra_meta = {b'session_schedule': json.dumps(session_sched).encode('utf-8')}
+    table = table.replace_schema_metadata({**existing_meta, **extra_meta})
+    pq.write_table(table, output_path)
 
     return {
         "status": "success",
@@ -2030,10 +2039,14 @@ def direct_generate(request: DirectGenerateRequest):
                 job.ma3_period, job.chop_period
             )
 
-            # Save parquet
+            # Save parquet with session_schedule in metadata
             fname = job.filename.replace('.parquet', '')
             output_path = stats_dir / f"{fname}.parquet"
-            stats_df.to_parquet(output_path, engine='pyarrow', index=False)
+            table = pa.Table.from_pandas(stats_df, preserve_index=False)
+            existing_meta = table.schema.metadata or {}
+            extra_meta = {b'session_schedule': json.dumps(session_sched).encode('utf-8')}
+            table = table.replace_schema_metadata({**existing_meta, **extra_meta})
+            pq.write_table(table, output_path)
 
             results.append({
                 "instrument": job.instrument,
@@ -2121,7 +2134,16 @@ def get_parquet_stats(filepath: str):
         raise HTTPException(status_code=404, detail=f"Parquet file not found: {filepath}")
 
     try:
-        df = pd.read_parquet(parquet_path)
+        pf = pq.read_table(parquet_path)
+        df = pf.to_pandas()
+        # Extract session_schedule from parquet metadata if present
+        parquet_meta = pf.schema.metadata or {}
+        session_schedule = None
+        if b'session_schedule' in parquet_meta:
+            try:
+                session_schedule = json.loads(parquet_meta[b'session_schedule'].decode('utf-8'))
+            except Exception:
+                pass
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read parquet: {str(e)}")
 
@@ -2734,7 +2756,7 @@ def get_parquet_stats(filepath: str):
         if src_col in df.columns:
             # Convert datetime columns to strings before serialization
             if pd.api.types.is_datetime64_any_dtype(df[src_col]):
-                bar_data[dest_key] = df[src_col].astype(str).tolist()
+                bar_data[dest_key] = df[src_col].dt.strftime('%Y-%m-%d %H:%M:%S').tolist()
             else:
                 arr = df[src_col].tolist()
                 # Convert NaN to None for JSON serialization
@@ -2750,6 +2772,14 @@ def get_parquet_stats(filepath: str):
         if rr_col in df.columns:
             arr = df[rr_col].tolist()
             bar_data[f'emaRr{period}'] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
+
+    # Compute session break indices from session_date column
+    session_breaks = []
+    if 'session_date' in df.columns:
+        sd = df['session_date']
+        for i in range(1, len(sd)):
+            if sd.iloc[i] != sd.iloc[i - 1]:
+                session_breaks.append(i)
 
     result = {
         "totalBars": total_bars,
@@ -2785,7 +2815,9 @@ def get_parquet_stats(filepath: str):
         "stateConbarsHeatmap": state_conbars_heatmap,
         "stateTransitionMatrix": state_transition_matrix,
         "barData": bar_data,
-        "maPeriods": ma_periods
+        "maPeriods": ma_periods,
+        "sessionSchedule": session_schedule,
+        "sessionBreaks": session_breaks
     }
 
     # Serialize with allow_nan=True, then replace NaN/Infinity with null
@@ -2808,13 +2840,14 @@ def playground_signals(request: PlaygroundRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read parquet: {str(e)}")
 
-    # Add MA1/MA2/MA3 value columns and previous-bar OHLC columns for query expressions
+    # Add MA1/MA2/MA3 value columns from stored EMA prices and previous-bar OHLC columns for query expressions
     ma1_period = int(df['ma1_period'].iloc[0]) if 'ma1_period' in df.columns else 20
     ma2_period = int(df['ma2_period'].iloc[0]) if 'ma2_period' in df.columns else 50
     ma3_period = int(df['ma3_period'].iloc[0]) if 'ma3_period' in df.columns else 200
 
-    for label, period in [('MA1', ma1_period), ('MA2', ma2_period), ('MA3', ma3_period)]:
-        df[label] = calculate_ema(df['close'], period).round(5)
+    df['MA1'] = df['EMA1_Price']
+    df['MA2'] = df['EMA2_Price']
+    df['MA3'] = df['EMA3_Price']
 
     for col in ['open', 'high', 'low', 'close', 'direction']:
         df[f'{col}1'] = df[col].shift(1)
@@ -2967,13 +3000,10 @@ def backtest_signals(request: BacktestRequest):
     if len(df) == 0:
         raise HTTPException(status_code=400, detail="Parquet file contains no data")
 
-    # Add MA1/MA2/MA3 value columns and previous-bar OHLC columns for query expressions
-    bt_ma1 = int(df['ma1_period'].iloc[0]) if 'ma1_period' in df.columns else 20
-    bt_ma2 = int(df['ma2_period'].iloc[0]) if 'ma2_period' in df.columns else 50
-    bt_ma3 = int(df['ma3_period'].iloc[0]) if 'ma3_period' in df.columns else 200
-
-    for label, period in [('MA1', bt_ma1), ('MA2', bt_ma2), ('MA3', bt_ma3)]:
-        df[label] = calculate_ema(df['close'], period).round(5)
+    # Add MA1/MA2/MA3 value columns from stored EMA prices and previous-bar OHLC columns for query expressions
+    df['MA1'] = df['EMA1_Price']
+    df['MA2'] = df['EMA2_Price']
+    df['MA3'] = df['EMA3_Price']
 
     for col in ['open', 'high', 'low', 'close', 'direction']:
         df[f'{col}1'] = df[col].shift(1)
@@ -2992,20 +3022,16 @@ def backtest_signals(request: BacktestRequest):
 
     # Pre-compute datetime strings for results
     if 'datetime' in df.columns:
-        dt_arr = df['datetime'].astype(str).values
+        dt_arr = df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S').values
     else:
         dt_arr = np.array(['' for _ in range(n)])
 
     # Pre-compute EMA if needed for ma_trail target
     ema_values = None
     if request.target_type == 'ma_trail':
-        ma_col_map = {1: 'ma1_period', 2: 'ma2_period', 3: 'ma3_period'}
-        period_col = ma_col_map.get(request.target_ma)
-        if period_col and period_col in df.columns:
-            period = int(df[period_col].iloc[0])
-        else:
-            period = [20, 50, 200][request.target_ma - 1]
-        ema_values = calculate_ema(pd.Series(close_arr), period).values
+        ema_col_map = {1: 'EMA1_Price', 2: 'EMA2_Price', 3: 'EMA3_Price'}
+        ema_col = ema_col_map.get(request.target_ma, 'EMA1_Price')
+        ema_values = df[ema_col].values
 
     signals_result = {}
     errors_result = {}
@@ -3191,8 +3217,9 @@ def backtest_signals(request: BacktestRequest):
 
         # Compute summary stats
         count = len(trades)
-        wins = [t for t in trades if t['outcome'] == 'target' and t['result'] > 0]
-        losses = [t for t in trades if t['outcome'] == 'stop']
+        closed = [t for t in trades if t['outcome'] != 'open']
+        wins = [t for t in closed if t['result'] > 0]
+        losses = [t for t in closed if t['result'] <= 0]
         open_trades = [t for t in trades if t['outcome'] == 'open']
         win_results = [t['result'] for t in wins]
         loss_results = [t['result'] for t in losses]
@@ -3424,13 +3451,10 @@ def train_ml_model(req: MLTrainRequest):
             yield _sse_event({"phase": "error", "message": f"Failed to read parquet: {str(e)}"})
             return
 
-        # Add MA1/MA2/MA3 value columns and previous-bar OHLC columns for query expressions
-        ml_ma1 = int(df['ma1_period'].iloc[0]) if 'ma1_period' in df.columns else 20
-        ml_ma2 = int(df['ma2_period'].iloc[0]) if 'ma2_period' in df.columns else 50
-        ml_ma3 = int(df['ma3_period'].iloc[0]) if 'ma3_period' in df.columns else 200
-
-        for label, period in [('MA1', ml_ma1), ('MA2', ml_ma2), ('MA3', ml_ma3)]:
-            df[label] = calculate_ema(df['close'], period).round(5)
+        # Add MA1/MA2/MA3 value columns from stored EMA prices and previous-bar OHLC columns for query expressions
+        df['MA1'] = df['EMA1_Price']
+        df['MA2'] = df['EMA2_Price']
+        df['MA3'] = df['EMA3_Price']
 
         for col in ['open', 'high', 'low', 'close', 'direction']:
             df[f'{col}1'] = df[col].shift(1)

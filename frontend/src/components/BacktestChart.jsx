@@ -3,22 +3,29 @@ import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+function parseUTC(dtStr) {
+  if (!dtStr.endsWith('Z') && !dtStr.includes('+') && !dtStr.includes('-', 10)) {
+    dtStr = dtStr.replace(' ', 'T') + 'Z'
+  }
+  return new Date(dtStr)
+}
+
 function formatTimestamp(isoString) {
   if (!isoString) return null
-  const date = new Date(isoString)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hours = String(date.getHours()).padStart(2, '0')
-  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const date = parseUTC(isoString)
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  const hours = String(date.getUTCHours()).padStart(2, '0')
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0')
   return `${year}-${month}-${day} ${hours}:${minutes}`
 }
 
 function formatTickMark(isoString) {
   if (!isoString) return null
-  const date = new Date(isoString)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
+  const date = parseUTC(isoString)
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
   return `${month}-${day}`
 }
 
@@ -256,7 +263,88 @@ const STORAGE_PREFIX = 'RenkoDiscovery_'
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, showIndicator, focusBar, lineWeight, lineStyle, markerSize }) {
+// Custom primitive for drawing vertical grid lines at session boundaries
+class DayBoundaryGridPrimitive {
+  constructor() {
+    this._boundaries = []
+    this._chart = null
+    this._series = null
+  }
+
+  setBoundaries(boundaries) {
+    this._boundaries = boundaries || []
+  }
+
+  attached(param) {
+    this._chart = param.chart
+    this._series = param.series
+  }
+
+  detached() {
+    this._chart = null
+    this._series = null
+  }
+
+  updateAllViews() {}
+
+  paneViews() {
+    return [new DayBoundaryGridPaneView(this)]
+  }
+}
+
+class DayBoundaryGridPaneView {
+  constructor(source) {
+    this._source = source
+  }
+
+  update() {}
+
+  renderer() {
+    return new DayBoundaryGridRenderer(this._source)
+  }
+
+  zOrder() {
+    return 'bottom'
+  }
+}
+
+class DayBoundaryGridRenderer {
+  constructor(source) {
+    this._source = source
+  }
+
+  draw(target) {
+    const boundaries = this._source._boundaries
+    const chart = this._source._chart
+
+    if (!boundaries.length || !chart) return
+
+    const timeScale = chart.timeScale()
+
+    target.useBitmapCoordinateSpace(scope => {
+      const ctx = scope.context
+      const hRatio = scope.horizontalPixelRatio
+      const height = scope.bitmapSize.height
+
+      ctx.strokeStyle = '#27272a'
+      ctx.lineWidth = 1 * hRatio
+
+      for (const boundary of boundaries) {
+        const x = timeScale.logicalToCoordinate(boundary)
+        if (x === null) continue
+
+        const xPx = Math.round(x * hRatio)
+
+        ctx.beginPath()
+        ctx.moveTo(xPx, 0)
+        ctx.lineTo(xPx, height)
+        ctx.stroke()
+      }
+    })
+  }
+}
+
+function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, showIndicator, focusBar, lineWeight, lineStyle, markerSize, sessionBreaks }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
@@ -387,6 +475,11 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
     candleSeries.setData(candleData)
     seriesRef.current = candleSeries
 
+    // Session boundary lines
+    const dayBoundPrim = new DayBoundaryGridPrimitive()
+    dayBoundPrim.setBoundaries(sessionBreaks)
+    candleSeries.attachPrimitive(dayBoundPrim)
+
     // Trade line primitive (lines connecting entry → exit)
     const tradeLinePrim = new TradeLinePrimitive()
     tradeLinePrim.setOptions({ lineWeight: lineWeight ?? 1.5, lineStyle: lineStyle ?? 'dotted' })
@@ -471,7 +564,7 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
       tradeLinePrimRef.current = null
       tradeMarkerPrimRef.current = null
     }
-  }, [barData, maPeriods, trades, pricePrecision, lineWeight, lineStyle, markerSize])
+  }, [barData, maPeriods, trades, pricePrecision, lineWeight, lineStyle, markerSize, sessionBreaks])
 
   // Indicator pane (togglable)
   useEffect(() => {
@@ -570,6 +663,11 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
     indicatorSeries.attachPrimitive(typePrim)
     typeMarkersPrimRef.current = typePrim
 
+    // Session boundary lines for indicator pane
+    const indDayBoundPrim = new DayBoundaryGridPrimitive()
+    indDayBoundPrim.setBoundaries(sessionBreaks)
+    indicatorSeries.attachPrimitive(indDayBoundPrim)
+
     // Horizontal grid primitive
     const gridPrim = new IndicatorHorzGridPrimitive()
     indicatorSeries.attachPrimitive(gridPrim)
@@ -582,7 +680,7 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
 
     // Force redraw
     chart.timeScale().applyOptions({})
-  }, [barData, showIndicator, settings, pricePrecision])
+  }, [barData, showIndicator, settings, pricePrecision, sessionBreaks])
 
   // Focus bar (scroll to trade from trade log click)
   useEffect(() => {

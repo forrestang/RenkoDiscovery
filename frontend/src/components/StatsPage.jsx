@@ -3181,6 +3181,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       lineWeight={btLineWeight}
                       lineStyle={btLineStyle}
                       markerSize={btMarkerSize}
+                      sessionBreaks={stats.sessionBreaks || []}
                     />
                   </div>
                   <div className="backtest-chart-resize-handle" onMouseDown={handleChartResizeMouseDown}>
@@ -3238,9 +3239,9 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                                 <tr
                                   key={i}
                                   className={
-                                    t.outcome === 'target' && t.result > 0 ? 'backtest-trade-win' :
-                                    t.outcome === 'stop' ? 'backtest-trade-loss' :
-                                    'backtest-trade-open'
+                                    t.outcome === 'open' ? 'backtest-trade-open' :
+                                    t.result > 0 ? 'backtest-trade-win' :
+                                    'backtest-trade-loss'
                                   }
                                   style={{ cursor: 'pointer' }}
                                   onClick={() => setBtFocusBar({ idx: t.idx, ts: Date.now() })}
