@@ -418,6 +418,7 @@ function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBa
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: null }),
           priceFormat: {
             type: 'price',
             precision: pricePrecision,
@@ -441,7 +442,7 @@ function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBa
         const upperArr = barData[`${prefix}Upper`]
         const lowerArr = barData[`${prefix}Lower`]
         const priceFormat = { type: 'price', precision: pricePrecision, minMove: Math.pow(10, -pricePrecision) }
-        const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, priceFormat }
+        const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => ({ priceRange: null }), priceFormat }
         // Center line (solid)
         const centerData = []
         for (let i = 0; i < len; i++) if (centerArr[i] != null) centerData.push({ time: i, value: centerArr[i] })
@@ -474,7 +475,7 @@ function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBa
     if (showPWAP) {
       const pwapColor = '#f472b6'
       const priceFormat = { type: 'price', precision: pricePrecision, minMove: Math.pow(10, -pricePrecision) }
-      const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, priceFormat }
+      const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => ({ priceRange: null }), priceFormat }
       // Mean line (solid, thicker)
       const meanArr = barData.pwapMean
       if (meanArr) {

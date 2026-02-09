@@ -1112,6 +1112,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: null }),
         })
       } else {
         maSeriesRef.current.applyOptions({
@@ -1238,6 +1239,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         ref.current = chart.addSeries(LineSeries, {
           color, lineWidth, lineStyle,
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: null }),
         })
       } else {
         ref.current.applyOptions({ color, lineWidth, lineStyle })
@@ -1345,6 +1347,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         lineWidth: pwapSettings.meanWidth,
         lineStyle: pwapSettings.meanStyle,
         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        autoscaleInfoProvider: () => ({ priceRange: null }),
       })
     } else {
       pwapMeanRef.current.applyOptions({
@@ -1384,6 +1387,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
           lineWidth: pwapSettings.bandWidth,
           lineStyle: pwapSettings.bandStyle,
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: null }),
         })
       } else {
         pwapBandRefs.current[upperIdx].applyOptions({
@@ -1401,6 +1405,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
           lineWidth: pwapSettings.bandWidth,
           lineStyle: pwapSettings.bandStyle,
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: null }),
         })
       } else {
         pwapBandRefs.current[lowerIdx].applyOptions({
