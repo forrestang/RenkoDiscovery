@@ -673,6 +673,8 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       borderDownColor: isOverlay ? 'rgba(136, 136, 136, 0.7)' : '#888888',
       wickUpColor: isOverlay ? 'rgba(255, 255, 255, 0.7)' : '#ffffff',
       wickDownColor: isOverlay ? 'rgba(136, 136, 136, 0.7)' : '#888888',
+      lastValueVisible: false,
+      priceLineVisible: false,
       visible: true,  // Will be hidden for tick data
     })
 

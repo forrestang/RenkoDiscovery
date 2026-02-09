@@ -368,6 +368,8 @@ function BacktestChart({ barData, maPeriods, settings, trades, pricePrecision, s
       borderDownColor: '#888888',
       wickUpColor: '#ffffff',
       wickDownColor: '#888888',
+      lastValueVisible: false,
+      priceLineVisible: false,
       priceFormat: {
         type: 'price',
         precision: pricePrecision,
