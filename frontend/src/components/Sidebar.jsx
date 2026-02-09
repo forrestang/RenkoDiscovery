@@ -157,6 +157,11 @@ function Sidebar({
     ma2Period: 50,
     ma3Period: 200,
     chopPeriod: 20,
+    smae1Period: 20,
+    smae1Deviation: 1.0,
+    smae2Period: 50,
+    smae2Deviation: 1.0,
+    pwapSigmas: [1.0, 2.0, 2.5, 3.0],
     templateName: '',
   }), [])
 
@@ -168,7 +173,7 @@ function Sidebar({
         if (Array.isArray(parsed) && parsed.length > 0) return parsed
       }
     } catch {}
-    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0020, brickPct: 5.0, reversalPct: 10.0, adrPeriod: 14, wickMode: 'all', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20 }]
+    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0020, brickPct: 5.0, reversalPct: 10.0, adrPeriod: 14, wickMode: 'all', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0] }]
   })
   const [isBypassing, setIsBypassing] = useState(false)
   const [bypassResults, setBypassResults] = useState(null)
@@ -247,6 +252,11 @@ function Sidebar({
           ma2_period: job.ma2Period,
           ma3_period: job.ma3Period,
           chop_period: job.chopPeriod,
+          smae1_period: job.smae1Period,
+          smae1_deviation: job.smae1Deviation,
+          smae2_period: job.smae2Period,
+          smae2_deviation: job.smae2Deviation,
+          pwap_sigmas: job.pwapSigmas,
         })
       })
       fetchBypassTemplates()
@@ -276,6 +286,11 @@ function Sidebar({
         ma2Period: template.ma2_period,
         ma3Period: template.ma3_period,
         chopPeriod: template.chop_period,
+        smae1Period: template.smae1_period ?? 20,
+        smae1Deviation: template.smae1_deviation ?? 1.0,
+        smae2Period: template.smae2_period ?? 50,
+        smae2Deviation: template.smae2_deviation ?? 1.0,
+        pwapSigmas: template.pwap_sigmas ?? [1.0, 2.0, 2.5, 3.0],
         templateName: template.name,
         filenameManual: false,
       }
@@ -304,18 +319,18 @@ function Sidebar({
         ma2_period: j.ma2Period,
         ma3_period: j.ma3Period,
         chop_period: j.chopPeriod,
-        smae1_period: j.smae1Period ?? smaeSettings?.smae1?.period ?? 20,
-        smae1_deviation: j.smae1Deviation ?? smaeSettings?.smae1?.deviation ?? 1.0,
-        smae2_period: j.smae2Period ?? smaeSettings?.smae2?.period ?? 50,
-        smae2_deviation: j.smae2Deviation ?? smaeSettings?.smae2?.deviation ?? 1.0,
-        pwap_sigmas: j.pwapSigmas ?? pwapSettings?.sigmas ?? [1.0, 2.0, 2.5, 3.0],
+        smae1_period: j.smae1Period,
+        smae1_deviation: j.smae1Deviation,
+        smae2_period: j.smae2Period,
+        smae2_deviation: j.smae2Deviation,
+        pwap_sigmas: j.pwapSigmas,
       }))
       const results = await onDirectGenerate(payload)
       setBypassResults(results)
     } finally {
       setIsBypassing(false)
     }
-  }, [bypassJobs, onDirectGenerate, autoBypassFilename, smaeSettings, pwapSettings])
+  }, [bypassJobs, onDirectGenerate, autoBypassFilename])
 
   useEffect(() => {
     if (!dragging) return
@@ -1131,6 +1146,28 @@ function Sidebar({
                       <input type="number" className="stats-input mono bypass-input-sm" value={job.chopPeriod} onChange={e => updateBypassJob(job.id, 'chopPeriod', parseInt(e.target.value) || 20)} />
                     </div>
                     <div className="bypass-job-row">
+                      <label className="option-label">E1</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" value={job.smae1Period} onChange={e => updateBypassJob(job.id, 'smae1Period', parseInt(e.target.value) || 20)} />
+                      <label className="option-label">Dev</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" step="0.1" value={job.smae1Deviation} onChange={e => updateBypassJob(job.id, 'smae1Deviation', parseFloat(e.target.value) || 1.0)} />
+                      <label className="option-label">E2</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" value={job.smae2Period} onChange={e => updateBypassJob(job.id, 'smae2Period', parseInt(e.target.value) || 50)} />
+                      <label className="option-label">Dev</label>
+                      <input type="number" className="stats-input mono bypass-input-sm" step="0.1" value={job.smae2Deviation} onChange={e => updateBypassJob(job.id, 'smae2Deviation', parseFloat(e.target.value) || 1.0)} />
+                    </div>
+                    <div className="bypass-job-row">
+                      <label className="option-label">PWAP σ</label>
+                      {(job.pwapSigmas || [1.0, 2.0, 2.5, 3.0]).map((sigma, si) => (
+                        <input key={si} type="number" className="stats-input mono bypass-input-sm" step="0.1" value={sigma}
+                          onChange={e => {
+                            const newSigmas = [...(job.pwapSigmas || [1.0, 2.0, 2.5, 3.0])]
+                            newSigmas[si] = parseFloat(e.target.value) || 0
+                            updateBypassJob(job.id, 'pwapSigmas', newSigmas)
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="bypass-job-row">
                       <label className="option-label">File</label>
                       <input
                         type="text"
@@ -1193,11 +1230,7 @@ function Sidebar({
               {statsFiles?.length > 0 && (
                 <button
                   className="delete-all-btn"
-                  onClick={() => {
-                    if (window.confirm(`Delete all ${statsFiles.length} parquet files?`)) {
-                      onDeleteAllStatsFiles?.()
-                    }
-                  }}
+                  onClick={() => onDeleteAllStatsFiles?.()}
                   title="Delete all parquet files"
                 >
                   Delete All
@@ -1232,9 +1265,7 @@ function Sidebar({
                         className="stats-file-delete-btn"
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (window.confirm(`Delete ${file.filename}?`)) {
-                            onDeleteStatsFile?.(file.filepath)
-                          }
+                          onDeleteStatsFile?.(file.filepath)
                         }}
                         title={`Delete ${file.filename}`}
                       >

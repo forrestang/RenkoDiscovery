@@ -921,6 +921,9 @@ function App() {
           </svg>
           <span className="brand-text">RenkoDiscovery</span>
         </div>
+        {activeTab === 'stats' && statsFilename && (
+          <span className="header-stats-filename mono">{statsFilename}</span>
+        )}
         <div className="header-status">
           {activeInstrument && (
             <span className="active-instrument mono">{activeInstrument}</span>
@@ -1108,8 +1111,6 @@ function App() {
             mlError={mlError}
             apiBase={apiBase}
             onDirectGenerate={handleDirectGenerate}
-            smaeSettings={smaeSettings}
-            pwapSettings={pwapSettings}
           />
 
           {!sidebarCollapsed && (

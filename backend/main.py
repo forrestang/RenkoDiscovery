@@ -1882,6 +1882,11 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['ma2_period'] = request.ma2_period
     df['ma3_period'] = request.ma3_period
     df['chopPeriod'] = request.chop_period
+    df['smae1_period'] = request.smae1_period
+    df['smae1_deviation'] = request.smae1_deviation
+    df['smae2_period'] = request.smae2_period
+    df['smae2_deviation'] = request.smae2_deviation
+    df['pwap_sigmas'] = json.dumps(request.pwap_sigmas)
 
     # Compute all stats columns using shared helper
     cache_dir = base_dir / "cache"
@@ -2093,6 +2098,11 @@ def direct_generate(request: DirectGenerateRequest):
             stats_df['ma2_period'] = job.ma2_period
             stats_df['ma3_period'] = job.ma3_period
             stats_df['chopPeriod'] = job.chop_period
+            stats_df['smae1_period'] = job.smae1_period
+            stats_df['smae1_deviation'] = job.smae1_deviation
+            stats_df['smae2_period'] = job.smae2_period
+            stats_df['smae2_deviation'] = job.smae2_deviation
+            stats_df['pwap_sigmas'] = json.dumps(job.pwap_sigmas)
 
             # Compute stats columns
             stats_df = compute_stats_columns(
@@ -2803,10 +2813,20 @@ def get_parquet_stats(filepath: str):
         ('ma2_period', 'ma2Period'),
         ('ma3_period', 'ma3Period'),
         ('chopPeriod', 'chopPeriod'),
+        ('smae1_period', 'smae1Period'),
+        ('smae1_deviation', 'smae1Deviation'),
+        ('smae2_period', 'smae2Period'),
+        ('smae2_deviation', 'smae2Deviation'),
     ]:
         if col in df.columns:
             val = df[col].iloc[0]
             settings[key] = val.item() if hasattr(val, 'item') else val
+
+    if 'pwap_sigmas' in df.columns:
+        try:
+            settings['pwapSigmas'] = json.loads(df['pwap_sigmas'].iloc[0])
+        except Exception:
+            settings['pwapSigmas'] = [1.0, 2.0, 2.5, 3.0]
 
     # Build per-bar column arrays for client-side chop filtering (Module 7)
     bar_data_cols = {
