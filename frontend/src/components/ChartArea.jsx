@@ -1307,6 +1307,9 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
             if (m1Datetime) return { time: Math.floor(parseUTC(m1Datetime).getTime() / 1000), value }
             return null
           } else {
+            if (sessionBreaks && sessionBreaks.has(i + 1)) {
+              return { time: i, value, color: 'transparent' }
+            }
             return { time: i, value }
           }
         })
@@ -1338,7 +1341,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
 
     if (!high || !low || !datetime) return
 
-    const { mean, stdDev } = calculatePWAP(high, low, close, datetime, sessionSchedule)
+    const { mean, stdDev, sessionBreaks } = calculatePWAP(high, low, close, datetime, sessionSchedule)
 
     // Mean line
     if (pwapSettings.showMean !== false) {
