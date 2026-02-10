@@ -1572,6 +1572,11 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
         df[f'PWAP_Upper{_si}'] = np.round(_pwap_mean + _pwap_std * _sigma, 5)
         df[f'PWAP_Lower{_si}'] = np.round(_pwap_mean - _pwap_std * _sigma, 5)
 
+    # PWAP distance columns
+    df['PWAP_distance'] = (df['close'] - df['PWAP_Mean']).round(5)
+    df['PWAP_distance_ADR'] = (df['PWAP_distance'] / df['currentADR']).round(5)
+    df['PWAP_distance_RR'] = (df['PWAP_distance'] / df['reversal_size']).round(5)
+
     # Calculate EMA distance columns (derived data, right side)
     for period in ma_periods:
         ema_values = ema_columns[period]
