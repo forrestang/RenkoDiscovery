@@ -314,19 +314,27 @@ function MAControls({ settings, onChange, smaeSettings, onSmaeChange, pwapSettin
                 </div>
 
                 <div className="ma-pwap-row ma-pwap-style-row">
-                  <span className="ma-label ma-pwap-sublabel">Mean</span>
+                  <label className="ma-checkbox ma-pwap-sublabel">
+                    <input
+                      type="checkbox"
+                      checked={pwapSettings.showMean !== false}
+                      onChange={(e) => handlePwapChange({ showMean: e.target.checked })}
+                      disabled={!pwapSettings.enabled}
+                    />
+                    <span className="ma-label">Mean</span>
+                  </label>
                   <input
                     type="color"
                     className="ma-color-picker"
                     value={pwapSettings.meanColor}
                     onChange={(e) => handlePwapChange({ meanColor: e.target.value })}
-                    disabled={!pwapSettings.enabled}
+                    disabled={!pwapSettings.enabled || pwapSettings.showMean === false}
                   />
                   <select
                     className="ma-width-select"
                     value={pwapSettings.meanWidth}
                     onChange={(e) => handlePwapChange({ meanWidth: parseInt(e.target.value) })}
-                    disabled={!pwapSettings.enabled}
+                    disabled={!pwapSettings.enabled || pwapSettings.showMean === false}
                   >
                     <option value={1}>1px</option>
                     <option value={2}>2px</option>
@@ -337,26 +345,34 @@ function MAControls({ settings, onChange, smaeSettings, onSmaeChange, pwapSettin
                     className="ma-style-select"
                     value={pwapSettings.meanStyle}
                     onChange={(e) => handlePwapChange({ meanStyle: parseInt(e.target.value) })}
-                    disabled={!pwapSettings.enabled}
+                    disabled={!pwapSettings.enabled || pwapSettings.showMean === false}
                   >
                     {LINE_STYLES.map((s) => (
                       <option key={s.value} value={s.value}>{s.label}</option>
                     ))}
                   </select>
 
-                  <span className="ma-label ma-pwap-sublabel">Band</span>
+                  <label className="ma-checkbox ma-pwap-sublabel">
+                    <input
+                      type="checkbox"
+                      checked={pwapSettings.showBands !== false}
+                      onChange={(e) => handlePwapChange({ showBands: e.target.checked })}
+                      disabled={!pwapSettings.enabled}
+                    />
+                    <span className="ma-label">Band</span>
+                  </label>
                   <input
                     type="color"
                     className="ma-color-picker"
                     value={pwapSettings.bandColor}
                     onChange={(e) => handlePwapChange({ bandColor: e.target.value })}
-                    disabled={!pwapSettings.enabled}
+                    disabled={!pwapSettings.enabled || pwapSettings.showBands === false}
                   />
                   <select
                     className="ma-width-select"
                     value={pwapSettings.bandWidth}
                     onChange={(e) => handlePwapChange({ bandWidth: parseInt(e.target.value) })}
-                    disabled={!pwapSettings.enabled}
+                    disabled={!pwapSettings.enabled || pwapSettings.showBands === false}
                   >
                     <option value={1}>1px</option>
                     <option value={2}>2px</option>
@@ -367,7 +383,7 @@ function MAControls({ settings, onChange, smaeSettings, onSmaeChange, pwapSettin
                     className="ma-style-select"
                     value={pwapSettings.bandStyle}
                     onChange={(e) => handlePwapChange({ bandStyle: parseInt(e.target.value) })}
-                    disabled={!pwapSettings.enabled}
+                    disabled={!pwapSettings.enabled || pwapSettings.showBands === false}
                   >
                     {LINE_STYLES.map((s) => (
                       <option key={s.value} value={s.value}>{s.label}</option>

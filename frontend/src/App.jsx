@@ -153,8 +153,8 @@ function App() {
     return {
       enabled: false,
       sigmas: [1.0, 2.0, 2.5, 3.0],
-      meanColor: '#f472b6', meanWidth: 2, meanStyle: 0,
-      bandColor: '#f472b6', bandWidth: 1, bandStyle: 1,
+      showMean: true, meanColor: '#f472b6', meanWidth: 2, meanStyle: 0,
+      showBands: true, bandColor: '#f472b6', bandWidth: 1, bandStyle: 1,
     }
   })
   const [compressionFactor, setCompressionFactor] = useState(() => {

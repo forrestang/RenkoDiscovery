@@ -476,27 +476,32 @@ function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBa
       const pwapColor = '#f472b6'
       const priceFormat = { type: 'price', precision: pricePrecision, minMove: Math.pow(10, -pricePrecision) }
       const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => ({ priceRange: null }), priceFormat }
-      // Mean line (solid, thicker)
-      const meanArr = barData.pwapMean
-      if (meanArr) {
-        const d = []
-        for (let i = 0; i < len; i++) if (meanArr[i] != null) d.push({ time: i, value: meanArr[i] })
-        if (d.length > 0) {
-          const s = chart.addSeries(LineSeries, { ...baseOpts, color: pwapColor, lineWidth: 2, lineStyle: 0 })
-          s.setData(d)
+      const breaksSet = sessionBreaks ? new Set(sessionBreaks) : null
+      // Helper: split data into segments at session breaks, one series per segment
+      const addSegmented = (arr, seriesOpts) => {
+        if (!arr) return
+        const segments = []
+        let current = []
+        for (let i = 0; i < len; i++) {
+          if (arr[i] == null) continue
+          if (breaksSet && breaksSet.has(i) && current.length > 0) {
+            segments.push(current)
+            current = []
+          }
+          current.push({ time: i, value: arr[i] })
+        }
+        if (current.length > 0) segments.push(current)
+        for (const seg of segments) {
+          const s = chart.addSeries(LineSeries, seriesOpts)
+          s.setData(seg)
         }
       }
+      // Mean line (solid, thicker)
+      addSegmented(barData.pwapMean, { ...baseOpts, color: pwapColor, lineWidth: 2, lineStyle: 0 })
       // Upper/Lower bands (dashed)
       for (let b = 1; b <= 4; b++) {
         for (const side of ['Upper', 'Lower']) {
-          const arr = barData[`pwap${side}${b}`]
-          if (!arr) continue
-          const d = []
-          for (let i = 0; i < len; i++) if (arr[i] != null) d.push({ time: i, value: arr[i] })
-          if (d.length > 0) {
-            const s = chart.addSeries(LineSeries, { ...baseOpts, color: pwapColor, lineWidth: 1, lineStyle: 2 })
-            s.setData(d)
-          }
+          addSegmented(barData[`pwap${side}${b}`], { ...baseOpts, color: pwapColor, lineWidth: 1, lineStyle: 2 })
         }
       }
     }

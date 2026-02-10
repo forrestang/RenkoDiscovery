@@ -1341,31 +1341,39 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     const { mean, stdDev } = calculatePWAP(high, low, close, datetime, sessionSchedule)
 
     // Mean line
-    if (!pwapMeanRef.current) {
-      pwapMeanRef.current = chart.addSeries(LineSeries, {
-        color: pwapSettings.meanColor,
-        lineWidth: pwapSettings.meanWidth,
-        lineStyle: pwapSettings.meanStyle,
-        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-        autoscaleInfoProvider: () => ({ priceRange: null }),
-      })
+    if (pwapSettings.showMean !== false) {
+      if (!pwapMeanRef.current) {
+        pwapMeanRef.current = chart.addSeries(LineSeries, {
+          color: pwapSettings.meanColor,
+          lineWidth: pwapSettings.meanWidth,
+          lineStyle: pwapSettings.meanStyle,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: null }),
+        })
+      } else {
+        pwapMeanRef.current.applyOptions({
+          color: pwapSettings.meanColor,
+          lineWidth: pwapSettings.meanWidth,
+          lineStyle: pwapSettings.meanStyle,
+        })
+      }
+      pwapMeanRef.current.setData(buildLineData(mean))
     } else {
-      pwapMeanRef.current.applyOptions({
-        color: pwapSettings.meanColor,
-        lineWidth: pwapSettings.meanWidth,
-        lineStyle: pwapSettings.meanStyle,
-      })
+      if (pwapMeanRef.current) {
+        chart.removeSeries(pwapMeanRef.current)
+        pwapMeanRef.current = null
+      }
     }
-    pwapMeanRef.current.setData(buildLineData(mean))
 
     // Band lines: sigmas array (up to 4)
     const sigmas = pwapSettings.sigmas || [1.0, 2.0, 2.5, 3.0]
+    const bandsVisible = pwapSettings.showBands !== false
     for (let s = 0; s < 4; s++) {
       const upperIdx = s
       const lowerIdx = s + 4
       const sigma = sigmas[s]
 
-      if (sigma <= 0) {
+      if (sigma <= 0 || !bandsVisible) {
         if (pwapBandRefs.current[upperIdx]) {
           chart.removeSeries(pwapBandRefs.current[upperIdx])
           pwapBandRefs.current[upperIdx] = null
