@@ -2605,6 +2605,23 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <ColumnItem label="MA1_2, MA2_2, MA3_2" desc={COLUMN_DESCRIPTIONS['MA1_2, MA2_2, MA3_2']} />
                 </ul>
 
+                <h5>SMAE Channel</h5>
+                <ul>
+                  <ColumnItem label="SMAE1_Upper, SMAE1_Lower" desc={COLUMN_DESCRIPTIONS['SMAE1_Upper, SMAE1_Lower']} />
+                  <ColumnItem label="SMAE2_Upper, SMAE2_Lower" desc={COLUMN_DESCRIPTIONS['SMAE2_Upper, SMAE2_Lower']} />
+                </ul>
+
+                <h5>PWAP</h5>
+                <ul>
+                  <ColumnItem label="PWAP_Mean" desc={COLUMN_DESCRIPTIONS['PWAP_Mean']} />
+                  <ColumnItem label="PWAP_Upper1, PWAP_Lower1" desc={COLUMN_DESCRIPTIONS['PWAP_Upper1, PWAP_Lower1']} />
+                  <ColumnItem label="PWAP_Upper2, PWAP_Lower2" desc={COLUMN_DESCRIPTIONS['PWAP_Upper2, PWAP_Lower2']} />
+                  <ColumnItem label="PWAP_Upper3, PWAP_Lower3" desc={COLUMN_DESCRIPTIONS['PWAP_Upper3, PWAP_Lower3']} />
+                  <ColumnItem label="PWAP_Upper4, PWAP_Lower4" desc={COLUMN_DESCRIPTIONS['PWAP_Upper4, PWAP_Lower4']} />
+                  <ColumnItem label="PWAP_distance_RR" desc={COLUMN_DESCRIPTIONS['PWAP_distance_RR']} />
+                  <ColumnItem label="PWAP_distance_ADR" desc={COLUMN_DESCRIPTIONS['PWAP_distance_ADR']} />
+                </ul>
+
                 <h5>State &amp; Structure</h5>
                 <ul>
                   <ColumnItem label="State" desc={COLUMN_DESCRIPTIONS['State']} />
@@ -3212,6 +3229,23 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <ColumnItem label="MA1, MA2, MA3" desc={COLUMN_DESCRIPTIONS['MA1, MA2, MA3']} />
                   <ColumnItem label="MA1_1, MA2_1, MA3_1" desc={COLUMN_DESCRIPTIONS['MA1_1, MA2_1, MA3_1']} />
                   <ColumnItem label="MA1_2, MA2_2, MA3_2" desc={COLUMN_DESCRIPTIONS['MA1_2, MA2_2, MA3_2']} />
+                </ul>
+
+                <h5>SMAE Channel</h5>
+                <ul>
+                  <ColumnItem label="SMAE1_Upper, SMAE1_Lower" desc={COLUMN_DESCRIPTIONS['SMAE1_Upper, SMAE1_Lower']} />
+                  <ColumnItem label="SMAE2_Upper, SMAE2_Lower" desc={COLUMN_DESCRIPTIONS['SMAE2_Upper, SMAE2_Lower']} />
+                </ul>
+
+                <h5>PWAP</h5>
+                <ul>
+                  <ColumnItem label="PWAP_Mean" desc={COLUMN_DESCRIPTIONS['PWAP_Mean']} />
+                  <ColumnItem label="PWAP_Upper1, PWAP_Lower1" desc={COLUMN_DESCRIPTIONS['PWAP_Upper1, PWAP_Lower1']} />
+                  <ColumnItem label="PWAP_Upper2, PWAP_Lower2" desc={COLUMN_DESCRIPTIONS['PWAP_Upper2, PWAP_Lower2']} />
+                  <ColumnItem label="PWAP_Upper3, PWAP_Lower3" desc={COLUMN_DESCRIPTIONS['PWAP_Upper3, PWAP_Lower3']} />
+                  <ColumnItem label="PWAP_Upper4, PWAP_Lower4" desc={COLUMN_DESCRIPTIONS['PWAP_Upper4, PWAP_Lower4']} />
+                  <ColumnItem label="PWAP_distance_RR" desc={COLUMN_DESCRIPTIONS['PWAP_distance_RR']} />
+                  <ColumnItem label="PWAP_distance_ADR" desc={COLUMN_DESCRIPTIONS['PWAP_distance_ADR']} />
                 </ul>
 
                 <h5>State &amp; Structure</h5>

@@ -22,6 +22,19 @@ export const COLUMN_DESCRIPTIONS = {
   'MA1_1, MA2_1, MA3_1': 'Prior bar EMA values.',
   'MA1_2, MA2_2, MA3_2': 'Two bars back EMA values.',
 
+  // SMAE Channel
+  'SMAE1_Upper, SMAE1_Lower': 'Upper and lower bands of SMAE1 envelope (SMA ± deviation%).',
+  'SMAE2_Upper, SMAE2_Lower': 'Upper and lower bands of SMAE2 envelope (SMA ± deviation%).',
+
+  // PWAP
+  'PWAP_Mean': 'Session PWAP mean price (resets each session).',
+  'PWAP_Upper1, PWAP_Lower1': 'PWAP ±1σ bands.',
+  'PWAP_Upper2, PWAP_Lower2': 'PWAP ±2σ bands.',
+  'PWAP_Upper3, PWAP_Lower3': 'PWAP ±3σ bands.',
+  'PWAP_Upper4, PWAP_Lower4': 'PWAP ±4σ bands.',
+  'PWAP_distance_RR': 'Distance from close to PWAP Mean normalized by reversal size.',
+  'PWAP_distance_ADR': 'Distance from close to PWAP Mean normalized by ADR.',
+
   // State & Structure
   'State': 'MA alignment score from -3 to +3. +3 = Fast > Med > Slow, -3 = Slow > Med > Fast.',
   'prState': 'Prior bar State value.',
