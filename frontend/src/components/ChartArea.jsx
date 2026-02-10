@@ -1459,16 +1459,6 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     const round = (v, d) => { const m = Math.pow(10, d); return Math.round(v * m) / m }
 
     // Calculate MA values (Fast=MA1, Med=MA2, Slow=MA3)
-    const ma1Enabled = maSettings.ma1?.enabled
-    const ma2Enabled = maSettings.ma2?.enabled
-    const ma3Enabled = maSettings.ma3?.enabled
-
-    // Need all 3 MAs enabled for State calculation
-    if (!ma1Enabled || !ma2Enabled || !ma3Enabled) {
-      removeIndicatorSeries()
-      return
-    }
-
     const ma1Values = maSettings.ma1.type === 'ema'
       ? calculateEMA(close, maSettings.ma1.period)
       : calculateSMA(close, maSettings.ma1.period)
