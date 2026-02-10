@@ -1197,6 +1197,12 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   const _allMaStats = stats.allMaStats
   const _beyondMaStats = stats.beyondMaStats
   const _beyondAllMaStats = stats.beyondAllMaStats
+  const _smaeStats = stats.smaeStats
+  const _allSmaeStats = stats.allSmaeStats
+  const _beyondSmaeStats = stats.beyondSmaeStats
+  const _beyondAllSmaeStats = stats.beyondAllSmaeStats
+  const _pwapMeanStats = stats.pwapMeanStats
+  const _beyondPwapMeanStats = stats.beyondPwapMeanStats
   const _chopStats = stats.chopStats
   const _stateStats = stats.stateStats
   const _wickDist = stats.wickDist
@@ -1253,6 +1259,61 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     }
   ] : null
 
+  // Build SMAE table rows
+  const smaeRows = _smaeStats?.length ? [
+    ..._smaeStats.map(s => ({
+      label: `SMAE${s.n}(${s.n === 1 ? settings.smae1Period : settings.smae2Period})`,
+      colorClass: `smae-color-${s.n}`,
+      above: s.above, between: s.between, below: s.below,
+      aboveUp: s.aboveUp ?? 0, aboveDown: s.aboveDown ?? 0,
+      betweenUp: s.betweenUp ?? 0, betweenDown: s.betweenDown ?? 0,
+      belowUp: s.belowUp ?? 0, belowDown: s.belowDown ?? 0,
+    })),
+    ...(_allSmaeStats ? [{
+      label: 'ALL SMAEs',
+      colorClass: 'smae-color-all',
+      above: _allSmaeStats.above, between: _allSmaeStats.between, below: _allSmaeStats.below,
+      aboveUp: _allSmaeStats.aboveUp ?? 0, aboveDown: _allSmaeStats.aboveDown ?? 0,
+      betweenUp: _allSmaeStats.betweenUp ?? 0, betweenDown: _allSmaeStats.betweenDown ?? 0,
+      belowUp: _allSmaeStats.belowUp ?? 0, belowDown: _allSmaeStats.belowDown ?? 0,
+    }] : [])
+  ] : null
+
+  const beyondSmaeRows = _beyondSmaeStats?.length ? [
+    ..._beyondSmaeStats.map(s => ({
+      label: `SMAE${s.n}(${s.n === 1 ? settings.smae1Period : settings.smae2Period})`,
+      colorClass: `smae-color-${s.n}`,
+      above: s.above, between: s.between, below: s.below,
+      aboveUp: s.aboveUp ?? 0, aboveDown: s.aboveDown ?? 0,
+      betweenUp: s.betweenUp ?? 0, betweenDown: s.betweenDown ?? 0,
+      belowUp: s.belowUp ?? 0, belowDown: s.belowDown ?? 0,
+    })),
+    ...(_beyondAllSmaeStats ? [{
+      label: 'ALL SMAEs',
+      colorClass: 'smae-color-all',
+      above: _beyondAllSmaeStats.above, between: _beyondAllSmaeStats.between, below: _beyondAllSmaeStats.below,
+      aboveUp: _beyondAllSmaeStats.aboveUp ?? 0, aboveDown: _beyondAllSmaeStats.aboveDown ?? 0,
+      betweenUp: _beyondAllSmaeStats.betweenUp ?? 0, betweenDown: _beyondAllSmaeStats.betweenDown ?? 0,
+      belowUp: _beyondAllSmaeStats.belowUp ?? 0, belowDown: _beyondAllSmaeStats.belowDown ?? 0,
+    }] : [])
+  ] : null
+
+  // Build PWAP Mean rows
+  const pwapMeanRow = _pwapMeanStats ? {
+    label: 'PWAP Mean',
+    colorClass: 'pwap-color-mean',
+    above: _pwapMeanStats.above, below: _pwapMeanStats.below,
+    aboveUp: _pwapMeanStats.aboveUp ?? 0, aboveDown: _pwapMeanStats.aboveDown ?? 0,
+    belowUp: _pwapMeanStats.belowUp ?? 0, belowDown: _pwapMeanStats.belowDown ?? 0,
+  } : null
+
+  const beyondPwapMeanRow = _beyondPwapMeanStats ? {
+    label: 'PWAP Mean',
+    colorClass: 'pwap-color-mean',
+    above: _beyondPwapMeanStats.above, below: _beyondPwapMeanStats.below,
+    aboveUp: _beyondPwapMeanStats.aboveUp ?? 0, aboveDown: _beyondPwapMeanStats.aboveDown ?? 0,
+    belowUp: _beyondPwapMeanStats.belowUp ?? 0, belowDown: _beyondPwapMeanStats.belowDown ?? 0,
+  } : null
 
   // Render Nth occurrence table for a signal type
   const renderNthOccurrence = (title, typeStats) => {
@@ -1800,6 +1861,168 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
               )}
             </table>
           </div>
+
+          {/* SMAE Bar Location Stats */}
+          {smaeRows && (
+            <div className="stats-module">
+              <table className="stats-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="10" className="module-title" data-tooltip="Bars where close is above, between, or below each SMAE channel">SMAE BAR LOCATION(ALL)</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    <th colSpan="3">Above Channel</th>
+                    <th colSpan="3">Between</th>
+                    <th colSpan="3">Below Channel</th>
+                  </tr>
+                  <tr>
+                    <th>SMAE</th>
+                    <th>Count</th>
+                    <th className="up">UP%</th>
+                    <th className="dn">DN%</th>
+                    <th>Count</th>
+                    <th className="up">UP%</th>
+                    <th className="dn">DN%</th>
+                    <th>Count</th>
+                    <th className="up">UP%</th>
+                    <th className="dn">DN%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {smaeRows.map(row => (
+                    <tr key={row.label}>
+                      <td className={row.colorClass}>{row.label}</td>
+                      <td>{row.above} <span className="pct">({pct(row.above, totalBars)}%)</span></td>
+                      <td className={`up${row.aboveUp > row.aboveDown ? ' highlight' : ''}`}>{pct(row.aboveUp, row.above)}%</td>
+                      <td className={`dn${row.aboveDown > row.aboveUp ? ' highlight' : ''}`}>{pct(row.aboveDown, row.above)}%</td>
+                      <td>{row.between} <span className="pct">({pct(row.between, totalBars)}%)</span></td>
+                      <td className={`up${row.betweenUp > row.betweenDown ? ' highlight' : ''}`}>{pct(row.betweenUp, row.between)}%</td>
+                      <td className={`dn${row.betweenDown > row.betweenUp ? ' highlight' : ''}`}>{pct(row.betweenDown, row.between)}%</td>
+                      <td>{row.below} <span className="pct">({pct(row.below, totalBars)}%)</span></td>
+                      <td className={`up${row.belowUp > row.belowDown ? ' highlight' : ''}`}>{pct(row.belowUp, row.below)}%</td>
+                      <td className={`dn${row.belowDown > row.belowUp ? ' highlight' : ''}`}>{pct(row.belowDown, row.below)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+                {beyondSmaeRows && (
+                  <>
+                    <thead>
+                      <tr className="module-title-row">
+                        <th colSpan="10" className="module-title" data-tooltip="Bars entirely above, within, or below each SMAE channel (no part of the bar crosses a band)">SMAE BAR LOCATION(BEYOND)</th>
+                      </tr>
+                      <tr>
+                        <th></th>
+                        <th colSpan="3">Above Channel</th>
+                        <th colSpan="3">Between</th>
+                        <th colSpan="3">Below Channel</th>
+                      </tr>
+                      <tr>
+                        <th>SMAE</th>
+                        <th>Count</th>
+                        <th className="up">UP%</th>
+                        <th className="dn">DN%</th>
+                        <th>Count</th>
+                        <th className="up">UP%</th>
+                        <th className="dn">DN%</th>
+                        <th>Count</th>
+                        <th className="up">UP%</th>
+                        <th className="dn">DN%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {beyondSmaeRows.map(row => (
+                        <tr key={row.label}>
+                          <td className={row.colorClass}>{row.label}</td>
+                          <td>{row.above} <span className="pct">({pct(row.above, totalBars)}%)</span></td>
+                          <td className={`up${row.aboveUp > row.aboveDown ? ' highlight' : ''}`}>{pct(row.aboveUp, row.above)}%</td>
+                          <td className={`dn${row.aboveDown > row.aboveUp ? ' highlight' : ''}`}>{pct(row.aboveDown, row.above)}%</td>
+                          <td>{row.between} <span className="pct">({pct(row.between, totalBars)}%)</span></td>
+                          <td className={`up${row.betweenUp > row.betweenDown ? ' highlight' : ''}`}>{pct(row.betweenUp, row.between)}%</td>
+                          <td className={`dn${row.betweenDown > row.betweenUp ? ' highlight' : ''}`}>{pct(row.betweenDown, row.between)}%</td>
+                          <td>{row.below} <span className="pct">({pct(row.below, totalBars)}%)</span></td>
+                          <td className={`up${row.belowUp > row.belowDown ? ' highlight' : ''}`}>{pct(row.belowUp, row.below)}%</td>
+                          <td className={`dn${row.belowDown > row.belowUp ? ' highlight' : ''}`}>{pct(row.belowDown, row.below)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </>
+                )}
+              </table>
+            </div>
+          )}
+
+          {/* PWAP Mean Bar Location Stats */}
+          {pwapMeanRow && (
+            <div className="stats-module">
+              <table className="stats-table">
+                <thead>
+                  <tr className="module-title-row">
+                    <th colSpan="7" className="module-title" data-tooltip="Bars where close is above or below PWAP Mean">PWAP MEAN BAR LOCATION(ALL)</th>
+                  </tr>
+                  <tr>
+                    <th></th>
+                    <th colSpan="3">Above</th>
+                    <th colSpan="3">Below</th>
+                  </tr>
+                  <tr>
+                    <th>PWAP</th>
+                    <th>Count</th>
+                    <th className="up">UP%</th>
+                    <th className="dn">DN%</th>
+                    <th>Count</th>
+                    <th className="up">UP%</th>
+                    <th className="dn">DN%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className={pwapMeanRow.colorClass}>{pwapMeanRow.label}</td>
+                    <td>{pwapMeanRow.above} <span className="pct">({pct(pwapMeanRow.above, totalBars)}%)</span></td>
+                    <td className={`up${pwapMeanRow.aboveUp > pwapMeanRow.aboveDown ? ' highlight' : ''}`}>{pct(pwapMeanRow.aboveUp, pwapMeanRow.above)}%</td>
+                    <td className={`dn${pwapMeanRow.aboveDown > pwapMeanRow.aboveUp ? ' highlight' : ''}`}>{pct(pwapMeanRow.aboveDown, pwapMeanRow.above)}%</td>
+                    <td>{pwapMeanRow.below} <span className="pct">({pct(pwapMeanRow.below, totalBars)}%)</span></td>
+                    <td className={`up${pwapMeanRow.belowUp > pwapMeanRow.belowDown ? ' highlight' : ''}`}>{pct(pwapMeanRow.belowUp, pwapMeanRow.below)}%</td>
+                    <td className={`dn${pwapMeanRow.belowDown > pwapMeanRow.belowUp ? ' highlight' : ''}`}>{pct(pwapMeanRow.belowDown, pwapMeanRow.below)}%</td>
+                  </tr>
+                </tbody>
+                {beyondPwapMeanRow && (
+                  <>
+                    <thead>
+                      <tr className="module-title-row">
+                        <th colSpan="7" className="module-title" data-tooltip="Bars entirely above or below PWAP Mean (no part of the bar touches the mean)">PWAP MEAN BAR LOCATION(BEYOND)</th>
+                      </tr>
+                      <tr>
+                        <th></th>
+                        <th colSpan="3">Above</th>
+                        <th colSpan="3">Below</th>
+                      </tr>
+                      <tr>
+                        <th>PWAP</th>
+                        <th>Count</th>
+                        <th className="up">UP%</th>
+                        <th className="dn">DN%</th>
+                        <th>Count</th>
+                        <th className="up">UP%</th>
+                        <th className="dn">DN%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className={beyondPwapMeanRow.colorClass}>{beyondPwapMeanRow.label}</td>
+                        <td>{beyondPwapMeanRow.above} <span className="pct">({pct(beyondPwapMeanRow.above, totalBars)}%)</span></td>
+                        <td className={`up${beyondPwapMeanRow.aboveUp > beyondPwapMeanRow.aboveDown ? ' highlight' : ''}`}>{pct(beyondPwapMeanRow.aboveUp, beyondPwapMeanRow.above)}%</td>
+                        <td className={`dn${beyondPwapMeanRow.aboveDown > beyondPwapMeanRow.aboveUp ? ' highlight' : ''}`}>{pct(beyondPwapMeanRow.aboveDown, beyondPwapMeanRow.above)}%</td>
+                        <td>{beyondPwapMeanRow.below} <span className="pct">({pct(beyondPwapMeanRow.below, totalBars)}%)</span></td>
+                        <td className={`up${beyondPwapMeanRow.belowUp > beyondPwapMeanRow.belowDown ? ' highlight' : ''}`}>{pct(beyondPwapMeanRow.belowUp, beyondPwapMeanRow.below)}%</td>
+                        <td className={`dn${beyondPwapMeanRow.belowDown > beyondPwapMeanRow.belowUp ? ' highlight' : ''}`}>{pct(beyondPwapMeanRow.belowDown, beyondPwapMeanRow.below)}%</td>
+                      </tr>
+                    </tbody>
+                  </>
+                )}
+              </table>
+            </div>
+          )}
 
           {/* Wick Distribution (DD_RR) */}
           {_wickDist && (_wickDist.upDist?.length > 0 || _wickDist.dnDist?.length > 0) && (

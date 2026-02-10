@@ -2431,6 +2431,151 @@ def get_parquet_stats(filepath: str):
     beyond_below_all_up = int((beyond_below_all_mask & is_up_bar).sum())
     beyond_below_all_down = int((beyond_below_all_mask & is_down_bar).sum())
 
+    # SMAE Bar Location Stats (ALL - close-based)
+    smae_stats = []
+    smae_above_all_mask = pd.Series([True] * total_bars, index=df.index)
+    smae_between_all_mask = pd.Series([True] * total_bars, index=df.index)
+    smae_below_all_mask = pd.Series([True] * total_bars, index=df.index)
+    smae_has_data = False
+
+    for n in [1, 2]:
+        upper_col = f'SMAE{n}_Upper'
+        lower_col = f'SMAE{n}_Lower'
+        if upper_col in df.columns and lower_col in df.columns:
+            smae_has_data = True
+            above_mask = df['close'] > df[upper_col]
+            between_mask = (df['close'] >= df[lower_col]) & (df['close'] <= df[upper_col])
+            below_mask = df['close'] < df[lower_col]
+
+            above_count = int(above_mask.sum())
+            between_count = int(between_mask.sum())
+            below_count = int(below_mask.sum())
+
+            above_up = int((above_mask & is_up_bar).sum())
+            above_down = int((above_mask & is_down_bar).sum())
+            between_up = int((between_mask & is_up_bar).sum())
+            between_down = int((between_mask & is_down_bar).sum())
+            below_up = int((below_mask & is_up_bar).sum())
+            below_down = int((below_mask & is_down_bar).sum())
+
+            smae_above_all_mask &= above_mask
+            smae_between_all_mask &= between_mask
+            smae_below_all_mask &= below_mask
+
+            smae_stats.append({
+                "n": n,
+                "above": above_count, "between": between_count, "below": below_count,
+                "aboveUp": above_up, "aboveDown": above_down,
+                "betweenUp": between_up, "betweenDown": between_down,
+                "belowUp": below_up, "belowDown": below_down,
+            })
+        else:
+            smae_stats.append({
+                "n": n,
+                "above": 0, "between": 0, "below": 0,
+                "aboveUp": 0, "aboveDown": 0,
+                "betweenUp": 0, "betweenDown": 0,
+                "belowUp": 0, "belowDown": 0,
+            })
+
+    # ALL SMAEs aggregate
+    if smae_has_data:
+        all_smae_stats = {
+            "above": int(smae_above_all_mask.sum()),
+            "between": int(smae_between_all_mask.sum()),
+            "below": int(smae_below_all_mask.sum()),
+            "aboveUp": int((smae_above_all_mask & is_up_bar).sum()),
+            "aboveDown": int((smae_above_all_mask & is_down_bar).sum()),
+            "betweenUp": int((smae_between_all_mask & is_up_bar).sum()),
+            "betweenDown": int((smae_between_all_mask & is_down_bar).sum()),
+            "belowUp": int((smae_below_all_mask & is_up_bar).sum()),
+            "belowDown": int((smae_below_all_mask & is_down_bar).sum()),
+        }
+    else:
+        all_smae_stats = None
+
+    # SMAE Bar Location Stats (BEYOND - entire bar)
+    beyond_smae_stats = []
+    beyond_smae_above_all_mask = pd.Series([True] * total_bars, index=df.index)
+    beyond_smae_between_all_mask = pd.Series([True] * total_bars, index=df.index)
+    beyond_smae_below_all_mask = pd.Series([True] * total_bars, index=df.index)
+
+    for n in [1, 2]:
+        upper_col = f'SMAE{n}_Upper'
+        lower_col = f'SMAE{n}_Lower'
+        if upper_col in df.columns and lower_col in df.columns:
+            beyond_above_mask = df['low'] > df[upper_col]
+            beyond_between_mask = (df['low'] >= df[lower_col]) & (df['high'] <= df[upper_col])
+            beyond_below_mask = df['high'] < df[lower_col]
+
+            beyond_smae_above_all_mask &= beyond_above_mask
+            beyond_smae_between_all_mask &= beyond_between_mask
+            beyond_smae_below_all_mask &= beyond_below_mask
+
+            beyond_smae_stats.append({
+                "n": n,
+                "above": int(beyond_above_mask.sum()),
+                "between": int(beyond_between_mask.sum()),
+                "below": int(beyond_below_mask.sum()),
+                "aboveUp": int((beyond_above_mask & is_up_bar).sum()),
+                "aboveDown": int((beyond_above_mask & is_down_bar).sum()),
+                "betweenUp": int((beyond_between_mask & is_up_bar).sum()),
+                "betweenDown": int((beyond_between_mask & is_down_bar).sum()),
+                "belowUp": int((beyond_below_mask & is_up_bar).sum()),
+                "belowDown": int((beyond_below_mask & is_down_bar).sum()),
+            })
+        else:
+            beyond_smae_stats.append({
+                "n": n,
+                "above": 0, "between": 0, "below": 0,
+                "aboveUp": 0, "aboveDown": 0,
+                "betweenUp": 0, "betweenDown": 0,
+                "belowUp": 0, "belowDown": 0,
+            })
+
+    # BEYOND ALL SMAEs aggregate
+    if smae_has_data:
+        beyond_all_smae_stats = {
+            "above": int(beyond_smae_above_all_mask.sum()),
+            "between": int(beyond_smae_between_all_mask.sum()),
+            "below": int(beyond_smae_below_all_mask.sum()),
+            "aboveUp": int((beyond_smae_above_all_mask & is_up_bar).sum()),
+            "aboveDown": int((beyond_smae_above_all_mask & is_down_bar).sum()),
+            "betweenUp": int((beyond_smae_between_all_mask & is_up_bar).sum()),
+            "betweenDown": int((beyond_smae_between_all_mask & is_down_bar).sum()),
+            "belowUp": int((beyond_smae_below_all_mask & is_up_bar).sum()),
+            "belowDown": int((beyond_smae_below_all_mask & is_down_bar).sum()),
+        }
+    else:
+        beyond_all_smae_stats = None
+
+    # PWAP Mean Bar Location Stats (ALL - close-based)
+    pwap_mean_stats = None
+    beyond_pwap_mean_stats = None
+    if 'PWAP_Mean' in df.columns:
+        pwap_above_mask = df['close'] > df['PWAP_Mean']
+        pwap_below_mask = df['close'] < df['PWAP_Mean']
+        pwap_mean_stats = {
+            "above": int(pwap_above_mask.sum()),
+            "below": int(pwap_below_mask.sum()),
+            "aboveUp": int((pwap_above_mask & is_up_bar).sum()),
+            "aboveDown": int((pwap_above_mask & is_down_bar).sum()),
+            "belowUp": int((pwap_below_mask & is_up_bar).sum()),
+            "belowDown": int((pwap_below_mask & is_down_bar).sum()),
+        }
+
+        # PWAP Mean Bar Location Stats (BEYOND - entire bar)
+        pwap_beyond_above_mask = df['low'] > df['PWAP_Mean']
+        pwap_beyond_below_mask = df['high'] < df['PWAP_Mean']
+        beyond_pwap_mean_stats = {
+            "above": int(pwap_beyond_above_mask.sum()),
+            "below": int(pwap_beyond_below_mask.sum()),
+            "aboveUp": int((pwap_beyond_above_mask & is_up_bar).sum()),
+            "aboveDown": int((pwap_beyond_above_mask & is_down_bar).sum()),
+            "belowUp": int((pwap_beyond_below_mask & is_up_bar).sum()),
+            "belowDown": int((pwap_beyond_below_mask & is_down_bar).sum()),
+        }
+
     # Calculate run distribution (consecutive bar runs)
     run_stats = {"upRuns": [], "dnRuns": [], "upDecay": [], "dnDecay": []}
 
@@ -2882,6 +3027,12 @@ def get_parquet_stats(filepath: str):
             "belowAllUp": beyond_below_all_up,
             "belowAllDown": beyond_below_all_down
         },
+        "smaeStats": smae_stats,
+        "allSmaeStats": all_smae_stats,
+        "beyondSmaeStats": beyond_smae_stats,
+        "beyondAllSmaeStats": beyond_all_smae_stats,
+        "pwapMeanStats": pwap_mean_stats,
+        "beyondPwapMeanStats": beyond_pwap_mean_stats,
         "emaRrDecay": ema_rr_decay,
         "wickDist": wick_dist,
         "signalData": signal_data,
