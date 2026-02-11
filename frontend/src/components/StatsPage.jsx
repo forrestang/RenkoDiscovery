@@ -207,7 +207,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   // Active tab — persist to localStorage
   const [activeTab, setActiveTab] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}statsActiveTab`)
-    return saved || 'general'
+    const validTabs = ['general', 'signals', 'playground', 'backtest']
+    return validTabs.includes(saved) ? saved : 'general'
   })
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}statsActiveTab`, activeTab)
@@ -1376,10 +1377,6 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             onClick={() => setActiveTab('signals')}
           >Type1/Type2</button>
           <button
-            className={`stats-tab ${activeTab === 'conditional' ? 'active' : ''}`}
-            onClick={() => setActiveTab('conditional')}
-          >Conditional</button>
-          <button
             className={`stats-tab ${activeTab === 'playground' ? 'active' : ''}`}
             onClick={() => setActiveTab('playground')}
           >Playground</button>
@@ -2061,12 +2058,6 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             </div>
           )}
 
-        </div>
-      )}
-
-      {/* ==================== Conditional Tab ==================== */}
-      {activeTab === 'conditional' && (
-        <div className="stats-tab-content">
           {/* State x Consecutive Bars Heatmap */}
           {stats.barData && stats.barData.state && (() => {
             const states = [3, 2, 1, -1, -2, -3];
@@ -2291,6 +2282,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
               </table>
             </div>
           )}
+
         </div>
       )}
 
