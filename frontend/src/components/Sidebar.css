@@ -702,6 +702,32 @@
   border-color: var(--accent-primary);
 }
 
+.cache-item.pending {
+  background: var(--accent-subtle);
+  border-color: var(--accent-primary);
+}
+
+.cache-item.pending .cache-instrument {
+  color: var(--accent-primary);
+}
+
+.cache-item.loaded {
+  border-color: var(--border-default);
+  background: transparent;
+}
+
+.loaded-tag {
+  margin-left: auto;
+  margin-right: auto;
+  padding: 1px 6px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
 .cache-item-main {
   flex: 1;
   display: flex;
@@ -2100,6 +2126,11 @@ input.no-spinners[type="number"] {
 .bypass-half-select {
   flex: 1 1 0 !important;
   min-width: 0;
+}
+
+.bypass-half-select.faint {
+  opacity: 0.3;
+  cursor: default;
 }
 
 /* Bypass results */

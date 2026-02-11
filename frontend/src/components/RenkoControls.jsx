@@ -114,6 +114,26 @@ function RenkoControls({ settings, onChange }) {
 
   const sizingMode = localSettings.sizingMode || 'price'
 
+  // TV mode only available when reversal > brick
+  const reversalExceedsBrick = sizingMode === 'price'
+    ? localSettings.reversalSize > localSettings.brickSize
+    : localSettings.reversalPct > localSettings.brickPct
+
+  const handleReversalModeChange = (mode) => {
+    const newSettings = { ...localSettings, reversalMode: mode }
+    setLocalSettings(newSettings)
+    onChange(newSettings)
+  }
+
+  // Force FP when reversal <= brick
+  useEffect(() => {
+    if (!reversalExceedsBrick && localSettings.reversalMode === 'tv') {
+      const newSettings = { ...localSettings, reversalMode: 'fp' }
+      setLocalSettings(newSettings)
+      onChange(newSettings)
+    }
+  }, [reversalExceedsBrick]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="renko-controls">
       <div className="chart-type-toggle" style={{ marginRight: '8px' }}>
@@ -215,6 +235,22 @@ function RenkoControls({ settings, onChange }) {
           </option>
         ))}
       </select>
+
+      <div className="chart-type-toggle" style={{ marginLeft: '8px' }}>
+        <button
+          className={`toggle-btn${(localSettings.reversalMode || 'fp') === 'fp' ? ' active' : ''}`}
+          onClick={() => handleReversalModeChange('fp')}
+        >
+          FP
+        </button>
+        <button
+          className={`toggle-btn${(localSettings.reversalMode || 'fp') === 'tv' ? ' active' : ''}${!reversalExceedsBrick ? ' faint' : ''}`}
+          onClick={() => reversalExceedsBrick && handleReversalModeChange('tv')}
+          style={!reversalExceedsBrick ? { cursor: 'default' } : {}}
+        >
+          TV
+        </button>
+      </div>
     </div>
   )
 }

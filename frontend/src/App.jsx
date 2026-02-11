@@ -52,6 +52,7 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState([])
   const [cachedInstruments, setCachedInstruments] = useState([])
   const [activeInstrument, setActiveInstrument] = useState(null)
+  const [pendingInstrument, setPendingInstrument] = useState(null)
   const [chartData, setChartData] = useState(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingResults, setProcessingResults] = useState(null)
@@ -105,6 +106,7 @@ function App() {
       if (!parsed.brickPct || parsed.brickPct <= 0) parsed.brickPct = 5
       if (!parsed.reversalPct || parsed.reversalPct <= 0) parsed.reversalPct = 10
       if (!parsed.adrPeriod || parsed.adrPeriod <= 0) parsed.adrPeriod = 14
+      if (!parsed.reversalMode) parsed.reversalMode = 'fp'
       return {
         brickSize: parsed.brickSize,
         reversalSize: parsed.reversalSize,
@@ -112,7 +114,8 @@ function App() {
         sizingMode: parsed.sizingMode,
         brickPct: parsed.brickPct,
         reversalPct: parsed.reversalPct,
-        adrPeriod: parsed.adrPeriod
+        adrPeriod: parsed.adrPeriod,
+        reversalMode: parsed.reversalMode
       }
     }
     return {
@@ -122,7 +125,8 @@ function App() {
       sizingMode: 'price',
       brickPct: 5,
       reversalPct: 10,
-      adrPeriod: 14
+      adrPeriod: 14,
+      reversalMode: 'fp'
     }
   })
   const [renkoData, setRenkoData] = useState(null)
@@ -750,6 +754,7 @@ function App() {
   const loadChart = async (instrument) => {
     if (instrument === activeInstrument && chartData) return;  // already loaded
     setActiveInstrument(instrument)
+    setPendingInstrument(null)
     setRenkoData(null) // Clear renko data when loading new instrument
     setIsLoading(true)
 
@@ -779,6 +784,17 @@ function App() {
     }
   }
 
+  const handleSelectInstrument = (instrument) => {
+    if (instrument === activeInstrument) return
+    setPendingInstrument(instrument)
+  }
+
+  const handleLoadPending = () => {
+    if (pendingInstrument) {
+      loadChart(pendingInstrument)
+    }
+  }
+
   const handlePricePrecisionChange = (e) => {
     const newPrecision = parseInt(e.target.value, 10)
     setPricePrecision(newPrecision)
@@ -798,6 +814,7 @@ function App() {
       const body = {
         sizing_mode: settings.sizingMode || 'price',
         wick_mode: settings.wickMode || 'all',
+        reversal_mode: settings.reversalMode || 'fp',
         working_dir: workingDir,
         session_schedule: sessionSchedule
       }
@@ -1020,6 +1037,16 @@ function App() {
               ))}
             </select>
           )}
+          <button
+            className={`load-chart-btn ${pendingInstrument && pendingInstrument !== activeInstrument ? 'ready' : ''}`}
+            onClick={handleLoadPending}
+            disabled={!pendingInstrument || pendingInstrument === activeInstrument}
+            title={pendingInstrument && pendingInstrument !== activeInstrument ? `Load ${pendingInstrument}` : 'Select an instrument to load'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14M5 12l7 7 7-7" />
+            </svg>
+          </button>
           </>)}
         </div>
       </header>
@@ -1045,7 +1072,8 @@ function App() {
             processingResults={processingResults}
             cachedInstruments={cachedInstruments}
             activeInstrument={activeInstrument}
-            onLoadChart={loadChart}
+            pendingInstrument={pendingInstrument}
+            onLoadChart={handleSelectInstrument}
             // Cache management
             onDeleteCache={deleteCache}
             onDeleteAllCache={deleteAllCache}

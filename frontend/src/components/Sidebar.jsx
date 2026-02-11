@@ -22,6 +22,7 @@ function Sidebar({
   processingResults,
   cachedInstruments,
   activeInstrument,
+  pendingInstrument,
   onLoadChart,
   // Cache management
   onDeleteCache,
@@ -153,6 +154,7 @@ function Sidebar({
     reversalPct: 10.0,
     adrPeriod: 14,
     wickMode: 'all',
+    reversalMode: 'fp',
     ma1Period: 20,
     ma2Period: 50,
     ma3Period: 200,
@@ -173,7 +175,7 @@ function Sidebar({
         if (Array.isArray(parsed) && parsed.length > 0) return parsed
       }
     } catch {}
-    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0020, brickPct: 5.0, reversalPct: 10.0, adrPeriod: 14, wickMode: 'all', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0] }]
+    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0020, brickPct: 5.0, reversalPct: 10.0, adrPeriod: 14, wickMode: 'all', reversalMode: 'fp', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0] }]
   })
   const [isBypassing, setIsBypassing] = useState(false)
   const [bypassResults, setBypassResults] = useState(null)
@@ -248,6 +250,7 @@ function Sidebar({
           reversal_pct: job.reversalPct,
           adr_period: job.adrPeriod,
           wick_mode: job.wickMode,
+          reversal_mode: job.reversalMode || 'fp',
           ma1_period: job.ma1Period,
           ma2_period: job.ma2Period,
           ma3_period: job.ma3Period,
@@ -282,6 +285,7 @@ function Sidebar({
         reversalPct: template.reversal_pct,
         adrPeriod: template.adr_period,
         wickMode: template.wick_mode,
+        reversalMode: template.reversal_mode || 'fp',
         ma1Period: template.ma1_period,
         ma2Period: template.ma2_period,
         ma3Period: template.ma3_period,
@@ -315,6 +319,7 @@ function Sidebar({
         reversal_pct: j.reversalPct,
         adr_period: j.adrPeriod,
         wick_mode: j.wickMode,
+        reversal_mode: j.reversalMode || 'fp',
         ma1_period: j.ma1Period,
         ma2_period: j.ma2Period,
         ma3_period: j.ma3Period,
@@ -832,7 +837,7 @@ function Sidebar({
                   {cachedInstruments.map(item => (
                     <div
                       key={item.instrument}
-                      className={`cache-item ${activeInstrument === item.instrument ? 'active' : ''}`}
+                      className={`cache-item ${pendingInstrument === item.instrument ? 'pending' : ''} ${activeInstrument === item.instrument && pendingInstrument !== item.instrument ? 'loaded' : ''}`}
                     >
                       <button
                         className="cache-item-main"
@@ -846,6 +851,9 @@ function Sidebar({
                             <span className="spinner cache-spinner" />
                           )}
                         </span>
+                          {activeInstrument === item.instrument && !isLoading && (
+                            <span className="loaded-tag">LOADED</span>
+                          )}
                           <div className="cache-tags">
                             {item.data_format && (
                               <span className={`cache-tag format-tag ${item.data_format.toLowerCase()}`}>
@@ -1114,6 +1122,19 @@ function Sidebar({
                         <option value="all">Wick: All</option>
                         <option value="big">Wick: Big</option>
                         <option value="none">Wick: None</option>
+                      </select>
+                      <select
+                        className={`stats-input mono bypass-half-select${!(job.sizingMode === 'price' ? job.reversalSize > job.brickSize : job.reversalPct > job.brickPct) ? ' faint' : ''}`}
+                        value={job.reversalMode || 'fp'}
+                        onChange={e => {
+                          if (job.sizingMode === 'price' ? job.reversalSize > job.brickSize : job.reversalPct > job.brickPct) {
+                            updateBypassJob(job.id, 'reversalMode', e.target.value)
+                          }
+                        }}
+                        disabled={!(job.sizingMode === 'price' ? job.reversalSize > job.brickSize : job.reversalPct > job.brickPct)}
+                      >
+                        <option value="fp">Rev: FP</option>
+                        <option value="tv">Rev: TV</option>
                       </select>
                     </div>
                     {job.sizingMode === 'price' ? (
