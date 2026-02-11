@@ -13,8 +13,14 @@ function RenkoControls({ settings, onChange }) {
     setLocalSettings(settings)
   }, [settings])
 
+  const deriveReversal = (s) => ({
+    ...s,
+    reversalSize: s.reversalMode === 'tv' ? s.brickSize * 2 : s.brickSize,
+    reversalPct: s.reversalMode === 'tv' ? s.brickPct * 2 : s.brickPct,
+  })
+
   const handleSizingModeChange = (mode) => {
-    const newSettings = { ...localSettings, sizingMode: mode }
+    const newSettings = deriveReversal({ ...localSettings, sizingMode: mode })
     setLocalSettings(newSettings)
     onChange(newSettings)
   }
@@ -33,30 +39,13 @@ function RenkoControls({ settings, onChange }) {
 
   const handleBrickSizeBlur = () => {
     if (localSettings.brickSize > 0) {
-      onChange(localSettings)
+      onChange(deriveReversal(localSettings))
     }
   }
 
   const handleBrickSizeKeyDown = (e) => {
     if (e.key === 'Enter' && localSettings.brickSize > 0) {
-      onChange(localSettings)
-    }
-  }
-
-  const handleReversalChange = (e) => {
-    const value = parseFloat(e.target.value) || 0
-    setLocalSettings(prev => ({ ...prev, reversalSize: value }))
-  }
-
-  const handleReversalBlur = () => {
-    if (localSettings.reversalSize > 0) {
-      onChange(localSettings)
-    }
-  }
-
-  const handleReversalKeyDown = (e) => {
-    if (e.key === 'Enter' && localSettings.reversalSize > 0) {
-      onChange(localSettings)
+      onChange(deriveReversal(localSettings))
     }
   }
 
@@ -68,30 +57,13 @@ function RenkoControls({ settings, onChange }) {
 
   const handleBrickPctBlur = () => {
     if (localSettings.brickPct > 0) {
-      onChange(localSettings)
+      onChange(deriveReversal(localSettings))
     }
   }
 
   const handleBrickPctKeyDown = (e) => {
     if (e.key === 'Enter' && localSettings.brickPct > 0) {
-      onChange(localSettings)
-    }
-  }
-
-  const handleReversalPctChange = (e) => {
-    const value = parseFloat(e.target.value) || 0
-    setLocalSettings(prev => ({ ...prev, reversalPct: value }))
-  }
-
-  const handleReversalPctBlur = () => {
-    if (localSettings.reversalPct > 0) {
-      onChange(localSettings)
-    }
-  }
-
-  const handleReversalPctKeyDown = (e) => {
-    if (e.key === 'Enter' && localSettings.reversalPct > 0) {
-      onChange(localSettings)
+      onChange(deriveReversal(localSettings))
     }
   }
 
@@ -114,25 +86,11 @@ function RenkoControls({ settings, onChange }) {
 
   const sizingMode = localSettings.sizingMode || 'price'
 
-  // TV mode only available when reversal > brick
-  const reversalExceedsBrick = sizingMode === 'price'
-    ? localSettings.reversalSize > localSettings.brickSize
-    : localSettings.reversalPct > localSettings.brickPct
-
   const handleReversalModeChange = (mode) => {
-    const newSettings = { ...localSettings, reversalMode: mode }
+    const newSettings = deriveReversal({ ...localSettings, reversalMode: mode })
     setLocalSettings(newSettings)
     onChange(newSettings)
   }
-
-  // Force FP when reversal <= brick
-  useEffect(() => {
-    if (!reversalExceedsBrick && localSettings.reversalMode === 'tv') {
-      const newSettings = { ...localSettings, reversalMode: 'fp' }
-      setLocalSettings(newSettings)
-      onChange(newSettings)
-    }
-  }, [reversalExceedsBrick]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="renko-controls">
@@ -152,34 +110,19 @@ function RenkoControls({ settings, onChange }) {
       </div>
 
       {sizingMode === 'price' ? (
-        <>
-          <div className="renko-size-input">
-            <input
-              type="number"
-              className="mono"
-              value={localSettings.brickSize}
-              onChange={handleBrickSizeChange}
-              onBlur={handleBrickSizeBlur}
-              onKeyDown={handleBrickSizeKeyDown}
-              min="0.00001"
-              step="0.0001"
-            />
-            <span className="input-suffix">Brick</span>
-          </div>
-          <div className="renko-reversal-input">
-            <input
-              type="number"
-              className="mono"
-              value={localSettings.reversalSize}
-              onChange={handleReversalChange}
-              onBlur={handleReversalBlur}
-              onKeyDown={handleReversalKeyDown}
-              min="0.00001"
-              step="0.0001"
-            />
-            <span className="input-suffix">Rev</span>
-          </div>
-        </>
+        <div className="renko-size-input">
+          <input
+            type="number"
+            className="mono"
+            value={localSettings.brickSize}
+            onChange={handleBrickSizeChange}
+            onBlur={handleBrickSizeBlur}
+            onKeyDown={handleBrickSizeKeyDown}
+            min="0.00001"
+            step="0.0001"
+          />
+          <span className="input-suffix">Brick</span>
+        </div>
       ) : (
         <>
           <div className="renko-size-input">
@@ -194,19 +137,6 @@ function RenkoControls({ settings, onChange }) {
               step="0.5"
             />
             <span className="input-suffix">Brick%</span>
-          </div>
-          <div className="renko-reversal-input">
-            <input
-              type="number"
-              className="mono"
-              value={localSettings.reversalPct}
-              onChange={handleReversalPctChange}
-              onBlur={handleReversalPctBlur}
-              onKeyDown={handleReversalPctKeyDown}
-              min="0.5"
-              step="0.5"
-            />
-            <span className="input-suffix">Rev%</span>
           </div>
           <div className="renko-size-input">
             <input
@@ -244,9 +174,8 @@ function RenkoControls({ settings, onChange }) {
           FP
         </button>
         <button
-          className={`toggle-btn${(localSettings.reversalMode || 'fp') === 'tv' ? ' active' : ''}${!reversalExceedsBrick ? ' faint' : ''}`}
-          onClick={() => reversalExceedsBrick && handleReversalModeChange('tv')}
-          style={!reversalExceedsBrick ? { cursor: 'default' } : {}}
+          className={`toggle-btn${(localSettings.reversalMode || 'fp') === 'tv' ? ' active' : ''}`}
+          onClick={() => handleReversalModeChange('tv')}
         >
           TV
         </button>

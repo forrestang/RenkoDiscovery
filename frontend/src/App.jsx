@@ -94,9 +94,6 @@ function App() {
         parsed.reversalSize = parsed.brickSize * parsed.reversalMultiplier
         delete parsed.reversalMultiplier
       }
-      if (!parsed.reversalSize || parsed.reversalSize <= 0) {
-        parsed.reversalSize = 0.0020
-      }
       // Default wickMode if not present
       if (!parsed.wickMode) {
         parsed.wickMode = 'all'
@@ -104,9 +101,12 @@ function App() {
       // Migrate: add ADR fields if missing
       if (!parsed.sizingMode) parsed.sizingMode = 'price'
       if (!parsed.brickPct || parsed.brickPct <= 0) parsed.brickPct = 5
-      if (!parsed.reversalPct || parsed.reversalPct <= 0) parsed.reversalPct = 10
       if (!parsed.adrPeriod || parsed.adrPeriod <= 0) parsed.adrPeriod = 14
       if (!parsed.reversalMode) parsed.reversalMode = 'fp'
+      // Always derive reversal from brick + mode (fixed ratio)
+      const mode = parsed.reversalMode
+      parsed.reversalSize = mode === 'tv' ? parsed.brickSize * 2 : parsed.brickSize
+      parsed.reversalPct = mode === 'tv' ? parsed.brickPct * 2 : parsed.brickPct
       return {
         brickSize: parsed.brickSize,
         reversalSize: parsed.reversalSize,
@@ -120,11 +120,11 @@ function App() {
     }
     return {
       brickSize: 0.0010,
-      reversalSize: 0.0020,
+      reversalSize: 0.0010,
       wickMode: 'all',
       sizingMode: 'price',
       brickPct: 5,
-      reversalPct: 10,
+      reversalPct: 5,
       adrPeriod: 14,
       reversalMode: 'fp'
     }

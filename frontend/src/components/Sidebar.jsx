@@ -149,9 +149,9 @@ function Sidebar({
     filenameManual: false,
     sizingMode: 'price',
     brickSize: 0.0010,
-    reversalSize: 0.0020,
+    reversalSize: 0.0010,
     brickPct: 5.0,
-    reversalPct: 10.0,
+    reversalPct: 5.0,
     adrPeriod: 14,
     wickMode: 'all',
     reversalMode: 'fp',
@@ -175,7 +175,7 @@ function Sidebar({
         if (Array.isArray(parsed) && parsed.length > 0) return parsed
       }
     } catch {}
-    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0020, brickPct: 5.0, reversalPct: 10.0, adrPeriod: 14, wickMode: 'all', reversalMode: 'fp', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0] }]
+    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0010, brickPct: 5.0, reversalPct: 5.0, adrPeriod: 14, wickMode: 'all', reversalMode: 'fp', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0] }]
   })
   const [isBypassing, setIsBypassing] = useState(false)
   const [bypassResults, setBypassResults] = useState(null)
@@ -189,18 +189,21 @@ function Sidebar({
   const autoBypassFilename = useCallback((job) => {
     if (!job.instrument) return ''
     if (job.sizingMode === 'adr') {
-      return `${job.instrument}_ADR${job.adrPeriod}_${job.brickPct}pct_${job.reversalPct}pct`
+      return `${job.instrument}_ADR${job.adrPeriod}_${job.brickPct}pct_${job.reversalMode || 'fp'}`
     }
-    return `${job.instrument}_${job.brickSize}_${job.reversalSize}`
+    return `${job.instrument}_${job.brickSize}_${job.reversalMode || 'fp'}`
   }, [])
 
   const updateBypassJob = useCallback((id, field, value) => {
     setBypassJobs(prev => prev.map(j => {
       if (j.id !== id) return j
       const updated = { ...j, [field]: value }
+      // Always derive reversal from brick + mode
+      updated.reversalSize = updated.reversalMode === 'tv' ? updated.brickSize * 2 : updated.brickSize
+      updated.reversalPct = updated.reversalMode === 'tv' ? updated.brickPct * 2 : updated.brickPct
       if (field === 'filename') {
         updated.filenameManual = value !== '' && value !== autoBypassFilename(j)
-      } else if (['instrument', 'sizingMode', 'brickSize', 'reversalSize', 'brickPct', 'reversalPct', 'adrPeriod'].includes(field) && !j.filenameManual) {
+      } else if (['instrument', 'sizingMode', 'brickSize', 'brickPct', 'adrPeriod', 'reversalMode'].includes(field) && !j.filenameManual) {
         updated.filename = autoBypassFilename(updated)
       }
       return updated
@@ -276,16 +279,19 @@ function Sidebar({
   const loadBypassTemplate = useCallback((jobId, template) => {
     setBypassJobs(prev => prev.map(j => {
       if (j.id !== jobId) return j
+      const rMode = template.reversal_mode || 'fp'
+      const brickSize = template.brick_size
+      const brickPct = template.brick_pct
       const updated = {
         ...j,
         sizingMode: template.sizing_mode,
-        brickSize: template.brick_size,
-        reversalSize: template.reversal_size,
-        brickPct: template.brick_pct,
-        reversalPct: template.reversal_pct,
+        brickSize,
+        reversalSize: rMode === 'tv' ? brickSize * 2 : brickSize,
+        brickPct,
+        reversalPct: rMode === 'tv' ? brickPct * 2 : brickPct,
         adrPeriod: template.adr_period,
         wickMode: template.wick_mode,
-        reversalMode: template.reversal_mode || 'fp',
+        reversalMode: rMode,
         ma1Period: template.ma1_period,
         ma2Period: template.ma2_period,
         ma3Period: template.ma3_period,
@@ -1124,14 +1130,9 @@ function Sidebar({
                         <option value="none">Wick: None</option>
                       </select>
                       <select
-                        className={`stats-input mono bypass-half-select${!(job.sizingMode === 'price' ? job.reversalSize > job.brickSize : job.reversalPct > job.brickPct) ? ' faint' : ''}`}
+                        className="stats-input mono bypass-half-select"
                         value={job.reversalMode || 'fp'}
-                        onChange={e => {
-                          if (job.sizingMode === 'price' ? job.reversalSize > job.brickSize : job.reversalPct > job.brickPct) {
-                            updateBypassJob(job.id, 'reversalMode', e.target.value)
-                          }
-                        }}
-                        disabled={!(job.sizingMode === 'price' ? job.reversalSize > job.brickSize : job.reversalPct > job.brickPct)}
+                        onChange={e => updateBypassJob(job.id, 'reversalMode', e.target.value)}
                       >
                         <option value="fp">Rev: FP</option>
                         <option value="tv">Rev: TV</option>
@@ -1141,15 +1142,11 @@ function Sidebar({
                       <div className="bypass-job-row">
                         <label className="option-label">Brick</label>
                         <input type="number" className="stats-input mono" step="0.0001" value={job.brickSize} onChange={e => updateBypassJob(job.id, 'brickSize', parseFloat(e.target.value) || 0)} />
-                        <label className="option-label">Rev</label>
-                        <input type="number" className="stats-input mono" step="0.0001" value={job.reversalSize} onChange={e => updateBypassJob(job.id, 'reversalSize', parseFloat(e.target.value) || 0)} />
                       </div>
                     ) : (
                       <div className="bypass-job-row">
                         <label className="option-label">Brick%</label>
                         <input type="number" className="stats-input mono" step="0.5" value={job.brickPct} onChange={e => updateBypassJob(job.id, 'brickPct', parseFloat(e.target.value) || 0)} />
-                        <label className="option-label">Rev%</label>
-                        <input type="number" className="stats-input mono" step="0.5" value={job.reversalPct} onChange={e => updateBypassJob(job.id, 'reversalPct', parseFloat(e.target.value) || 0)} />
                       </div>
                     )}
                     <div className="bypass-job-row">
