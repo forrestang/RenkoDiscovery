@@ -207,7 +207,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   // Active tab — persist to localStorage
   const [activeTab, setActiveTab] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}statsActiveTab`)
-    const validTabs = ['general', 'signals', 'playground', 'backtest']
+    const validTabs = ['general', 'signals', 'playground', 'backtest', 'optimizer']
     return validTabs.includes(saved) ? saved : 'general'
   })
   useEffect(() => {
@@ -712,6 +712,153 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btChartHeight`, btChartHeight.toString())
   }, [btChartHeight])
+
+  // ==================== Optimizer Tab State ====================
+  const OPT_DEFAULTS = {
+    single_ma: { enabled: true, ma_type: 'both', start_period: 5, end_period: 200, step: 5 },
+    two_ma: { enabled: true, ma_type: 'both', start_period: 5, end_period: 200, step: 5 },
+    three_ma: { enabled: true, ma_type: 'both', start_period: 5, end_period: 200, step: 10 },
+    single_smae: { enabled: true, start_period: 5, end_period: 200, step: 5, deviation: 1.0 },
+    two_smae: { enabled: true, start_period: 5, end_period: 200, step: 10, deviation: 1.0 },
+  }
+  const [optConfig, setOptConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}optConfig`)
+      if (saved) return { ...OPT_DEFAULTS, ...JSON.parse(saved) }
+    } catch {}
+    return { ...OPT_DEFAULTS }
+  })
+  const [optRunning, setOptRunning] = useState(false)
+  const [optProgress, setOptProgress] = useState(0)
+  const [optMessage, setOptMessage] = useState('')
+  const [optElapsed, setOptElapsed] = useState(0)
+  const optTimerRef = useRef(null)
+  const optStartRef = useRef(null)
+  const [optResults, setOptResults] = useState({})
+  const [optSortConfig, setOptSortConfig] = useState({})
+  const [optError, setOptError] = useState('')
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}optConfig`, JSON.stringify(optConfig))
+  }, [optConfig])
+
+  const updateOptSection = useCallback((section, field, value) => {
+    setOptConfig(prev => ({
+      ...prev,
+      [section]: { ...prev[section], [field]: value }
+    }))
+  }, [])
+
+  const formatOptTime = (seconds) => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m}:${s.toString().padStart(2, '0')}`
+  }
+
+  const runOptimizer = useCallback(async () => {
+    if (!filepath || !apiBase || optRunning) return
+    setOptRunning(true)
+    setOptProgress(0)
+    setOptMessage('Starting...')
+    setOptElapsed(0)
+    setOptResults({})
+    setOptError('')
+    optStartRef.current = Date.now()
+    optTimerRef.current = setInterval(() => {
+      setOptElapsed(Math.floor((Date.now() - optStartRef.current) / 1000))
+    }, 1000)
+
+    try {
+      const res = await fetch(`${apiBase}/optimizer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filepath, ...optConfig })
+      })
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop()
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6))
+              if (event.phase === 'progress') {
+                setOptProgress(event.progress)
+                setOptMessage(event.message)
+              } else if (event.phase === 'section_done') {
+                setOptResults(prev => {
+                  const next = { ...prev }
+                  if (event.results_zone) {
+                    next[event.section + '_zone'] = event.results_zone
+                    next[event.section + '_state'] = event.results_state
+                  } else {
+                    next[event.section] = event.results
+                  }
+                  return next
+                })
+              } else if (event.phase === 'done') {
+                setOptProgress(100)
+                setOptMessage('Done')
+              } else if (event.phase === 'error') {
+                setOptError(event.message)
+              }
+            } catch (e) {
+              console.error('Failed to parse optimizer SSE event:', e)
+            }
+          }
+        }
+      }
+    } catch (err) {
+      setOptError('Optimizer failed: ' + err.message)
+    } finally {
+      setOptRunning(false)
+      clearInterval(optTimerRef.current)
+    }
+  }, [filepath, apiBase, optRunning, optConfig])
+
+  const handleOptSort = useCallback((sectionKey, columnKey) => {
+    setOptSortConfig(prev => {
+      const cur = prev[sectionKey]
+      if (cur && cur.key === columnKey) {
+        return { ...prev, [sectionKey]: { key: columnKey, dir: cur.dir === 'desc' ? 'asc' : 'desc' } }
+      }
+      return { ...prev, [sectionKey]: { key: columnKey, dir: 'desc' } }
+    })
+  }, [])
+
+  const getSortedOptResults = useCallback((sectionKey) => {
+    const data = optResults[sectionKey]
+    if (!data || data.length === 0) return []
+    const sort = optSortConfig[sectionKey] || { key: 'score', dir: 'desc' }
+    const sorted = [...data].sort((a, b) => {
+      const av = a[sort.key] ?? 0
+      const bv = b[sort.key] ?? 0
+      return sort.dir === 'desc' ? bv - av : av - bv
+    })
+    return sorted
+  }, [optResults, optSortConfig])
+
+  const OptSortTh = useCallback(({ sectionKey, colKey, children, title, className }) => {
+    const sort = optSortConfig[sectionKey]
+    const active = sort && sort.key === colKey
+    return (
+      <th className={`sortable-th${className ? ' ' + className : ''}`} onClick={() => handleOptSort(sectionKey, colKey)} title={title}>
+        {children}
+        <span className={`sort-arrow ${active ? 'active' : ''}`}>
+          {active ? (sort.dir === 'desc' ? ' \u25BC' : ' \u25B2') : ' \u25BC'}
+        </span>
+      </th>
+    )
+  }, [optSortConfig, handleOptSort])
 
   const addBtSignal = useCallback(() => {
     setBtSignals(prev => [...prev, { name: `Signal ${prev.length + 1}`, expression: '', enabled: true }])
@@ -1384,6 +1531,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             className={`stats-tab ${activeTab === 'backtest' ? 'active' : ''}`}
             onClick={() => setActiveTab('backtest')}
           >Backtest</button>
+          <button
+            className={`stats-tab ${activeTab === 'optimizer' ? 'active' : ''}`}
+            onClick={() => setActiveTab('optimizer')}
+          >Optimizer</button>
         </div>
         {settings && (
           <div className="settings-inline-wrap">
@@ -3293,6 +3444,439 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
               </div>
             </div>,
             document.body
+          )}
+
+        </div>
+      )}
+
+      {/* ==================== Optimizer Tab ==================== */}
+      {activeTab === 'optimizer' && (
+        <div className="stats-tab-content">
+
+          {/* Config Module */}
+          <div className="stats-module module-box optimizer-config-module">
+            <div className="optimizer-config-header">
+              <span className="module-title-text">OPTIMIZER CONFIG</span>
+              <button
+                className="backtest-run-btn"
+                disabled={optRunning || !filepath}
+                onClick={runOptimizer}
+              >{optRunning ? 'Running...' : 'Run Optimizer'}</button>
+            </div>
+
+            {/* Single MA */}
+            <div className="optimizer-section-row">
+              <label className="optimizer-section-check">
+                <input type="checkbox" checked={optConfig.single_ma.enabled}
+                  onChange={e => updateOptSection('single_ma', 'enabled', e.target.checked)} />
+                Single MA
+              </label>
+              {optConfig.single_ma.enabled && (
+                <div className="optimizer-section-fields">
+                  <select className="backtest-config-select" value={optConfig.single_ma.ma_type}
+                    onChange={e => updateOptSection('single_ma', 'ma_type', e.target.value)}>
+                    <option value="ema">EMA</option><option value="sma">SMA</option><option value="both">Both</option>
+                  </select>
+                  <label className="opt-field-label">Start</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.single_ma.start_period}
+                    onChange={e => updateOptSection('single_ma', 'start_period', parseInt(e.target.value) || 5)} />
+                  <label className="opt-field-label">End</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.single_ma.end_period}
+                    onChange={e => updateOptSection('single_ma', 'end_period', parseInt(e.target.value) || 200)} />
+                  <label className="opt-field-label">Step</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.single_ma.step}
+                    onChange={e => updateOptSection('single_ma', 'step', parseInt(e.target.value) || 5)} />
+                </div>
+              )}
+            </div>
+
+            {/* Two MA */}
+            <div className="optimizer-section-row">
+              <label className="optimizer-section-check">
+                <input type="checkbox" checked={optConfig.two_ma.enabled}
+                  onChange={e => updateOptSection('two_ma', 'enabled', e.target.checked)} />
+                2-MA Combo
+              </label>
+              {optConfig.two_ma.enabled && (
+                <div className="optimizer-section-fields">
+                  <select className="backtest-config-select" value={optConfig.two_ma.ma_type}
+                    onChange={e => updateOptSection('two_ma', 'ma_type', e.target.value)}>
+                    <option value="ema">EMA</option><option value="sma">SMA</option><option value="both">Both</option>
+                  </select>
+                  <label className="opt-field-label">Start</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.two_ma.start_period}
+                    onChange={e => updateOptSection('two_ma', 'start_period', parseInt(e.target.value) || 5)} />
+                  <label className="opt-field-label">End</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.two_ma.end_period}
+                    onChange={e => updateOptSection('two_ma', 'end_period', parseInt(e.target.value) || 200)} />
+                  <label className="opt-field-label">Step</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.two_ma.step}
+                    onChange={e => updateOptSection('two_ma', 'step', parseInt(e.target.value) || 5)} />
+                </div>
+              )}
+            </div>
+
+            {/* Three MA */}
+            <div className="optimizer-section-row">
+              <label className="optimizer-section-check">
+                <input type="checkbox" checked={optConfig.three_ma.enabled}
+                  onChange={e => updateOptSection('three_ma', 'enabled', e.target.checked)} />
+                3-MA Combo
+              </label>
+              {optConfig.three_ma.enabled && (
+                <div className="optimizer-section-fields">
+                  <select className="backtest-config-select" value={optConfig.three_ma.ma_type}
+                    onChange={e => updateOptSection('three_ma', 'ma_type', e.target.value)}>
+                    <option value="ema">EMA</option><option value="sma">SMA</option><option value="both">Both</option>
+                  </select>
+                  <label className="opt-field-label">Start</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.three_ma.start_period}
+                    onChange={e => updateOptSection('three_ma', 'start_period', parseInt(e.target.value) || 5)} />
+                  <label className="opt-field-label">End</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.three_ma.end_period}
+                    onChange={e => updateOptSection('three_ma', 'end_period', parseInt(e.target.value) || 200)} />
+                  <label className="opt-field-label">Step</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.three_ma.step}
+                    onChange={e => updateOptSection('three_ma', 'step', parseInt(e.target.value) || 10)} />
+                </div>
+              )}
+            </div>
+
+            {/* Single SMAE */}
+            <div className="optimizer-section-row">
+              <label className="optimizer-section-check">
+                <input type="checkbox" checked={optConfig.single_smae.enabled}
+                  onChange={e => updateOptSection('single_smae', 'enabled', e.target.checked)} />
+                Single SMAE
+              </label>
+              {optConfig.single_smae.enabled && (
+                <div className="optimizer-section-fields">
+                  <label className="opt-field-label">Start</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.single_smae.start_period}
+                    onChange={e => updateOptSection('single_smae', 'start_period', parseInt(e.target.value) || 5)} />
+                  <label className="opt-field-label">End</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.single_smae.end_period}
+                    onChange={e => updateOptSection('single_smae', 'end_period', parseInt(e.target.value) || 200)} />
+                  <label className="opt-field-label">Step</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.single_smae.step}
+                    onChange={e => updateOptSection('single_smae', 'step', parseInt(e.target.value) || 5)} />
+                  <label className="opt-field-label">Dev</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.single_smae.deviation} step="0.1"
+                    onChange={e => updateOptSection('single_smae', 'deviation', parseFloat(e.target.value) || 1.0)} />
+                </div>
+              )}
+            </div>
+
+            {/* Two SMAE */}
+            <div className="optimizer-section-row">
+              <label className="optimizer-section-check">
+                <input type="checkbox" checked={optConfig.two_smae.enabled}
+                  onChange={e => updateOptSection('two_smae', 'enabled', e.target.checked)} />
+                2-SMAE Combo
+              </label>
+              {optConfig.two_smae.enabled && (
+                <div className="optimizer-section-fields">
+                  <label className="opt-field-label">Start</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.two_smae.start_period}
+                    onChange={e => updateOptSection('two_smae', 'start_period', parseInt(e.target.value) || 5)} />
+                  <label className="opt-field-label">End</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.two_smae.end_period}
+                    onChange={e => updateOptSection('two_smae', 'end_period', parseInt(e.target.value) || 200)} />
+                  <label className="opt-field-label">Step</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.two_smae.step}
+                    onChange={e => updateOptSection('two_smae', 'step', parseInt(e.target.value) || 10)} />
+                  <label className="opt-field-label">Dev</label>
+                  <input type="number" className="backtest-config-input" value={optConfig.two_smae.deviation} step="0.1"
+                    onChange={e => updateOptSection('two_smae', 'deviation', parseFloat(e.target.value) || 1.0)} />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Progress Module */}
+          {optRunning && (
+            <div className="stats-module module-box optimizer-progress-module">
+              <div className="optimizer-progress-status">{optMessage}</div>
+              <div className="optimizer-progress-track">
+                <div className="optimizer-progress-fill" style={{ width: `${optProgress}%` }} />
+              </div>
+              <div className="optimizer-progress-timer">{formatOptTime(optElapsed)}</div>
+            </div>
+          )}
+
+          {/* Error */}
+          {optError && (
+            <div className="stats-module module-box" style={{ borderColor: 'rgba(239,68,68,0.3)' }}>
+              <span style={{ color: '#ef4444', fontSize: '12px' }}>Error: {optError}</span>
+            </div>
+          )}
+
+          {/* Results: Single MA */}
+          {optResults.single_ma && optResults.single_ma.length > 0 && (
+            <div className="stats-module module-box optimizer-results-module">
+              <div className="module-title-text">Single MA Results ({optResults.single_ma.length} combos)</div>
+              <div className="optimizer-table-scroll">
+                <table className="stats-table optimizer-table">
+                  <thead>
+                    <tr>
+                      <OptSortTh sectionKey="single_ma" colKey="type" title="EMA or SMA">Type</OptSortTh>
+                      <OptSortTh sectionKey="single_ma" colKey="period" title="MA lookback period">Period</OptSortTh>
+                      <th title="Total bars analyzed">Bars</th>
+                      <OptSortTh sectionKey="single_ma" colKey="above_up_pct" title="% of bars above MA that are UP (green) bars" className="opt-sep">↑ Above</OptSortTh>
+                      <OptSortTh sectionKey="single_ma" colKey="above_dn_pct" title="% of bars above MA that are DN (red) bars">↓ Above</OptSortTh>
+                      <OptSortTh sectionKey="single_ma" colKey="below_up_pct" title="% of bars below MA that are UP (green) bars" className="opt-sep">↑ Below</OptSortTh>
+                      <OptSortTh sectionKey="single_ma" colKey="below_dn_pct" title="% of bars below MA that are DN (red) bars">↓ Below</OptSortTh>
+                      <OptSortTh sectionKey="single_ma" colKey="score" title="Avg of Above Up% and Below Dn% — higher = stronger directional bias" className="opt-sep">Score</OptSortTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getSortedOptResults('single_ma').map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.type}</td>
+                        <td>{r.period}</td>
+                        <td>{r.above_count + r.below_count}</td>
+                        <td className={`up opt-sep${r.above_up_pct > r.above_dn_pct ? ' highlight' : ''}`}>{r.above_up_pct}%</td>
+                        <td className={`dn${r.above_dn_pct > r.above_up_pct ? ' highlight' : ''}`}>{r.above_dn_pct}%</td>
+                        <td className={`up opt-sep${r.below_up_pct > r.below_dn_pct ? ' highlight' : ''}`}>{r.below_up_pct}%</td>
+                        <td className={`dn${r.below_dn_pct > r.below_up_pct ? ' highlight' : ''}`}>{r.below_dn_pct}%</td>
+                        <td className="opt-cell-score opt-sep">{r.score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Results: 2-MA Combo */}
+          {optResults.two_ma && optResults.two_ma.length > 0 && (
+            <div className="stats-module module-box optimizer-results-module">
+              <div className="module-title-text">2-MA Combo Results ({optResults.two_ma.length} combos)</div>
+              <div className="optimizer-table-scroll">
+                <table className="stats-table optimizer-table">
+                  <thead>
+                    <tr>
+                      <OptSortTh sectionKey="two_ma" colKey="type1" title="Type of faster MA">T1</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="period1" title="Period of faster MA">P1</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="type2" title="Type of slower MA">T2</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="period2" title="Period of slower MA">P2</OptSortTh>
+                      <th title="Total bars analyzed">Bars</th>
+                      <OptSortTh sectionKey="two_ma" colKey="above_up_pct" title="% UP bars when close is above both MAs" className="opt-sep">↑ Above</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="above_dn_pct" title="% DN bars when close is above both MAs">↓ Above</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="between_up_pct" title="% UP bars when close is between the two MAs" className="opt-sep">↑ Between</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="between_dn_pct" title="% DN bars when close is between the two MAs">↓ Between</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="below_up_pct" title="% UP bars when close is below both MAs" className="opt-sep">↑ Below</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="below_dn_pct" title="% DN bars when close is below both MAs">↓ Below</OptSortTh>
+                      <OptSortTh sectionKey="two_ma" colKey="score" title="Avg of Above Up% and Below Dn% — higher = stronger directional bias" className="opt-sep">Score</OptSortTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getSortedOptResults('two_ma').map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.type1}</td><td>{r.period1}</td>
+                        <td>{r.type2}</td><td>{r.period2}</td>
+                        <td>{r.above_count + r.between_count + r.below_count}</td>
+                        <td className={`up opt-sep${r.above_up_pct > r.above_dn_pct ? ' highlight' : ''}`}>{r.above_up_pct}%</td>
+                        <td className={`dn${r.above_dn_pct > r.above_up_pct ? ' highlight' : ''}`}>{r.above_dn_pct}%</td>
+                        <td className={`up opt-sep${r.between_up_pct > r.between_dn_pct ? ' highlight' : ''}`}>{r.between_up_pct}%</td>
+                        <td className={`dn${r.between_dn_pct > r.between_up_pct ? ' highlight' : ''}`}>{r.between_dn_pct}%</td>
+                        <td className={`up opt-sep${r.below_up_pct > r.below_dn_pct ? ' highlight' : ''}`}>{r.below_up_pct}%</td>
+                        <td className={`dn${r.below_dn_pct > r.below_up_pct ? ' highlight' : ''}`}>{r.below_dn_pct}%</td>
+                        <td className="opt-cell-score opt-sep">{r.score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Results: 3-MA Zone */}
+          {optResults.three_ma_zone && optResults.three_ma_zone.length > 0 && (
+            <div className="stats-module module-box optimizer-results-module">
+              <div className="module-title-text">3-MA Zone Results ({optResults.three_ma_zone.length} combos)</div>
+              <div className="optimizer-table-scroll">
+                <table className="stats-table optimizer-table">
+                  <thead>
+                    <tr>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="type1" title="Type of fastest MA">T1</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="period1" title="Period of fastest MA">P1</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="type2" title="Type of middle MA">T2</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="period2" title="Period of middle MA">P2</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="type3" title="Type of slowest MA">T3</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="period3" title="Period of slowest MA">P3</OptSortTh>
+                      <th title="Total bars analyzed">Bars</th>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="above_up_pct" title="% UP bars when close is above all 3 MAs" className="opt-sep">↑ Above</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="above_dn_pct" title="% DN bars when close is above all 3 MAs">↓ Above</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="between_up_pct" title="% UP bars when close is between the MAs (not above all or below all)" className="opt-sep">↑ Between</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="between_dn_pct" title="% DN bars when close is between the MAs (not above all or below all)">↓ Between</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="below_up_pct" title="% UP bars when close is below all 3 MAs" className="opt-sep">↑ Below</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="below_dn_pct" title="% DN bars when close is below all 3 MAs">↓ Below</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_zone" colKey="score" title="Avg of Above Up% and Below Dn%" className="opt-sep">Score</OptSortTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getSortedOptResults('three_ma_zone').map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.type1}</td><td>{r.period1}</td>
+                        <td>{r.type2}</td><td>{r.period2}</td>
+                        <td>{r.type3}</td><td>{r.period3}</td>
+                        <td>{r.above_count + r.between_count + r.below_count}</td>
+                        <td className={`up opt-sep${r.above_up_pct > r.above_dn_pct ? ' highlight' : ''}`}>{r.above_up_pct}%</td>
+                        <td className={`dn${r.above_dn_pct > r.above_up_pct ? ' highlight' : ''}`}>{r.above_dn_pct}%</td>
+                        <td className={`up opt-sep${r.between_up_pct > r.between_dn_pct ? ' highlight' : ''}`}>{r.between_up_pct}%</td>
+                        <td className={`dn${r.between_dn_pct > r.between_up_pct ? ' highlight' : ''}`}>{r.between_dn_pct}%</td>
+                        <td className={`up opt-sep${r.below_up_pct > r.below_dn_pct ? ' highlight' : ''}`}>{r.below_up_pct}%</td>
+                        <td className={`dn${r.below_dn_pct > r.below_up_pct ? ' highlight' : ''}`}>{r.below_dn_pct}%</td>
+                        <td className="opt-cell-score opt-sep">{r.score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Results: 3-MA State */}
+          {optResults.three_ma_state && optResults.three_ma_state.length > 0 && (
+            <div className="stats-module module-box optimizer-results-module">
+              <div className="module-title-text">3-MA State Results ({optResults.three_ma_state.length} combos)</div>
+              <div className="optimizer-table-scroll">
+                <table className="stats-table optimizer-table">
+                  <thead>
+                    <tr>
+                      <OptSortTh sectionKey="three_ma_state" colKey="type1" title="Type of fastest MA">T1</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="period1" title="Period of fastest MA">P1</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="type2" title="Type of middle MA">T2</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="period2" title="Period of middle MA">P2</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="type3" title="Type of slowest MA">T3</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="period3" title="Period of slowest MA">P3</OptSortTh>
+                      <th title="Total bars analyzed">Bars</th>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s+3_up_pct" title="State +3: Fast > Med > Slow (strongest bullish). % UP bars" className="opt-sep">↑ +3</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s+3_dn_pct" title="State +3: Fast > Med > Slow (strongest bullish). % DN bars">↓ +3</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s+2_up_pct" title="State +2: Fast > Slow > Med. % UP bars" className="opt-sep">↑ +2</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s+2_dn_pct" title="State +2: Fast > Slow > Med. % DN bars">↓ +2</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s+1_up_pct" title="State +1: Slow > Fast > Med (weakest bullish). % UP bars" className="opt-sep">↑ +1</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s+1_dn_pct" title="State +1: Slow > Fast > Med (weakest bullish). % DN bars">↓ +1</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s-1_up_pct" title="State -1: Med > Fast > Slow (weakest bearish). % UP bars" className="opt-sep">↑ -1</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s-1_dn_pct" title="State -1: Med > Fast > Slow (weakest bearish). % DN bars">↓ -1</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s-2_up_pct" title="State -2: Med > Slow > Fast. % UP bars" className="opt-sep">↑ -2</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s-2_dn_pct" title="State -2: Med > Slow > Fast. % DN bars">↓ -2</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s-3_up_pct" title="State -3: Slow > Med > Fast (strongest bearish). % UP bars" className="opt-sep">↑ -3</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="s-3_dn_pct" title="State -3: Slow > Med > Fast (strongest bearish). % DN bars">↓ -3</OptSortTh>
+                      <OptSortTh sectionKey="three_ma_state" colKey="score" title="Avg of Up% for positive states and Dn% for negative states" className="opt-sep">Score</OptSortTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getSortedOptResults('three_ma_state').map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.type1}</td><td>{r.period1}</td>
+                        <td>{r.type2}</td><td>{r.period2}</td>
+                        <td>{r.type3}</td><td>{r.period3}</td>
+                        <td>{r['s+3_count'] + r['s+2_count'] + r['s+1_count'] + r['s-1_count'] + r['s-2_count'] + r['s-3_count']}</td>
+                        <td className={`up opt-sep${r['s+3_up_pct'] > r['s+3_dn_pct'] ? ' highlight' : ''}`}>{r['s+3_up_pct']}%</td>
+                        <td className={`dn${r['s+3_dn_pct'] > r['s+3_up_pct'] ? ' highlight' : ''}`}>{r['s+3_dn_pct']}%</td>
+                        <td className={`up opt-sep${r['s+2_up_pct'] > r['s+2_dn_pct'] ? ' highlight' : ''}`}>{r['s+2_up_pct']}%</td>
+                        <td className={`dn${r['s+2_dn_pct'] > r['s+2_up_pct'] ? ' highlight' : ''}`}>{r['s+2_dn_pct']}%</td>
+                        <td className={`up opt-sep${r['s+1_up_pct'] > r['s+1_dn_pct'] ? ' highlight' : ''}`}>{r['s+1_up_pct']}%</td>
+                        <td className={`dn${r['s+1_dn_pct'] > r['s+1_up_pct'] ? ' highlight' : ''}`}>{r['s+1_dn_pct']}%</td>
+                        <td className={`up opt-sep${r['s-1_up_pct'] > r['s-1_dn_pct'] ? ' highlight' : ''}`}>{r['s-1_up_pct']}%</td>
+                        <td className={`dn${r['s-1_dn_pct'] > r['s-1_up_pct'] ? ' highlight' : ''}`}>{r['s-1_dn_pct']}%</td>
+                        <td className={`up opt-sep${r['s-2_up_pct'] > r['s-2_dn_pct'] ? ' highlight' : ''}`}>{r['s-2_up_pct']}%</td>
+                        <td className={`dn${r['s-2_dn_pct'] > r['s-2_up_pct'] ? ' highlight' : ''}`}>{r['s-2_dn_pct']}%</td>
+                        <td className={`up opt-sep${r['s-3_up_pct'] > r['s-3_dn_pct'] ? ' highlight' : ''}`}>{r['s-3_up_pct']}%</td>
+                        <td className={`dn${r['s-3_dn_pct'] > r['s-3_up_pct'] ? ' highlight' : ''}`}>{r['s-3_dn_pct']}%</td>
+                        <td className="opt-cell-score opt-sep">{r.score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Results: Single SMAE */}
+          {optResults.single_smae && optResults.single_smae.length > 0 && (
+            <div className="stats-module module-box optimizer-results-module">
+              <div className="module-title-text">Single SMAE Results ({optResults.single_smae.length} combos)</div>
+              <div className="optimizer-table-scroll">
+                <table className="stats-table optimizer-table">
+                  <thead>
+                    <tr>
+                      <OptSortTh sectionKey="single_smae" colKey="period" title="SMA lookback period for envelope center">Period</OptSortTh>
+                      <OptSortTh sectionKey="single_smae" colKey="deviation" title="Envelope deviation % (upper = SMA*(1+dev/100), lower = SMA*(1-dev/100))">Dev</OptSortTh>
+                      <th title="Total bars analyzed">Bars</th>
+                      <OptSortTh sectionKey="single_smae" colKey="above_up_pct" title="% UP bars when close is above the upper envelope line" className="opt-sep">↑ Above</OptSortTh>
+                      <OptSortTh sectionKey="single_smae" colKey="above_dn_pct" title="% DN bars when close is above the upper envelope line">↓ Above</OptSortTh>
+                      <OptSortTh sectionKey="single_smae" colKey="between_up_pct" title="% UP bars when close is between upper and lower envelope lines" className="opt-sep">↑ Between</OptSortTh>
+                      <OptSortTh sectionKey="single_smae" colKey="between_dn_pct" title="% DN bars when close is between upper and lower envelope lines">↓ Between</OptSortTh>
+                      <OptSortTh sectionKey="single_smae" colKey="below_up_pct" title="% UP bars when close is below the lower envelope line" className="opt-sep">↑ Below</OptSortTh>
+                      <OptSortTh sectionKey="single_smae" colKey="below_dn_pct" title="% DN bars when close is below the lower envelope line">↓ Below</OptSortTh>
+                      <OptSortTh sectionKey="single_smae" colKey="score" title="Avg of Above Up% and Below Dn% — higher = stronger directional bias" className="opt-sep">Score</OptSortTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getSortedOptResults('single_smae').map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.period}</td>
+                        <td>{r.deviation}</td>
+                        <td>{r.above_count + r.between_count + r.below_count}</td>
+                        <td className={`up opt-sep${r.above_up_pct > r.above_dn_pct ? ' highlight' : ''}`}>{r.above_up_pct}%</td>
+                        <td className={`dn${r.above_dn_pct > r.above_up_pct ? ' highlight' : ''}`}>{r.above_dn_pct}%</td>
+                        <td className={`up opt-sep${r.between_up_pct > r.between_dn_pct ? ' highlight' : ''}`}>{r.between_up_pct}%</td>
+                        <td className={`dn${r.between_dn_pct > r.between_up_pct ? ' highlight' : ''}`}>{r.between_dn_pct}%</td>
+                        <td className={`up opt-sep${r.below_up_pct > r.below_dn_pct ? ' highlight' : ''}`}>{r.below_up_pct}%</td>
+                        <td className={`dn${r.below_dn_pct > r.below_up_pct ? ' highlight' : ''}`}>{r.below_dn_pct}%</td>
+                        <td className="opt-cell-score opt-sep">{r.score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Results: 2-SMAE Combo */}
+          {optResults.two_smae && optResults.two_smae.length > 0 && (
+            <div className="stats-module module-box optimizer-results-module">
+              <div className="module-title-text">2-SMAE Combo Results ({optResults.two_smae.length} combos)</div>
+              <div className="optimizer-table-scroll">
+                <table className="stats-table optimizer-table">
+                  <thead>
+                    <tr>
+                      <OptSortTh sectionKey="two_smae" colKey="period1" title="Period of faster SMAE">P1</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="deviation1" title="Deviation % for envelope 1">Dev1</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="period2" title="Period of slower SMAE">P2</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="deviation2" title="Deviation % for envelope 2">Dev2</OptSortTh>
+                      <th title="Total bars analyzed">Bars</th>
+                      <OptSortTh sectionKey="two_smae" colKey="above_up_pct" title="% UP bars when close is above both upper envelope lines" className="opt-sep">↑ Above</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="above_dn_pct" title="% DN bars when close is above both upper envelope lines">↓ Above</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="between_up_pct" title="% UP bars when close is not above both uppers and not below both lowers" className="opt-sep">↑ Between</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="between_dn_pct" title="% DN bars when close is not above both uppers and not below both lowers">↓ Between</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="below_up_pct" title="% UP bars when close is below both lower envelope lines" className="opt-sep">↑ Below</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="below_dn_pct" title="% DN bars when close is below both lower envelope lines">↓ Below</OptSortTh>
+                      <OptSortTh sectionKey="two_smae" colKey="score" title="Avg of Above Up% and Below Dn% — higher = stronger directional bias" className="opt-sep">Score</OptSortTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getSortedOptResults('two_smae').map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.period1}</td><td>{r.deviation1}</td>
+                        <td>{r.period2}</td><td>{r.deviation2}</td>
+                        <td>{r.above_count + r.between_count + r.below_count}</td>
+                        <td className={`up opt-sep${r.above_up_pct > r.above_dn_pct ? ' highlight' : ''}`}>{r.above_up_pct}%</td>
+                        <td className={`dn${r.above_dn_pct > r.above_up_pct ? ' highlight' : ''}`}>{r.above_dn_pct}%</td>
+                        <td className={`up opt-sep${r.between_up_pct > r.between_dn_pct ? ' highlight' : ''}`}>{r.between_up_pct}%</td>
+                        <td className={`dn${r.between_dn_pct > r.between_up_pct ? ' highlight' : ''}`}>{r.between_dn_pct}%</td>
+                        <td className={`up opt-sep${r.below_up_pct > r.below_dn_pct ? ' highlight' : ''}`}>{r.below_up_pct}%</td>
+                        <td className={`dn${r.below_dn_pct > r.below_up_pct ? ' highlight' : ''}`}>{r.below_dn_pct}%</td>
+                        <td className="opt-cell-score opt-sep">{r.score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
 
         </div>

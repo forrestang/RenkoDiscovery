@@ -4,6 +4,7 @@ RenkoDiscovery Backend - Financial Data Processing API
 import os
 import re
 import json
+import itertools
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -141,6 +142,31 @@ class BacktestRequest(BaseModel):
     target_ma: int = 1      # which MA (1/2/3) for ma_trail target
     report_unit: str = 'rr' # 'rr' or 'adr' — unit for result values
     allow_overlap: bool = True  # when False, skip entries while a trade is open
+
+
+class OptMASectionConfig(BaseModel):
+    enabled: bool = True
+    ma_type: str = "both"        # "ema" | "sma" | "both"
+    start_period: int = 5
+    end_period: int = 200
+    step: int = 5
+
+
+class OptSMAESectionConfig(BaseModel):
+    enabled: bool = True
+    start_period: int = 5
+    end_period: int = 200
+    step: int = 5
+    deviation: float = 1.0
+
+
+class OptimizerRequest(BaseModel):
+    filepath: str
+    single_ma: OptMASectionConfig = OptMASectionConfig()
+    two_ma: OptMASectionConfig = OptMASectionConfig()
+    three_ma: OptMASectionConfig = OptMASectionConfig(step=10)
+    single_smae: OptSMAESectionConfig = OptSMAESectionConfig()
+    two_smae: OptSMAESectionConfig = OptSMAESectionConfig(step=10)
 
 
 class DirectGenerateJob(BaseModel):
@@ -3944,6 +3970,369 @@ def delete_all_ml_models(working_dir: Optional[str] = None):
                         errors.append(str(e))
 
     return {"status": "ok", "deleted": deleted, "errors": errors}
+
+
+# ==================== Optimizer ====================
+
+def _compute_sma(values: np.ndarray, period: int) -> np.ndarray:
+    """Compute SMA using cumsum for speed. Returns array with NaN for first period-1 bars."""
+    n = len(values)
+    out = np.full(n, np.nan)
+    if n < period:
+        return out
+    cs = np.cumsum(values)
+    out[period - 1] = cs[period - 1] / period
+    out[period:] = (cs[period:] - cs[:-period]) / period
+    return out
+
+
+def _compute_ema_np(values: np.ndarray, period: int) -> np.ndarray:
+    """Compute EMA on numpy array. Returns array with NaN for first period-1 bars."""
+    n = len(values)
+    out = np.full(n, np.nan)
+    if n < period:
+        return out
+    mult = 2.0 / (period + 1)
+    out[period - 1] = np.mean(values[:period])
+    for i in range(period, n):
+        out[i] = (values[i] - out[i - 1]) * mult + out[i - 1]
+    return out
+
+
+def _zone_pcts(is_up: np.ndarray, is_dn: np.ndarray, mask: np.ndarray):
+    """Compute up%/dn%/count for bars matching boolean mask."""
+    cnt = int(np.sum(mask))
+    if cnt == 0:
+        return 0.0, 0.0, 0
+    up_pct = round(float(np.sum(is_up & mask)) / cnt * 100, 2)
+    dn_pct = round(float(np.sum(is_dn & mask)) / cnt * 100, 2)
+    return up_pct, dn_pct, cnt
+
+
+@app.post("/optimizer")
+def run_optimizer(req: OptimizerRequest):
+    """Sweep MA/SMAE configs and report directional bias via SSE streaming."""
+
+    def generate():
+        try:
+            yield _sse_event({"phase": "progress", "section": "", "section_index": 0,
+                              "total_sections": 0, "message": "Loading data...", "progress": 0})
+
+            df = pd.read_parquet(req.filepath)
+            close = df['close'].values.astype(np.float64)
+            open_ = df['open'].values.astype(np.float64)
+            is_up = close > open_
+            is_dn = close < open_
+            valid = np.isfinite(close)  # for NaN masking later
+
+            # Collect enabled sections
+            sections = []
+            if req.single_ma.enabled:
+                sections.append(("single_ma", req.single_ma))
+            if req.two_ma.enabled:
+                sections.append(("two_ma", req.two_ma))
+            if req.three_ma.enabled:
+                sections.append(("three_ma", req.three_ma))
+            if req.single_smae.enabled:
+                sections.append(("single_smae", req.single_smae))
+            if req.two_smae.enabled:
+                sections.append(("two_smae", req.two_smae))
+
+            total_sections = len(sections)
+            if total_sections == 0:
+                yield _sse_event({"phase": "done", "progress": 100})
+                return
+
+            # Precompute all unique MA/SMA series
+            series_cache = {}
+            all_periods = set()
+            all_types = set()
+            for sec_name, cfg in sections:
+                periods = list(range(cfg.start_period, cfg.end_period + 1, cfg.step))
+                for p in periods:
+                    all_periods.add(p)
+                if hasattr(cfg, 'ma_type'):
+                    if cfg.ma_type in ('ema', 'both'):
+                        all_types.add('ema')
+                    if cfg.ma_type in ('sma', 'both'):
+                        all_types.add('sma')
+                else:
+                    all_types.add('sma')
+
+            yield _sse_event({"phase": "progress", "section": "", "section_index": 0,
+                              "total_sections": total_sections, "message": "Precomputing MA series...", "progress": 1})
+
+            for t in all_types:
+                for p in sorted(all_periods):
+                    if (t, p) not in series_cache:
+                        if t == 'ema':
+                            series_cache[(t, p)] = _compute_ema_np(close, p)
+                        else:
+                            series_cache[(t, p)] = _compute_sma(close, p)
+
+            # Process each section
+            for sec_idx, (sec_name, cfg) in enumerate(sections):
+                base_progress = int(sec_idx / total_sections * 100)
+                sec_progress_range = 100 / total_sections
+
+                yield _sse_event({"phase": "progress", "section": sec_name,
+                                  "section_index": sec_idx + 1, "total_sections": total_sections,
+                                  "message": f"Running {sec_name}...", "progress": base_progress + 2})
+
+                periods = list(range(cfg.start_period, cfg.end_period + 1, cfg.step))
+
+                if sec_name == "single_ma":
+                    ma_cfg = cfg
+                    types = []
+                    if ma_cfg.ma_type in ('ema', 'both'):
+                        types.append('ema')
+                    if ma_cfg.ma_type in ('sma', 'both'):
+                        types.append('sma')
+
+                    results = []
+                    candidates = [(t, p) for t in types for p in periods]
+                    for i, (t, p) in enumerate(candidates):
+                        ma_vals = series_cache[(t, p)]
+                        ok = valid & np.isfinite(ma_vals)
+                        above = ok & (close > ma_vals)
+                        below = ok & (close < ma_vals)
+                        au, ad, ac = _zone_pcts(is_up, is_dn, above)
+                        bu, bd, bc = _zone_pcts(is_up, is_dn, below)
+                        score = round((au + bd) / 2, 2)
+                        results.append({"type": t.upper(), "period": p,
+                                        "above_up_pct": au, "above_dn_pct": ad, "above_count": ac,
+                                        "below_up_pct": bu, "below_dn_pct": bd, "below_count": bc,
+                                        "score": score})
+                        if (i + 1) % 10 == 0:
+                            pct = base_progress + int((i + 1) / len(candidates) * sec_progress_range)
+                            yield _sse_event({"phase": "progress", "section": sec_name,
+                                              "section_index": sec_idx + 1, "total_sections": total_sections,
+                                              "message": f"Single MA: {i+1}/{len(candidates)}", "progress": min(pct, 99)})
+
+                    yield _sse_event({"phase": "section_done", "section": sec_name, "results": results})
+
+                elif sec_name == "two_ma":
+                    ma_cfg = cfg
+                    types = []
+                    if ma_cfg.ma_type in ('ema', 'both'):
+                        types.append('ema')
+                    if ma_cfg.ma_type in ('sma', 'both'):
+                        types.append('sma')
+
+                    candidates = [(t, p) for t in types for p in periods]
+                    combos = list(itertools.combinations(candidates, 2))
+                    # Ensure period ordering: p1 < p2
+                    combos = [(a, b) if a[1] < b[1] else (b, a) for a, b in combos]
+                    # Remove duplicates and same-period pairs
+                    seen = set()
+                    unique_combos = []
+                    for a, b in combos:
+                        if a[1] == b[1]:
+                            continue
+                        key = (a, b)
+                        if key not in seen:
+                            seen.add(key)
+                            unique_combos.append((a, b))
+                    combos = unique_combos
+
+                    results = []
+                    for i, ((t1, p1), (t2, p2)) in enumerate(combos):
+                        ma1 = series_cache[(t1, p1)]
+                        ma2 = series_cache[(t2, p2)]
+                        ok = valid & np.isfinite(ma1) & np.isfinite(ma2)
+                        upper = np.maximum(ma1, ma2)
+                        lower = np.minimum(ma1, ma2)
+                        above_both = ok & (close > upper)
+                        between = ok & (close <= upper) & (close >= lower)
+                        below_both = ok & (close < lower)
+                        au, ad, ac = _zone_pcts(is_up, is_dn, above_both)
+                        mu, md, mc = _zone_pcts(is_up, is_dn, between)
+                        bu, bd, bc = _zone_pcts(is_up, is_dn, below_both)
+                        score = round((au + bd) / 2, 2)
+                        results.append({
+                            "type1": t1.upper(), "period1": p1, "type2": t2.upper(), "period2": p2,
+                            "above_up_pct": au, "above_dn_pct": ad, "above_count": ac,
+                            "between_up_pct": mu, "between_dn_pct": md, "between_count": mc,
+                            "below_up_pct": bu, "below_dn_pct": bd, "below_count": bc,
+                            "score": score
+                        })
+                        if (i + 1) % 50 == 0:
+                            pct = base_progress + int((i + 1) / len(combos) * sec_progress_range)
+                            yield _sse_event({"phase": "progress", "section": sec_name,
+                                              "section_index": sec_idx + 1, "total_sections": total_sections,
+                                              "message": f"2-MA Combo: {i+1}/{len(combos)}", "progress": min(pct, 99)})
+
+                    yield _sse_event({"phase": "section_done", "section": sec_name, "results": results})
+
+                elif sec_name == "three_ma":
+                    ma_cfg = cfg
+                    types = []
+                    if ma_cfg.ma_type in ('ema', 'both'):
+                        types.append('ema')
+                    if ma_cfg.ma_type in ('sma', 'both'):
+                        types.append('sma')
+
+                    candidates = [(t, p) for t in types for p in periods]
+                    combos = list(itertools.combinations(candidates, 3))
+                    # Sort each triple by period ascending
+                    combos = [tuple(sorted(c, key=lambda x: x[1])) for c in combos]
+                    # Remove duplicates and triples with duplicate periods
+                    seen = set()
+                    unique_combos = []
+                    for c in combos:
+                        if c[0][1] == c[1][1] or c[1][1] == c[2][1] or c[0][1] == c[2][1]:
+                            continue
+                        if c not in seen:
+                            seen.add(c)
+                            unique_combos.append(c)
+                    combos = unique_combos
+
+                    results_zone = []
+                    results_state = []
+                    for i, ((t1, p1), (t2, p2), (t3, p3)) in enumerate(combos):
+                        fast = series_cache[(t1, p1)]
+                        med = series_cache[(t2, p2)]
+                        slow = series_cache[(t3, p3)]
+                        ok = valid & np.isfinite(fast) & np.isfinite(med) & np.isfinite(slow)
+                        top = np.maximum(np.maximum(fast, med), slow)
+                        bot = np.minimum(np.minimum(fast, med), slow)
+
+                        above_all = ok & (close > top)
+                        below_all = ok & (close < bot)
+                        between = ok & ~above_all & ~below_all
+
+                        z_au, z_ad, z_ac = _zone_pcts(is_up, is_dn, above_all)
+                        z_mu, z_md, z_mc = _zone_pcts(is_up, is_dn, between)
+                        z_bu, z_bd, z_bc = _zone_pcts(is_up, is_dn, below_all)
+                        zone_score = round((z_au + z_bd) / 2, 2)
+
+                        results_zone.append({
+                            "type1": t1.upper(), "period1": p1, "type2": t2.upper(), "period2": p2,
+                            "type3": t3.upper(), "period3": p3,
+                            "above_up_pct": z_au, "above_dn_pct": z_ad, "above_count": z_ac,
+                            "between_up_pct": z_mu, "between_dn_pct": z_md, "between_count": z_mc,
+                            "below_up_pct": z_bu, "below_dn_pct": z_bd, "below_count": z_bc,
+                            "score": zone_score
+                        })
+
+                        # State classification: vectorized
+                        # +3: fast>med>slow, +2: fast>slow>med, +1: slow>fast>med
+                        # -1: med>fast>slow, -2: med>slow>fast, -3: slow>med>fast
+                        s_p3 = ok & (fast > med) & (med > slow)
+                        s_p2 = ok & (fast > slow) & (slow > med)
+                        s_p1 = ok & (slow > fast) & (fast > med)
+                        s_n1 = ok & (med > fast) & (fast > slow)
+                        s_n2 = ok & (med > slow) & (slow > fast)
+                        s_n3 = ok & (slow > med) & (med > fast)
+
+                        state_row = {
+                            "type1": t1.upper(), "period1": p1, "type2": t2.upper(), "period2": p2,
+                            "type3": t3.upper(), "period3": p3,
+                        }
+                        state_score_parts = []
+                        for label, mask in [("+3", s_p3), ("+2", s_p2), ("+1", s_p1),
+                                            ("-1", s_n1), ("-2", s_n2), ("-3", s_n3)]:
+                            su, sd, sc = _zone_pcts(is_up, is_dn, mask)
+                            state_row[f"s{label}_up_pct"] = su
+                            state_row[f"s{label}_dn_pct"] = sd
+                            state_row[f"s{label}_count"] = sc
+                            # For positive states, "correct" is up; for negative, "correct" is dn
+                            if label.startswith('+'):
+                                state_score_parts.append(su)
+                            else:
+                                state_score_parts.append(sd)
+                        state_row["score"] = round(sum(state_score_parts) / len(state_score_parts), 2) if state_score_parts else 0.0
+                        results_state.append(state_row)
+
+                        if (i + 1) % 200 == 0:
+                            pct = base_progress + int((i + 1) / len(combos) * sec_progress_range)
+                            yield _sse_event({"phase": "progress", "section": sec_name,
+                                              "section_index": sec_idx + 1, "total_sections": total_sections,
+                                              "message": f"3-MA Combo: {i+1}/{len(combos)}", "progress": min(pct, 99)})
+
+                    yield _sse_event({"phase": "section_done", "section": sec_name,
+                                      "results_zone": results_zone, "results_state": results_state})
+
+                elif sec_name == "single_smae":
+                    smae_cfg = cfg
+                    dev_mult = smae_cfg.deviation / 100.0
+                    results = []
+                    for i, p in enumerate(periods):
+                        sma_vals = series_cache.get(('sma', p))
+                        if sma_vals is None:
+                            sma_vals = _compute_sma(close, p)
+                            series_cache[('sma', p)] = sma_vals
+                        upper = sma_vals * (1 + dev_mult)
+                        lower = sma_vals * (1 - dev_mult)
+                        ok = valid & np.isfinite(sma_vals)
+                        above = ok & (close > upper)
+                        below = ok & (close < lower)
+                        between = ok & ~above & ~below
+                        au, ad, ac = _zone_pcts(is_up, is_dn, above)
+                        mu, md, mc = _zone_pcts(is_up, is_dn, between)
+                        bu, bd, bc = _zone_pcts(is_up, is_dn, below)
+                        score = round((au + bd) / 2, 2)
+                        results.append({"period": p, "deviation": smae_cfg.deviation,
+                                        "above_up_pct": au, "above_dn_pct": ad, "above_count": ac,
+                                        "between_up_pct": mu, "between_dn_pct": md, "between_count": mc,
+                                        "below_up_pct": bu, "below_dn_pct": bd, "below_count": bc,
+                                        "score": score})
+                        if (i + 1) % 10 == 0:
+                            pct = base_progress + int((i + 1) / len(periods) * sec_progress_range)
+                            yield _sse_event({"phase": "progress", "section": sec_name,
+                                              "section_index": sec_idx + 1, "total_sections": total_sections,
+                                              "message": f"Single SMAE: {i+1}/{len(periods)}", "progress": min(pct, 99)})
+
+                    yield _sse_event({"phase": "section_done", "section": sec_name, "results": results})
+
+                elif sec_name == "two_smae":
+                    smae_cfg = cfg
+                    dev_mult = smae_cfg.deviation / 100.0
+                    combos = [(p1, p2) for p1, p2 in itertools.combinations(periods, 2)]
+                    results = []
+                    for i, (p1, p2) in enumerate(combos):
+                        sma1 = series_cache.get(('sma', p1))
+                        if sma1 is None:
+                            sma1 = _compute_sma(close, p1)
+                            series_cache[('sma', p1)] = sma1
+                        sma2 = series_cache.get(('sma', p2))
+                        if sma2 is None:
+                            sma2 = _compute_sma(close, p2)
+                            series_cache[('sma', p2)] = sma2
+                        upper1 = sma1 * (1 + dev_mult)
+                        upper2 = sma2 * (1 + dev_mult)
+                        lower1 = sma1 * (1 - dev_mult)
+                        lower2 = sma2 * (1 - dev_mult)
+                        ok = valid & np.isfinite(sma1) & np.isfinite(sma2)
+                        above_both = ok & (close > upper1) & (close > upper2)
+                        below_both = ok & (close < lower1) & (close < lower2)
+                        between = ok & ~above_both & ~below_both
+                        au, ad, ac = _zone_pcts(is_up, is_dn, above_both)
+                        mu, md, mc = _zone_pcts(is_up, is_dn, between)
+                        bu, bd, bc = _zone_pcts(is_up, is_dn, below_both)
+                        score = round((au + bd) / 2, 2)
+                        results.append({
+                            "period1": p1, "deviation1": smae_cfg.deviation,
+                            "period2": p2, "deviation2": smae_cfg.deviation,
+                            "above_up_pct": au, "above_dn_pct": ad, "above_count": ac,
+                            "between_up_pct": mu, "between_dn_pct": md, "between_count": mc,
+                            "below_up_pct": bu, "below_dn_pct": bd, "below_count": bc,
+                            "score": score
+                        })
+                        if (i + 1) % 50 == 0:
+                            pct = base_progress + int((i + 1) / len(combos) * sec_progress_range)
+                            yield _sse_event({"phase": "progress", "section": sec_name,
+                                              "section_index": sec_idx + 1, "total_sections": total_sections,
+                                              "message": f"2-SMAE Combo: {i+1}/{len(combos)}", "progress": min(pct, 99)})
+
+                    yield _sse_event({"phase": "section_done", "section": sec_name, "results": results})
+
+            yield _sse_event({"phase": "done", "progress": 100})
+
+        except Exception as e:
+            yield _sse_event({"phase": "error", "message": str(e)})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

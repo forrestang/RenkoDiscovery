@@ -25,7 +25,11 @@
       "Bash(npx vite --port 5173 --strictPort)",
       "Bash(netstat:*)",
       "Bash(curl:*)",
-      "Bash(node node_modules/vite/bin/vite.js:*)"
+      "Bash(node node_modules/vite/bin/vite.js:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
