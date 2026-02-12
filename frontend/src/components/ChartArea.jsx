@@ -1620,13 +1620,21 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     const src = renkoData?.data || (chartType === 'renko' ? chartData?.data : null)
     if (!src?.open || !src?.high || !src?.low || !src?.close || !src?.reversal_size) return null
     const { open, high, low, close, reversal_size } = src
+    // Skip warmup bars to align with parquet left cut (EMA warmup)
+    const startIdx = Math.max(
+      maSettings?.ma1?.period || 0,
+      maSettings?.ma2?.period || 0,
+      maSettings?.ma3?.period || 0
+    )
     let errors = 0
-    for (let i = 0; i < close.length; i++) {
+    let count = 0
+    for (let i = startIdx; i < close.length; i++) {
       const dd = close[i] > open[i] ? open[i] - low[i] : high[i] - open[i]
       if (dd > reversal_size[i]) errors++
+      count++
     }
-    return (errors / close.length * 100).toFixed(1)
-  }, [renkoData, chartData, chartType])
+    return count > 0 ? (errors / count * 100).toFixed(1) : null
+  }, [renkoData, chartData, chartType, maSettings])
 
   if (!chartData && !isLoading) {
     return (

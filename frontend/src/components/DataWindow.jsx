@@ -116,7 +116,7 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
           {wickErrorPct !== null && (
             <div className="data-row">
               <span className="data-label">Error</span>
-              <span className="data-value mono">{wickErrorPct}%</span>
+              <span className="data-value mono">~{wickErrorPct}%</span>
             </div>
           )}
         </>

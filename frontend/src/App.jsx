@@ -943,7 +943,7 @@ function App() {
         )}
         {activeTab === 'stats' && statsData?.wickErrorPct !== undefined && (
           <span className="header-wick-error mono" style={{ fontSize: '0.75rem', opacity: 0.6, marginLeft: '8px' }} title="% of bars with wick (DD) exceeding reversal size">
-            error: {statsData.wickErrorPct}%
+            error: ~{statsData.wickErrorPct}%
           </span>
         )}
         <div className="header-status">
