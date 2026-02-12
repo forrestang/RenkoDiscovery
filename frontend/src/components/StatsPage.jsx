@@ -642,6 +642,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     return v ? parseInt(v) : 1
   })
   const [btReportUnit, setBtReportUnit] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btReportUnit`) || 'rr')
+  const [btCostPerTrade, setBtCostPerTrade] = useState(() => {
+    const v = localStorage.getItem(`${STORAGE_PREFIX}btCostPerTrade`)
+    return v ? parseFloat(v) : 0
+  })
   const [btData, setBtData] = useState({ signals: {}, errors: {} })
   const [btLoading, setBtLoading] = useState(false)
   const [btSignalFilter, setBtSignalFilter] = useState('all')
@@ -657,6 +661,10 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   const [btComboMode, setBtComboMode] = useState(false)
   const [btCullErrors, setBtCullErrors] = useState(false)
   const [btShowChart, setBtShowChart] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowChart`) === 'true')
+  const [btShowRCurve, setBtShowRCurve] = useState(() => {
+    const v = localStorage.getItem(`${STORAGE_PREFIX}btShowRCurve`)
+    return v !== null ? v === 'true' : true
+  })
   const [btChartDecimals, setBtChartDecimals] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btChartDecimals`)) || 5)
   const [btShowIndicator, setBtShowIndicator] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowIndicator`) === 'true')
   const [btShowEMA, setBtShowEMA] = useState(() => {
@@ -736,11 +744,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     localStorage.setItem(`${STORAGE_PREFIX}btReportUnit`, btReportUnit)
   }, [btReportUnit])
   useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btCostPerTrade`, btCostPerTrade.toString())
+  }, [btCostPerTrade])
+  useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btAllowOverlap`, btAllowOverlap.toString())
   }, [btAllowOverlap])
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btShowChart`, btShowChart.toString())
   }, [btShowChart])
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}btShowRCurve`, btShowRCurve.toString())
+  }, [btShowRCurve])
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btChartDecimals`, btChartDecimals.toString())
   }, [btChartDecimals])
@@ -1021,6 +1035,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
           target_ma: btTargetMA,
           report_unit: btReportUnit,
           allow_overlap: btAllowOverlap,
+          cost_per_trade: btCostPerTrade,
         }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -1031,7 +1046,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     } finally {
       setBtLoading(false)
     }
-  }, [filepath, apiBase, btSignals, btStopType, btStopValue, btTargetType, btTargetValue, btTargetMA, btReportUnit, btAllowOverlap])
+  }, [filepath, apiBase, btSignals, btStopType, btStopValue, btTargetType, btTargetValue, btTargetMA, btReportUnit, btAllowOverlap, btCostPerTrade])
 
   // Filtered backtest data (cull wick error trades)
   const filteredBtData = useMemo(() => {
@@ -2909,6 +2924,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <option value="adr">ADR</option>
                 </select>
               </div>
+              <div className="backtest-config-group" data-tooltip="Raw price cost subtracted from each trade (e.g. commission + spread)">
+                <label className="backtest-config-label">Cost/Trade</label>
+                <input
+                  type="number"
+                  className="backtest-config-input no-spinner"
+                  value={btCostPerTrade}
+                  step="0.0001"
+                  min="0"
+                  onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0) setBtCostPerTrade(v) }}
+                />
+              </div>
               <div className="backtest-config-group" data-tooltip="When checked, a new trade will not be entered while an existing trade is still open">
                 <label className="backtest-config-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <input
@@ -3013,132 +3039,137 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             ))}
           </div>
 
-          {/* Equity Curve */}
-          {btCurveTraces.length > 0 && (() => {
-            const btShowCombo = !btAllowOverlap || btComboMode
-            return (
-            <div className="stats-module module-box backtest-curve-module">
-              <div className="equity-curve-header">
-                <span className="module-title-text">EQUITY CURVE (CUMULATIVE {btReportUnit.toUpperCase()})</span>
-                {btAllowOverlap && (
-                  <button
-                    className={`filter-action-btn ${btComboMode ? 'active' : ''}`}
-                    onClick={() => setBtComboMode(prev => !prev)}
-                  >Combo</button>
-                )}
-              </div>
-              <Plot
-                data={btShowCombo ? btComboCurveTraces : btCurveTraces}
-                layout={{
-                  height: 300,
-                  margin: { t: 8, r: 16, b: 40, l: 50 },
-                  paper_bgcolor: '#000000',
-                  plot_bgcolor: '#000000',
-                  font: { family: 'monospace', size: 11, color: '#a0a0b0' },
-                  xaxis: {
-                    title: { text: 'Trade #', font: { size: 10 } },
-                    gridcolor: 'rgba(255,255,255,0.1)',
-                    zeroline: false,
-                  },
-                  yaxis: {
-                    title: { text: `Cumulative ${btReportUnit.toUpperCase()}`, font: { size: 10 } },
-                    gridcolor: 'rgba(255,255,255,0.1)',
-                    zeroline: true,
-                    zerolinecolor: 'rgba(255,255,255,0.2)',
-                  },
-                  showlegend: true,
-                  legend: { font: { size: 10 }, bgcolor: 'transparent', x: 0, y: 1 },
-                }}
-                config={{ displayModeBar: false, responsive: true }}
-                style={{ width: '100%' }}
-              />
-            </div>
-            )
-          })()}
-
-          {/* Summary Stats Table + Chart wrapper */}
+          {/* Combined Equity Curve + Summary */}
           {(() => {
             const enabledSignals = btSignals.filter(s => s.enabled !== false)
             const hasSummary = enabledSignals.some(s => filteredBtData.signals?.[s.name]?.summary)
-            if (!hasSummary && !(btChartTrades.length > 0 && stats?.barData)) return null
+            if (!btCurveTraces.length && !hasSummary) return null
             const btShowCombo = !btAllowOverlap || btComboMode
             return (
-              <div className="backtest-summary-chart-wrapper">
-                {hasSummary && (
-              <div className="stats-module module-box backtest-stats-module">
-                <table className="stats-table">
-                  <thead>
-                    <tr className="module-title-row">
-                      <th colSpan={16} className="module-title">BACKTEST SUMMARY</th>
-                    </tr>
-                    <tr>
-                      <th>Signal</th>
-                      <th>Count</th>
-                      <th>Wins</th>
-                      <th>Losses</th>
-                      <th>Open</th>
-                      <th>Win %</th>
-                      <th>Avg Win</th>
-                      <th>Avg Loss</th>
-                      <th data-tooltip="Profit Factor — gross wins / gross losses. Above 1.0 = profitable.">PF</th>
-                      <th data-tooltip="Expectancy — average result per closed trade. Positive = profitable on average.">Expect.</th>
-                      <th>Total {btReportUnit.toUpperCase()}</th>
-                      <th data-tooltip="Max Drawdown — largest peak-to-trough decline in equity curve.">Max DD</th>
-                      <th data-tooltip="Sharpe Ratio — mean trade result / std deviation. Higher = more consistent.">Sharpe</th>
-                      <th data-tooltip="Max Consecutive Wins — longest winning streak.">W Streak</th>
-                      <th data-tooltip="Max Consecutive Losses — longest losing streak.">L Streak</th>
-                      <th data-tooltip="Avg Bars Held — average trade duration in renko bars.">Avg Bars</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {enabledSignals.map((s, i) => {
-                      const sm = filteredBtData.signals?.[s.name]?.summary
-                      if (!sm) return null
-                      return (
-                        <tr key={s.name + i}>
-                          <td style={{ color: PLAYGROUND_COLORS[btSignals.indexOf(s) % PLAYGROUND_COLORS.length], fontWeight: 600 }}>{s.name}</td>
-                          <td>{sm.count}</td>
-                          <td className="up">{sm.wins}</td>
-                          <td className="dn">{sm.losses}</td>
-                          <td>{sm.open}</td>
-                          <td>{(sm.win_rate * 100).toFixed(1)}%</td>
-                          <td className="up">{sm.avg_win}</td>
-                          <td className="dn">{sm.avg_loss}</td>
-                          <td>{sm.profit_factor}</td>
-                          <td style={{ color: sm.expectancy >= 0 ? '#22c55e' : '#ef4444' }}>{sm.expectancy}</td>
-                          <td style={{ fontWeight: 600, color: sm.total_r >= 0 ? '#22c55e' : '#ef4444' }}>{sm.total_r}</td>
-                          <td className="dn">{sm.max_drawdown}</td>
-                          <td>{sm.sharpe != null ? sm.sharpe : '\u2014'}</td>
-                          <td className="up">{sm.max_consec_wins}</td>
-                          <td className="dn">{sm.max_consec_losses}</td>
-                          <td>{sm.avg_bars_held}</td>
-                        </tr>
-                      )
-                    })}
-                    {btShowCombo && btComboStats && (
-                      <tr style={{ borderTop: '2px solid rgba(250,204,21,0.3)' }}>
-                        <td style={{ color: '#facc15', fontWeight: 600 }}>Combo</td>
-                        <td>{btComboStats.count}</td>
-                        <td className="up">{btComboStats.wins}</td>
-                        <td className="dn">{btComboStats.losses}</td>
-                        <td>{btComboStats.open}</td>
-                        <td>{(btComboStats.win_rate * 100).toFixed(1)}%</td>
-                        <td className="up">{btComboStats.avg_win}</td>
-                        <td className="dn">{btComboStats.avg_loss}</td>
-                        <td>{btComboStats.profit_factor}</td>
-                        <td style={{ color: btComboStats.expectancy >= 0 ? '#22c55e' : '#ef4444' }}>{btComboStats.expectancy}</td>
-                        <td style={{ fontWeight: 600, color: btComboStats.total_r >= 0 ? '#22c55e' : '#ef4444' }}>{btComboStats.total_r}</td>
-                        <td className="dn">{btComboStats.max_drawdown}</td>
-                        <td>{btComboStats.sharpe != null ? btComboStats.sharpe : '\u2014'}</td>
-                        <td className="up">{btComboStats.max_consec_wins}</td>
-                        <td className="dn">{btComboStats.max_consec_losses}</td>
-                        <td>{btComboStats.avg_bars_held}</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <div className="stats-module module-box backtest-curve-module">
+                <div className="equity-curve-header">
+                  <span className="module-title-text">
+                    {btShowRCurve ? `EQUITY CURVE (CUMULATIVE ${btReportUnit.toUpperCase()})` : 'BACKTEST SUMMARY'}
+                  </span>
+                  {btShowRCurve && btAllowOverlap && (
+                    <button
+                      className={`filter-action-btn ${btComboMode ? 'active' : ''}`}
+                      onClick={() => setBtComboMode(prev => !prev)}
+                    >Combo</button>
+                  )}
+                  {btCurveTraces.length > 0 && (
+                    <button
+                      className="filter-action-btn"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => setBtShowRCurve(p => !p)}
+                    >{btShowRCurve ? 'Hide' : 'Show'}</button>
+                  )}
+                </div>
+                {btShowRCurve && btCurveTraces.length > 0 && (
+                  <Plot
+                    data={btShowCombo ? btComboCurveTraces : btCurveTraces}
+                    layout={{
+                      height: 300,
+                      margin: { t: 8, r: 16, b: 40, l: 50 },
+                      paper_bgcolor: '#000000',
+                      plot_bgcolor: '#000000',
+                      font: { family: 'monospace', size: 11, color: '#a0a0b0' },
+                      xaxis: {
+                        title: { text: 'Trade #', font: { size: 10 } },
+                        gridcolor: 'rgba(255,255,255,0.1)',
+                        zeroline: false,
+                      },
+                      yaxis: {
+                        title: { text: `Cumulative ${btReportUnit.toUpperCase()}`, font: { size: 10 } },
+                        gridcolor: 'rgba(255,255,255,0.1)',
+                        zeroline: true,
+                        zerolinecolor: 'rgba(255,255,255,0.2)',
+                      },
+                      showlegend: true,
+                      legend: { font: { size: 10 }, bgcolor: 'transparent', x: 0, y: 1 },
+                    }}
+                    config={{ displayModeBar: false, responsive: true }}
+                    style={{ width: '100%' }}
+                  />
                 )}
+                {hasSummary && (
+                  <table className="stats-table">
+                    <thead>
+                      <tr className="module-title-row">
+                        <th colSpan={16} className="module-title">BACKTEST SUMMARY</th>
+                      </tr>
+                      <tr>
+                        <th>Signal</th>
+                        <th>Count</th>
+                        <th>Wins</th>
+                        <th>Losses</th>
+                        <th>Open</th>
+                        <th>Win %</th>
+                        <th>Avg Win</th>
+                        <th>Avg Loss</th>
+                        <th data-tooltip="Profit Factor — gross wins / gross losses. Above 1.0 = profitable.">PF</th>
+                        <th data-tooltip="Expectancy — average result per closed trade. Positive = profitable on average.">Expect.</th>
+                        <th>Total {btReportUnit.toUpperCase()}</th>
+                        <th data-tooltip="Max Drawdown — largest peak-to-trough decline in equity curve.">Max DD</th>
+                        <th data-tooltip="Sharpe Ratio — mean trade result / std deviation. Higher = more consistent.">Sharpe</th>
+                        <th data-tooltip="Max Consecutive Wins — longest winning streak.">W Streak</th>
+                        <th data-tooltip="Max Consecutive Losses — longest losing streak.">L Streak</th>
+                        <th data-tooltip="Avg Bars Held — average trade duration in renko bars.">Avg Bars</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {enabledSignals.map((s, i) => {
+                        const sm = filteredBtData.signals?.[s.name]?.summary
+                        if (!sm) return null
+                        return (
+                          <tr key={s.name + i}>
+                            <td style={{ color: PLAYGROUND_COLORS[btSignals.indexOf(s) % PLAYGROUND_COLORS.length], fontWeight: 600 }}>{s.name}</td>
+                            <td>{sm.count}</td>
+                            <td className="up">{sm.wins}</td>
+                            <td className="dn">{sm.losses}</td>
+                            <td>{sm.open}</td>
+                            <td>{(sm.win_rate * 100).toFixed(1)}%</td>
+                            <td className="up">{sm.avg_win}</td>
+                            <td className="dn">{sm.avg_loss}</td>
+                            <td>{sm.profit_factor}</td>
+                            <td style={{ color: sm.expectancy >= 0 ? '#22c55e' : '#ef4444' }}>{sm.expectancy}</td>
+                            <td style={{ fontWeight: 600, color: sm.total_r >= 0 ? '#22c55e' : '#ef4444' }}>{sm.total_r}</td>
+                            <td className="dn">{sm.max_drawdown}</td>
+                            <td>{sm.sharpe != null ? sm.sharpe : '\u2014'}</td>
+                            <td className="up">{sm.max_consec_wins}</td>
+                            <td className="dn">{sm.max_consec_losses}</td>
+                            <td>{sm.avg_bars_held}</td>
+                          </tr>
+                        )
+                      })}
+                      {btShowCombo && btComboStats && (
+                        <tr style={{ borderTop: '2px solid rgba(250,204,21,0.3)' }}>
+                          <td style={{ color: '#facc15', fontWeight: 600 }}>Combo</td>
+                          <td>{btComboStats.count}</td>
+                          <td className="up">{btComboStats.wins}</td>
+                          <td className="dn">{btComboStats.losses}</td>
+                          <td>{btComboStats.open}</td>
+                          <td>{(btComboStats.win_rate * 100).toFixed(1)}%</td>
+                          <td className="up">{btComboStats.avg_win}</td>
+                          <td className="dn">{btComboStats.avg_loss}</td>
+                          <td>{btComboStats.profit_factor}</td>
+                          <td style={{ color: btComboStats.expectancy >= 0 ? '#22c55e' : '#ef4444' }}>{btComboStats.expectancy}</td>
+                          <td style={{ fontWeight: 600, color: btComboStats.total_r >= 0 ? '#22c55e' : '#ef4444' }}>{btComboStats.total_r}</td>
+                          <td className="dn">{btComboStats.max_drawdown}</td>
+                          <td>{btComboStats.sharpe != null ? btComboStats.sharpe : '\u2014'}</td>
+                          <td className="up">{btComboStats.max_consec_wins}</td>
+                          <td className="dn">{btComboStats.max_consec_losses}</td>
+                          <td>{btComboStats.avg_bars_held}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )
+          })()}
+
+          {/* Chart Module (standalone) */}
           {btChartTrades.length > 0 && stats?.barData && (
             <div className="stats-module module-box backtest-chart-module">
               <div className="backtest-chart-header">
@@ -3217,7 +3248,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                 </div>
               </div>
               {btShowChart && (
-                <div className="backtest-chart-tradelog-wrapper">
+                <div className="backtest-chart-wrapper">
                   <div className="backtest-chart-container" style={{ height: btChartHeight }}>
                     <BacktestChart
                       barData={stats.barData}
@@ -3239,90 +3270,89 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   </div>
                 </div>
               )}
-              {(() => {
-                    const enabledSignals = btSignals.filter(s => s.enabled !== false)
-                    const allTrades = []
-                    enabledSignals.forEach(s => {
-                      const sigData = filteredBtData.signals?.[s.name]
-                      if (sigData?.trades) {
-                        sigData.trades.forEach(t => allTrades.push({ ...t, signalName: s.name, signalIdx: btSignals.indexOf(s) }))
-                      }
-                    })
-                    if (allTrades.length === 0) return null
-
-                    const filteredTrades = btSignalFilter === 'all'
-                      ? allTrades.sort((a, b) => a.idx - b.idx)
-                      : allTrades.filter(t => t.signalName === btSignalFilter).sort((a, b) => a.idx - b.idx)
-
-                    return (
-                      <div className="stats-module module-box backtest-tradelog-module">
-                        <div className="backtest-tradelog-header">
-                          <span className="module-title-text">TRADE LOG ({filteredTrades.length} trades)</span>
-                          <select
-                            className="backtest-config-select"
-                            value={btSignalFilter}
-                            onChange={e => setBtSignalFilter(e.target.value)}
-                          >
-                            <option value="all">All Signals</option>
-                            {enabledSignals.map(s => (
-                              <option key={s.name} value={s.name}>{s.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="backtest-tradelog-scroll">
-                          <table className="stats-table backtest-tradelog-table">
-                            <thead>
-                              <tr>
-                                <th>#</th>
-                                <th data-tooltip="Wick Error — trade spans a bar where DD exceeds reversal size">Er</th>
-                                <th>Signal</th>
-                                <th>Entry Date</th>
-                                <th>Entry Price</th>
-                                <th>Bar#</th>
-                                <th>Dir</th>
-                                <th>Outcome</th>
-                                <th>Result</th>
-                                <th>Bars</th>
-                                <th>Exit Date</th>
-                                <th>Exit Price</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {filteredTrades.map((t, i) => (
-                                <tr
-                                  key={i}
-                                  className={
-                                    t.outcome === 'open' ? 'backtest-trade-open' :
-                                    t.result > 0 ? 'backtest-trade-win' :
-                                    'backtest-trade-loss'
-                                  }
-                                  style={{ cursor: 'pointer' }}
-                                  onClick={() => setBtFocusBar({ idx: t.idx, ts: Date.now() })}
-                                >
-                                  <td>{i + 1}</td>
-                                  <td style={{ textAlign: 'center', color: '#ef4444', fontWeight: 600 }}>{t.has_wick_error ? '*' : ''}</td>
-                                  <td style={{ color: PLAYGROUND_COLORS[t.signalIdx % PLAYGROUND_COLORS.length] }}>{t.signalName}</td>
-                                  <td>{t.entry_dt}</td>
-                                  <td>{t.entry_price}</td>
-                                  <td>{t.idx}</td>
-                                  <td className={t.direction === 'long' ? 'up' : 'dn'}>{t.direction === 'long' ? 'L' : 'S'}</td>
-                                  <td>{t.outcome === 'target' ? 'W' : t.outcome === 'stop' ? 'L' : 'Open'}</td>
-                                  <td style={{ color: t.result >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
-                                    {t.result >= 0 ? '+' : ''}{t.result}
-                                  </td>
-                                  <td>{t.bars_held}</td>
-                                  <td>{t.exit_dt}</td>
-                                  <td>{t.exit_price}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )
-                  })()}
             </div>
           )}
+
+          {/* Trade Log (standalone) */}
+          {(() => {
+            const enabledSignals = btSignals.filter(s => s.enabled !== false)
+            const allTrades = []
+            enabledSignals.forEach(s => {
+              const sigData = filteredBtData.signals?.[s.name]
+              if (sigData?.trades) {
+                sigData.trades.forEach(t => allTrades.push({ ...t, signalName: s.name, signalIdx: btSignals.indexOf(s) }))
+              }
+            })
+            if (allTrades.length === 0) return null
+
+            const filteredTrades = btSignalFilter === 'all'
+              ? allTrades.sort((a, b) => a.idx - b.idx)
+              : allTrades.filter(t => t.signalName === btSignalFilter).sort((a, b) => a.idx - b.idx)
+
+            return (
+              <div className="stats-module module-box backtest-tradelog-module">
+                <div className="backtest-tradelog-header">
+                  <span className="module-title-text">TRADE LOG ({filteredTrades.length} trades)</span>
+                  <select
+                    className="backtest-config-select"
+                    value={btSignalFilter}
+                    onChange={e => setBtSignalFilter(e.target.value)}
+                  >
+                    <option value="all">All Signals</option>
+                    {enabledSignals.map(s => (
+                      <option key={s.name} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="backtest-tradelog-scroll">
+                  <table className="stats-table backtest-tradelog-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th data-tooltip="Wick Error — trade spans a bar where DD exceeds reversal size">Er</th>
+                        <th>Signal</th>
+                        <th>Entry Date</th>
+                        <th>Entry Price</th>
+                        <th>Bar#</th>
+                        <th>Dir</th>
+                        <th>Outcome</th>
+                        <th>Result</th>
+                        <th>Bars</th>
+                        <th>Exit Date</th>
+                        <th>Exit Price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTrades.map((t, i) => (
+                        <tr
+                          key={i}
+                          className={
+                            t.outcome === 'open' ? 'backtest-trade-open' :
+                            t.result > 0 ? 'backtest-trade-win' :
+                            'backtest-trade-loss'
+                          }
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => setBtFocusBar({ idx: t.idx, ts: Date.now() })}
+                        >
+                          <td>{i + 1}</td>
+                          <td style={{ textAlign: 'center', color: '#ef4444', fontWeight: 600 }}>{t.has_wick_error ? '*' : ''}</td>
+                          <td style={{ color: PLAYGROUND_COLORS[t.signalIdx % PLAYGROUND_COLORS.length] }}>{t.signalName}</td>
+                          <td>{t.entry_dt}</td>
+                          <td>{t.entry_price}</td>
+                          <td>{t.idx}</td>
+                          <td className={t.direction === 'long' ? 'up' : 'dn'}>{t.direction === 'long' ? 'L' : 'S'}</td>
+                          <td>{t.outcome === 'target' ? 'W' : t.outcome === 'stop' ? 'L' : 'Open'}</td>
+                          <td style={{ color: t.result >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
+                            {t.result >= 0 ? '+' : ''}{t.result}
+                          </td>
+                          <td>{t.bars_held}</td>
+                          <td>{t.exit_dt}</td>
+                          <td>{t.exit_price}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )
           })()}

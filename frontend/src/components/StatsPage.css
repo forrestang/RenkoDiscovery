@@ -961,6 +961,14 @@
 
 /* ==================== Backtest Tab ==================== */
 
+.backtest-config-module,
+.backtest-signals-module,
+.backtest-curve-module,
+.backtest-chart-module,
+.backtest-tradelog-module {
+  max-width: calc(100% - 40px);
+}
+
 .backtest-config-module {
   width: 100%;
 }
@@ -1042,6 +1050,15 @@
   outline: none;
 }
 
+.backtest-config-input.no-spinner::-webkit-inner-spin-button,
+.backtest-config-input.no-spinner::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.backtest-config-input.no-spinner {
+  -moz-appearance: textfield;
+}
+
 .backtest-signals-module {
   width: 100%;
 }
@@ -1050,15 +1067,9 @@
   width: 100%;
 }
 
-.backtest-stats-module {
-  width: 100%;
-}
-
-.backtest-summary-chart-wrapper {
+.backtest-chart-wrapper {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  width: fit-content;
 }
 
 .backtest-chart-module {
@@ -1078,11 +1089,6 @@
   gap: var(--space-2);
 }
 
-.backtest-chart-tradelog-wrapper {
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-}
 
 .backtest-chart-container {
   width: 100%;
@@ -1116,8 +1122,7 @@
 
 .backtest-tradelog-module {
   width: 100%;
-  flex: 1;
-  min-height: 0;
+  max-height: 500px;
   display: flex;
   flex-direction: column;
 }
