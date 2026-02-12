@@ -143,6 +143,7 @@ class BacktestRequest(BaseModel):
     target_ma: int = 1      # which MA (1/2/3) for ma_trail target
     report_unit: str = 'rr' # 'rr' or 'adr' — unit for result values
     allow_overlap: bool = True  # when False, skip entries while a trade is open
+    cost_per_trade: float = 0
 
 
 class OptMASectionConfig(BaseModel):
@@ -1665,6 +1666,11 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
     # Map currentADR back to renko bars based on their session date
     df['datetime'] = pd.to_datetime(df['datetime'])
     df['session_date'] = df['datetime'].apply(lambda dt: _get_session_date(dt, session_sched))
+    df['Year'] = df['datetime'].dt.year
+    df['Month'] = df['datetime'].dt.month
+    df['Day'] = df['datetime'].dt.day
+    df['Hour'] = df['datetime'].dt.hour
+    df['Minute'] = df['datetime'].dt.minute
     df['currentADR'] = df['session_date'].map(adr_series).round(5)
 
     # Calculate EMA values and store price columns (metadata, grouped left)
@@ -3589,6 +3595,12 @@ def backtest_signals(request: BacktestRequest):
                 result = move / entry_rev
             exit_idx = n - 1
             exit_dt = dt_arr[n - 1]
+
+        if request.cost_per_trade > 0:
+            if request.report_unit == 'adr':
+                result -= request.cost_per_trade / entry_adr
+            else:
+                result -= request.cost_per_trade / entry_rev
 
         exit_price = close_arr[exit_idx] if exit_idx is not None else close_arr[n - 1]
         trade = {

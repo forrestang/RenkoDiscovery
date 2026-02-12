@@ -1953,6 +1953,7 @@ input.no-spinners[type="number"] {
   border-left: 2px solid var(--accent-primary);
   border-radius: 2px;
   line-height: 1.4;
+  white-space: pre-line;
 }
 
 /* ==================== Stats Mode Sub-tabs ==================== */

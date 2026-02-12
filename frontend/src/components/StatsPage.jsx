@@ -2766,6 +2766,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <ColumnItem label="open2, high2, low2, close2, direction2" desc={COLUMN_DESCRIPTIONS['open2, high2, low2, close2, direction2']} />
                 </ul>
 
+                <h5>DateTimes</h5>
+                <ul>
+                  <ColumnItem label="Year, Month, Day, Hour, Minute" desc={COLUMN_DESCRIPTIONS['Year, Month, Day, Hour, Minute']} />
+                </ul>
+
                 <h5>Moving Averages</h5>
                 <ul>
                   <ColumnItem label="EMA_rawDistance(20/50/200)" desc={COLUMN_DESCRIPTIONS['EMA_rawDistance(20/50/200)']} />
@@ -3418,6 +3423,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <ColumnItem label="open, high, low, close, direction" desc={COLUMN_DESCRIPTIONS['open, high, low, close, direction']} />
                   <ColumnItem label="open1, high1, low1, close1, direction1" desc={COLUMN_DESCRIPTIONS['open1, high1, low1, close1, direction1']} />
                   <ColumnItem label="open2, high2, low2, close2, direction2" desc={COLUMN_DESCRIPTIONS['open2, high2, low2, close2, direction2']} />
+                </ul>
+
+                <h5>DateTimes</h5>
+                <ul>
+                  <ColumnItem label="Year, Month, Day, Hour, Minute" desc={COLUMN_DESCRIPTIONS['Year, Month, Day, Hour, Minute']} />
                 </ul>
 
                 <h5>Moving Averages</h5>

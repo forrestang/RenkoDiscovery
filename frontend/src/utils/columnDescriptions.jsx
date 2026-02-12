@@ -14,6 +14,9 @@ export const COLUMN_DESCRIPTIONS = {
   'open1, high1, low1, close1, direction1': 'Prior bar (-1) OHLC prices & direction.',
   'open2, high2, low2, close2, direction2': 'Two bars back (-2) OHLC prices & direction.',
 
+  // DateTimes
+  'Year, Month, Day, Hour, Minute': '2024-01-24T14:29 resolves to:\nYear - 2024\nMonth - 01\nDay - 24\nHour - 14\nMinute - 29',
+
   // Moving Averages
   'EMA_rawDistance(20/50/200)': 'Raw price distance from EMA (close \u2212 EMA value).',
   'EMA_adrDistance(20/50/200)': 'Price distance from EMA normalized by ADR \u2014 how many ADRs away from the EMA to current close.',
