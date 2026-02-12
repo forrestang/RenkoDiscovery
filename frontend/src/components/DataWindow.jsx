@@ -1,4 +1,4 @@
-function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM1Index, pricePrecision = 5 }) {
+function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM1Index, pricePrecision = 5, wickErrorPct = null }) {
   // Need at least chartData to display anything
   if (!chartData?.data) return null
 
@@ -112,6 +112,12 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
                 <span className="data-value mono">{formatPrice(renkoDataSource.reversal_size?.[renkoIndex])}</span>
               </div>
             </>
+          )}
+          {wickErrorPct !== null && (
+            <div className="data-row">
+              <span className="data-label">Error</span>
+              <span className="data-value mono">{wickErrorPct}%</span>
+            </div>
           )}
         </>
       )}

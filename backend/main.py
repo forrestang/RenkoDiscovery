@@ -89,6 +89,7 @@ class RenkoRequest(BaseModel):
     reversal_pct: float = 10.0  # reversal as % of ADR
     adr_period: int = 14  # rolling lookback
     session_schedule: Optional[dict] = None  # Per-day schedule: {"monday": {"hour": 22, "minute": 0}, ...}
+    reversal_mode: str = "fp"  # "fp" (2-bar reversal) | "tv" (single-bar reversal)
 
 
 class StatsRequest(BaseModel):
@@ -189,6 +190,7 @@ class DirectGenerateJob(BaseModel):
     smae2_deviation: float = 1.0
     pwap_sigmas: list[float] = [1.0, 2.0, 2.5, 3.0]
     session_schedule: Optional[dict] = None
+    reversal_mode: str = "fp"
 
 
 class DirectGenerateRequest(BaseModel):
@@ -243,7 +245,7 @@ def extract_timeframe(filename: str) -> Optional[str]:
     return None
 
 
-def get_unique_cache_path(cache_dir: Path, base_name: str, data_format: str = "MT4", interval_type: str = "M") -> Path:
+def get_unique_cache_path(cache_dir: Path, base_name: str, data_format: str = "MT4", interval_type: str = "M", skip_tags: bool = False) -> Path:
     """
     Get a unique cache file path with format and interval tags.
 
@@ -251,9 +253,10 @@ def get_unique_cache_path(cache_dir: Path, base_name: str, data_format: str = "M
     Example: EURUSD_J4X_T.feather, EURUSD_MT4_M.feather
 
     If file exists, appends _2, _3, etc.
+    When skip_tags is True, uses base_name directly without appending format/interval.
     """
     # Build the full name with tags
-    full_name = f"{base_name}_{data_format}_{interval_type}"
+    full_name = base_name if skip_tags else f"{base_name}_{data_format}_{interval_type}"
 
     output_path = cache_dir / f"{full_name}.feather"
     if not output_path.exists():
@@ -712,7 +715,7 @@ def process_files(request: ProcessRequest):
                 combined, adjusted_session_dates = back_adjust_data(combined, sched)
 
             # Save as feather - get unique path with format/interval tags
-            output_path = get_unique_cache_path(cache_dir, instrument, data_format, interval_type)
+            output_path = get_unique_cache_path(cache_dir, instrument, data_format, interval_type, skip_tags=bool(custom_name))
             combined.to_feather(output_path)
 
             # Save metadata
@@ -951,7 +954,7 @@ def compute_adr_lookup(raw_df: pd.DataFrame, adr_period: int, session_schedule: 
     return daily_stats['adr']
 
 
-def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0, wick_mode: str = "all", size_schedule=None) -> tuple[pd.DataFrame, dict]:
+def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multiplier: float = 2.0, wick_mode: str = "all", size_schedule=None, reversal_mode: str = "fp") -> tuple[pd.DataFrame, dict]:
     """
     Generate Renko bricks with configurable reversal multiplier using threshold-based logic.
 
@@ -1185,46 +1188,100 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 first_brick_threshold = last_brick_close - active_bs
                 crossings = find_threshold_crossings(close_prices, tick_idx_open, i, first_brick_threshold, active_bs, -1)
 
-                for idx, (cross_open, cross_close) in enumerate(crossings):
-                    brick_open = last_brick_close
-                    brick_close = brick_open - active_bs
-                    first_brick = (idx == 0)
-                    brick_pending_high = high_prices[cross_open:cross_close+1].max() if wick_mode == "all" and not first_brick else pending_high
-
-                    # Special handling for second bar of reversal (idx==1)
-                    if idx == 1:
-                        if wick_mode == "none":
-                            brick_high = brick_open
-                        elif wick_mode == "all":
-                            brick_range_high = high_prices[cross_open:cross_close+1].max()
-                            brick_high = max(brick_range_high, brick_open)
-                        elif wick_mode == "big":
-                            brick_range_high = high_prices[cross_open:cross_close+1].max()
-                            retracement = round(brick_range_high - brick_open, 5)
-                            if retracement > active_bs:
-                                brick_high = brick_range_high
-                            else:
-                                brick_high = brick_open
-                        else:
-                            brick_high = brick_open
+                if reversal_mode == "tv" and len(crossings) >= 2:
+                    # TV mode: emit 1 bar for the reversal (open = prev UP bar's open)
+                    tv_open = last_brick_close - active_bs  # previous UP bar's open
+                    tv_close = tv_open - active_bs
+                    # Wick uses full M1 range from tick_idx_open to crossing close
+                    tv_range_high = high_prices[tick_idx_open:i+1].max()
+                    if wick_mode == "none":
+                        tv_high = tv_open
+                    elif wick_mode == "all":
+                        tv_high = max(tv_range_high, tv_open)
+                    elif wick_mode == "big":
+                        retracement = round(tv_range_high - tv_open, 5)
+                        tv_high = tv_range_high if retracement > active_bs else tv_open
                     else:
-                        brick_high = calc_down_brick_high(brick_pending_high, brick_open, active_bs, apply_wick=first_brick)
-
+                        tv_high = tv_open
                     bricks.append({
-                        'datetime': timestamps[cross_open],
-                        'open': brick_open,
-                        'high': brick_high,
-                        'low': brick_close,
-                        'close': brick_close,
+                        'datetime': timestamps[tick_idx_open],
+                        'open': tv_open,
+                        'high': tv_high,
+                        'low': tv_close,
+                        'close': tv_close,
                         'direction': -1,
-                        'is_reversal': 1 if first_brick else 0,
-                        'tick_index_open': cross_open,
-                        'tick_index_close': cross_close,
+                        'is_reversal': 1,
+                        'tick_index_open': tick_idx_open,
+                        'tick_index_close': crossings[1][1],
                         'brick_size': active_bs,
                         'reversal_size': active_rs,
                         'adr_value': active_adr
                     })
-                    last_brick_close = brick_close
+                    last_brick_close = tv_close
+
+                    # Emit remaining crossings (3rd+) as normal continuation bars
+                    for idx in range(2, len(crossings)):
+                        cross_open, cross_close = crossings[idx]
+                        brick_open = last_brick_close
+                        brick_close = brick_open - active_bs
+                        brick_pending_high = high_prices[cross_open:cross_close+1].max() if wick_mode == "all" else pending_high
+                        bricks.append({
+                            'datetime': timestamps[cross_open],
+                            'open': brick_open,
+                            'high': calc_down_brick_high(brick_pending_high, brick_open, active_bs, apply_wick=False),
+                            'low': brick_close,
+                            'close': brick_close,
+                            'direction': -1,
+                            'is_reversal': 0,
+                            'tick_index_open': cross_open,
+                            'tick_index_close': cross_close,
+                            'brick_size': active_bs,
+                            'reversal_size': active_rs,
+                            'adr_value': active_adr
+                        })
+                        last_brick_close = brick_close
+                else:
+                    # FP mode: existing 2-bar reversal behavior
+                    for idx, (cross_open, cross_close) in enumerate(crossings):
+                        brick_open = last_brick_close
+                        brick_close = brick_open - active_bs
+                        first_brick = (idx == 0)
+                        brick_pending_high = high_prices[cross_open:cross_close+1].max() if wick_mode == "all" and not first_brick else pending_high
+
+                        # Special handling for second bar of reversal (idx==1)
+                        if idx == 1:
+                            if wick_mode == "none":
+                                brick_high = brick_open
+                            elif wick_mode == "all":
+                                brick_range_high = high_prices[cross_open:cross_close+1].max()
+                                brick_high = max(brick_range_high, brick_open)
+                            elif wick_mode == "big":
+                                brick_range_high = high_prices[cross_open:cross_close+1].max()
+                                retracement = round(brick_range_high - brick_open, 5)
+                                if retracement > active_bs:
+                                    brick_high = brick_range_high
+                                else:
+                                    brick_high = brick_open
+                            else:
+                                brick_high = brick_open
+                        else:
+                            brick_high = calc_down_brick_high(brick_pending_high, brick_open, active_bs, apply_wick=first_brick)
+
+                        bricks.append({
+                            'datetime': timestamps[cross_open],
+                            'open': brick_open,
+                            'high': brick_high,
+                            'low': brick_close,
+                            'close': brick_close,
+                            'direction': -1,
+                            'is_reversal': 1 if first_brick else 0,
+                            'tick_index_open': cross_open,
+                            'tick_index_close': cross_close,
+                            'brick_size': active_bs,
+                            'reversal_size': active_rs,
+                            'adr_value': active_adr
+                        })
+                        last_brick_close = brick_close
 
                 direction = -1
                 # Promote pending -> active AFTER batch
@@ -1289,46 +1346,100 @@ def generate_renko_custom(df: pd.DataFrame, brick_size: float, reversal_multipli
                 first_brick_threshold = last_brick_close + active_bs
                 crossings = find_threshold_crossings(close_prices, tick_idx_open, i, first_brick_threshold, active_bs, 1)
 
-                for idx, (cross_open, cross_close) in enumerate(crossings):
-                    brick_open = last_brick_close
-                    brick_close = brick_open + active_bs
-                    first_brick = (idx == 0)
-                    brick_pending_low = low_prices[cross_open:cross_close+1].min() if wick_mode == "all" and not first_brick else pending_low
-
-                    # Special handling for second bar of reversal (idx==1)
-                    if idx == 1:
-                        if wick_mode == "none":
-                            brick_low = brick_open
-                        elif wick_mode == "all":
-                            brick_range_low = low_prices[cross_open:cross_close+1].min()
-                            brick_low = min(brick_range_low, brick_open)
-                        elif wick_mode == "big":
-                            brick_range_low = low_prices[cross_open:cross_close+1].min()
-                            retracement = round(brick_open - brick_range_low, 5)
-                            if retracement > active_bs:
-                                brick_low = brick_range_low
-                            else:
-                                brick_low = brick_open
-                        else:
-                            brick_low = brick_open
+                if reversal_mode == "tv" and len(crossings) >= 2:
+                    # TV mode: emit 1 bar for the reversal (open = prev DOWN bar's open)
+                    tv_open = last_brick_close + active_bs  # previous DOWN bar's open
+                    tv_close = tv_open + active_bs
+                    # Wick uses full M1 range from tick_idx_open to crossing close
+                    tv_range_low = low_prices[tick_idx_open:i+1].min()
+                    if wick_mode == "none":
+                        tv_low = tv_open
+                    elif wick_mode == "all":
+                        tv_low = min(tv_range_low, tv_open)
+                    elif wick_mode == "big":
+                        retracement = round(tv_open - tv_range_low, 5)
+                        tv_low = tv_range_low if retracement > active_bs else tv_open
                     else:
-                        brick_low = calc_up_brick_low(brick_pending_low, brick_open, active_bs, apply_wick=first_brick)
-
+                        tv_low = tv_open
                     bricks.append({
-                        'datetime': timestamps[cross_open],
-                        'open': brick_open,
-                        'high': brick_close,
-                        'low': brick_low,
-                        'close': brick_close,
+                        'datetime': timestamps[tick_idx_open],
+                        'open': tv_open,
+                        'high': tv_close,
+                        'low': tv_low,
+                        'close': tv_close,
                         'direction': 1,
-                        'is_reversal': 1 if first_brick else 0,
-                        'tick_index_open': cross_open,
-                        'tick_index_close': cross_close,
+                        'is_reversal': 1,
+                        'tick_index_open': tick_idx_open,
+                        'tick_index_close': crossings[1][1],
                         'brick_size': active_bs,
                         'reversal_size': active_rs,
                         'adr_value': active_adr
                     })
-                    last_brick_close = brick_close
+                    last_brick_close = tv_close
+
+                    # Emit remaining crossings (3rd+) as normal continuation bars
+                    for idx in range(2, len(crossings)):
+                        cross_open, cross_close = crossings[idx]
+                        brick_open = last_brick_close
+                        brick_close = brick_open + active_bs
+                        brick_pending_low = low_prices[cross_open:cross_close+1].min() if wick_mode == "all" else pending_low
+                        bricks.append({
+                            'datetime': timestamps[cross_open],
+                            'open': brick_open,
+                            'high': brick_close,
+                            'low': calc_up_brick_low(brick_pending_low, brick_open, active_bs, apply_wick=False),
+                            'close': brick_close,
+                            'direction': 1,
+                            'is_reversal': 0,
+                            'tick_index_open': cross_open,
+                            'tick_index_close': cross_close,
+                            'brick_size': active_bs,
+                            'reversal_size': active_rs,
+                            'adr_value': active_adr
+                        })
+                        last_brick_close = brick_close
+                else:
+                    # FP mode: existing 2-bar reversal behavior
+                    for idx, (cross_open, cross_close) in enumerate(crossings):
+                        brick_open = last_brick_close
+                        brick_close = brick_open + active_bs
+                        first_brick = (idx == 0)
+                        brick_pending_low = low_prices[cross_open:cross_close+1].min() if wick_mode == "all" and not first_brick else pending_low
+
+                        # Special handling for second bar of reversal (idx==1)
+                        if idx == 1:
+                            if wick_mode == "none":
+                                brick_low = brick_open
+                            elif wick_mode == "all":
+                                brick_range_low = low_prices[cross_open:cross_close+1].min()
+                                brick_low = min(brick_range_low, brick_open)
+                            elif wick_mode == "big":
+                                brick_range_low = low_prices[cross_open:cross_close+1].min()
+                                retracement = round(brick_open - brick_range_low, 5)
+                                if retracement > active_bs:
+                                    brick_low = brick_range_low
+                                else:
+                                    brick_low = brick_open
+                            else:
+                                brick_low = brick_open
+                        else:
+                            brick_low = calc_up_brick_low(brick_pending_low, brick_open, active_bs, apply_wick=first_brick)
+
+                        bricks.append({
+                            'datetime': timestamps[cross_open],
+                            'open': brick_open,
+                            'high': brick_close,
+                            'low': brick_low,
+                            'close': brick_close,
+                            'direction': 1,
+                            'is_reversal': 1 if first_brick else 0,
+                            'tick_index_open': cross_open,
+                            'tick_index_close': cross_close,
+                            'brick_size': active_bs,
+                            'reversal_size': active_rs,
+                            'adr_value': active_adr
+                        })
+                        last_brick_close = brick_close
 
                 direction = 1
                 # Promote pending -> active AFTER batch
@@ -1478,7 +1589,7 @@ def get_renko_data(instrument: str, request: RenkoRequest):
         reversal_mult = reversal_size / brick_size
 
         renko_df, pending_brick = generate_renko_custom(
-            df, brick_size, reversal_mult, request.wick_mode, size_schedule=size_schedule
+            df, brick_size, reversal_mult, request.wick_mode, size_schedule=size_schedule, reversal_mode=request.reversal_mode
         )
 
         if renko_df.empty:
@@ -1654,8 +1765,10 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
     open_arr = df['open'].values
     high_arr = df['high'].values
     low_arr = df['low'].values
+    close_arr = df['close'].values
     rev_size_arr = df['reversal_size'].values
     brick_size_arr = df['brick_size'].values
+    fast_ema_arr = fast_ema.values
 
     n = len(df)
     type1_count = np.zeros(n, dtype=int)
@@ -1674,31 +1787,56 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
 
         is_up = bool(is_up_arr_t[i])
         is_dn = bool(is_dn_arr_t[i])
-        use_3bar = rev_size_arr[i] > brick_size_arr[i]
+        use_tv = rev_size_arr[i] > brick_size_arr[i]
 
-        if i > 1:
-            prior_is_up = bool(is_up_arr_t[i - 1])
-            prior_is_dn = bool(is_dn_arr_t[i - 1])
-            prior2_is_up = bool(is_up_arr_t[i - 2])
-            prior2_is_dn = bool(is_dn_arr_t[i - 2])
+        if not use_tv:
+            # FP mode: 3-bar patterns
+            if i > 1:
+                prior_up = bool(is_up_arr_t[i - 1])
+                prior_dn = bool(is_dn_arr_t[i - 1])
+                prior2_up = bool(is_up_arr_t[i - 2])
+                prior2_dn = bool(is_dn_arr_t[i - 2])
 
-            if state == 3 and is_up and prior_is_up and prior2_is_dn:
-                internal_type1 += 1
-                type1_count[i] = internal_type1
-            elif state == -3 and is_dn and prior_is_dn and prior2_is_up:
-                internal_type1 -= 1
-                type1_count[i] = internal_type1
+                # Type1: DN,UP,UP in +3 / UP,DN,DN in -3
+                if state == 3 and is_up and prior_up and prior2_dn:
+                    internal_type1 += 1
+                    type1_count[i] = internal_type1
+                elif state == -3 and is_dn and prior_dn and prior2_up:
+                    internal_type1 -= 1
+                    type1_count[i] = internal_type1
 
-        if use_3bar and i > 0:
-            prior_is_up_t2 = bool(is_up_arr_t[i - 1])
+                # Type2: UP,DN,UP in +3 / DN,UP,DN in -3
+                if state == 3 and is_up and prior_dn and prior2_up:
+                    internal_type2 += 1
+                    type2_count[i] = internal_type2
+                elif state == -3 and is_dn and prior_up and prior2_dn:
+                    internal_type2 -= 1
+                    type2_count[i] = internal_type2
+        else:
+            # TV mode: 2-bar patterns with DD conditions
             brick_i = brick_size_arr[i]
+            dd = round(open_arr[i] - low_arr[i], 5) if is_up else round(high_arr[i] - open_arr[i], 5)
 
-            if state == 3 and is_up and round(open_arr[i] - low_arr[i], 5) > brick_i and prior_is_up_t2:
-                internal_type2 += 1
-                type2_count[i] = internal_type2
-            elif state == -3 and is_dn and round(high_arr[i] - open_arr[i], 5) > brick_i and not prior_is_up_t2:
-                internal_type2 -= 1
-                type2_count[i] = internal_type2
+            if i > 0:
+                prior_up = bool(is_up_arr_t[i - 1])
+                prior_dn = bool(is_dn_arr_t[i - 1])
+
+                # Type1: DN,UP in +3 / UP,DN in -3, DD > brick
+                if state == 3 and is_up and prior_dn and dd > brick_i:
+                    internal_type1 += 1
+                    type1_count[i] = internal_type1
+                elif state == -3 and is_dn and prior_up and dd > brick_i:
+                    internal_type1 -= 1
+                    type1_count[i] = internal_type1
+
+                # Type2: UP,UP in +3 / DN,DN in -3, DD > brick, close vs EMA1
+                ma1_val = fast_ema_arr[i]
+                if state == 3 and is_up and prior_up and dd > brick_i and close_arr[i] > ma1_val:
+                    internal_type2 += 1
+                    type2_count[i] = internal_type2
+                elif state == -3 and is_dn and prior_dn and dd > brick_i and close_arr[i] < ma1_val:
+                    internal_type2 -= 1
+                    type2_count[i] = internal_type2
 
     df['Type1'] = type1_count
     df['Type2'] = type2_count
@@ -2096,7 +2234,7 @@ def direct_generate(request: DirectGenerateRequest):
             reversal_mult = reversal_size / brick_size
 
             renko_df, _ = generate_renko_custom(
-                df, brick_size, reversal_mult, job.wick_mode, size_schedule=size_schedule
+                df, brick_size, reversal_mult, job.wick_mode, size_schedule=size_schedule, reversal_mode=job.reversal_mode
             )
 
             if renko_df.empty:
@@ -2849,6 +2987,12 @@ def get_parquet_stats(filepath: str):
         wick_dist["upDist"] = calc_wick_dist(up_wick)
         wick_dist["dnDist"] = calc_wick_dist(dn_wick)
 
+    # Wick error: bars where DD > reversal_size
+    wick_error_pct = 0.0
+    if 'DD' in df.columns and 'reversal_size' in df.columns:
+        error_count = int((df['DD'] > df['reversal_size']).sum())
+        wick_error_pct = round(error_count / total_bars * 100, 1) if total_bars > 0 else 0.0
+
     # EMA RR Distance decay tables
     ema_rr_decay = []
     rr_thresholds = [0.5, 1, 1.5, 2, 3, 5, 10, 20, 50]
@@ -3061,6 +3205,7 @@ def get_parquet_stats(filepath: str):
         "beyondPwapMeanStats": beyond_pwap_mean_stats,
         "emaRrDecay": ema_rr_decay,
         "wickDist": wick_dist,
+        "wickErrorPct": wick_error_pct,
         "signalData": signal_data,
         "stateConbarsHeatmap": state_conbars_heatmap,
         "stateTransitionMatrix": state_transition_matrix,

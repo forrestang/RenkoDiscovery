@@ -941,6 +941,11 @@ function App() {
         {activeTab === 'stats' && statsFilename && (
           <span className="header-stats-filename mono">{statsFilename}</span>
         )}
+        {activeTab === 'stats' && statsData?.wickErrorPct !== undefined && (
+          <span className="header-wick-error mono" style={{ fontSize: '0.75rem', opacity: 0.6, marginLeft: '8px' }} title="% of bars with wick (DD) exceeding reversal size">
+            error: {statsData.wickErrorPct}%
+          </span>
+        )}
         <div className="header-status">
           {activeTab !== 'stats' && (<>
           {activeInstrument && (
@@ -986,13 +991,13 @@ function App() {
               {(chartData.displayed_rows || chartData.total_rows || 0).toLocaleString()} bars + {renkoData.total_bricks.toLocaleString()} bricks
             </span>
           )}
-          {(chartType === 'renko' || chartType === 'overlay') && activeInstrument && (
+          {(chartType === 'renko' || chartType === 'overlay') && (activeInstrument || pendingInstrument) && (
             <RenkoControls
               settings={renkoSettings}
               onChange={handleRenkoSettingsChange}
             />
           )}
-          {chartType === 'renko' && activeInstrument && (
+          {chartType === 'renko' && (activeInstrument || pendingInstrument) && (
             <button
               className={`indicator-toggle-btn ${showIndicatorPane ? 'active' : ''}`}
               onClick={() => setShowIndicatorPane(!showIndicatorPane)}
@@ -1007,10 +1012,10 @@ function App() {
               T1/2
             </button>
           )}
-          {activeInstrument && (
+          {(activeInstrument || pendingInstrument) && (
             <MAControls settings={maSettings} onChange={setMASettings} smaeSettings={smaeSettings} onSmaeChange={setSmaeSettings} pwapSettings={pwapSettings} onPwapChange={setPwapSettings} />
           )}
-          {activeInstrument && (
+          {(activeInstrument || pendingInstrument) && (
             <select
               className="precision-select mono"
               value={pricePrecision}
@@ -1023,7 +1028,7 @@ function App() {
               ))}
             </select>
           )}
-          {activeInstrument && (
+          {(activeInstrument || pendingInstrument) && (
             <select
               className="compression-select mono"
               value={compressionFactor}

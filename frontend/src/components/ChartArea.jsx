@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useMemo } from 'react'
 import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts'
 import DataWindow from './DataWindow'
 import './ChartArea.css'
@@ -1501,40 +1501,53 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       const isUp = close[i] > open[i]
       const isDown = close[i] < open[i]
 
-      // Type1 Logic (displayed as "1" at ±5) - always 3-bar pattern
-      const use3bar = renkoPerReversalSizes && renkoPerBrickSizes
+      // Type1 & Type2 markers
+      const useTV = renkoPerReversalSizes && renkoPerBrickSizes
         ? renkoPerReversalSizes[i] > renkoPerBrickSizes[i]
         : reversalSize > brickSize
 
-      if (i > 1) {
-        const priorIsUp = close[i - 1] > open[i - 1]
-        const priorIsDown = close[i - 1] < open[i - 1]
-        const prior2IsUp = close[i - 2] > open[i - 2]
-        const prior2IsDown = close[i - 2] < open[i - 2]
+      if (!useTV) {
+        // FP mode: 3-bar patterns
+        if (i > 1) {
+          const priorUp = close[i - 1] > open[i - 1]
+          const priorDn = close[i - 1] < open[i - 1]
+          const prior2Up = close[i - 2] > open[i - 2]
+          const prior2Dn = close[i - 2] < open[i - 2]
 
-        // Long T1: DOWN -> UP -> UP in state +3
-        if (state === 3 && isUp && priorIsUp && prior2IsDown) {
-          typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
-        }
-        // Short T1: UP -> DOWN -> DOWN in state -3
-        if (state === -3 && isDown && priorIsDown && prior2IsUp) {
-          typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
-        }
-      }
+          // Type1: DN,UP,UP in +3 / UP,DN,DN in -3
+          if (state === 3 && isUp && priorUp && prior2Dn)
+            typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
+          if (state === -3 && isDown && priorDn && prior2Up)
+            typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
 
-      // Type2 Logic (displayed as "2" at ±4) - only when reversal > brick
-      // Wick must exceed brick_size
-      if (use3bar) {
-        const brickSizeAtI = renkoPerBrickSizes ? renkoPerBrickSizes[i] : brickSize
-        const priorIsUpT2 = i > 0 ? close[i - 1] > open[i - 1] : false
-        if (state === 3 && isUp && round(open[i] - low[i], pricePrecision) > brickSizeAtI) {
-          if (priorIsUpT2) {
+          // Type2: UP,DN,UP in +3 / DN,UP,DN in -3
+          if (state === 3 && isUp && priorDn && prior2Up)
             typeMarkers.push({ time: i, value: -4, text: '2', color: '#10b981' })
-          }
-        }
-        if (state === -3 && isDown && round(high[i] - open[i], pricePrecision) > brickSizeAtI) {
-          if (!priorIsUpT2) {  // prior must be DOWN
+          if (state === -3 && isDown && priorUp && prior2Dn)
             typeMarkers.push({ time: i, value: 4, text: '2', color: '#f43f5e' })
+        }
+      } else {
+        // TV mode: 2-bar patterns with DD conditions
+        const brickSizeAtI = renkoPerBrickSizes ? renkoPerBrickSizes[i] : brickSize
+        const dd = isUp ? round(open[i] - low[i], pricePrecision) : round(high[i] - open[i], pricePrecision)
+
+        if (i > 0) {
+          const priorUp = close[i - 1] > open[i - 1]
+          const priorDn = close[i - 1] < open[i - 1]
+
+          // Type1: DN,UP in +3 / UP,DN in -3, DD > brick
+          if (state === 3 && isUp && priorDn && dd > brickSizeAtI)
+            typeMarkers.push({ time: i, value: -5, text: '1', color: '#10b981' })
+          if (state === -3 && isDown && priorUp && dd > brickSizeAtI)
+            typeMarkers.push({ time: i, value: 5, text: '1', color: '#f43f5e' })
+
+          // Type2: UP,UP in +3 / DN,DN in -3, DD > brick, close vs MA1
+          const ma1 = ma1Values[i]
+          if (ma1 !== null) {
+            if (state === 3 && isUp && priorUp && dd > brickSizeAtI && close[i] > ma1)
+              typeMarkers.push({ time: i, value: -4, text: '2', color: '#10b981' })
+            if (state === -3 && isDown && priorDn && dd > brickSizeAtI && close[i] < ma1)
+              typeMarkers.push({ time: i, value: 4, text: '2', color: '#f43f5e' })
           }
         }
       }
@@ -1602,6 +1615,19 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
 
   }, [chartData, chartType, showIndicatorPane, maSettings, sessionSchedule])
 
+  // Compute wick error % (bars where DD > reversal_size)
+  const wickErrorPct = useMemo(() => {
+    const src = renkoData?.data || (chartType === 'renko' ? chartData?.data : null)
+    if (!src?.open || !src?.high || !src?.low || !src?.close || !src?.reversal_size) return null
+    const { open, high, low, close, reversal_size } = src
+    let errors = 0
+    for (let i = 0; i < close.length; i++) {
+      const dd = close[i] > open[i] ? open[i] - low[i] : high[i] - open[i]
+      if (dd > reversal_size[i]) errors++
+    }
+    return (errors / close.length * 100).toFixed(1)
+  }, [renkoData, chartData, chartType])
+
   if (!chartData && !isLoading) {
     return (
       <div ref={containerRef} className="chart-container">
@@ -1667,6 +1693,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
           hoveredBarIndex={hoveredBarIndex}
           hoveredM1Index={hoveredM1Index}
           pricePrecision={pricePrecision}
+          wickErrorPct={wickErrorPct}
         />
       )}
     </div>

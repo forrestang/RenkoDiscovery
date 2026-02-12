@@ -92,43 +92,44 @@ export function computeIndicatorSignals(renkoData, maSettings, renkoSettings, pr
     let type1 = 0
     let type2 = 0
 
-    // Type1 Logic - 3-bar pattern
-    const use3bar = renkoPerReversalSizes && renkoPerBrickSizes
+    const useTV = renkoPerReversalSizes && renkoPerBrickSizes
       ? renkoPerReversalSizes[i] > renkoPerBrickSizes[i]
       : reversalSize > brickSize
 
-    if (i > 1) {
-      const priorIsUp = close[i - 1] > open[i - 1]
-      const priorIsDown = close[i - 1] < open[i - 1]
-      const prior2IsUp = close[i - 2] > open[i - 2]
-      const prior2IsDown = close[i - 2] < open[i - 2]
+    if (!useTV) {
+      // FP mode: 3-bar patterns
+      if (i > 1) {
+        const priorUp = close[i - 1] > open[i - 1]
+        const priorDn = close[i - 1] < open[i - 1]
+        const prior2Up = close[i - 2] > open[i - 2]
+        const prior2Dn = close[i - 2] < open[i - 2]
 
-      // Long T1: DOWN -> UP -> UP in state +3
-      if (state === 3 && isUp && priorIsUp && prior2IsDown) {
-        type1Counter++
-        type1 = type1Counter
-      }
-      // Short T1: UP -> DOWN -> DOWN in state -3
-      if (state === -3 && isDown && priorIsDown && prior2IsUp) {
-        type1Counter++
-        type1 = -type1Counter
-      }
-    }
+        // Type1: DN,UP,UP in +3 / UP,DN,DN in -3
+        if (state === 3 && isUp && priorUp && prior2Dn) { type1Counter++; type1 = type1Counter }
+        if (state === -3 && isDown && priorDn && prior2Up) { type1Counter++; type1 = -type1Counter }
 
-    // Type2 Logic - wick > brick_size
-    if (use3bar) {
+        // Type2: UP,DN,UP in +3 / DN,UP,DN in -3
+        if (state === 3 && isUp && priorDn && prior2Up) { type2Counter++; type2 = type2Counter }
+        if (state === -3 && isDown && priorUp && prior2Dn) { type2Counter++; type2 = -type2Counter }
+      }
+    } else {
+      // TV mode: 2-bar patterns with DD conditions
       const brickSizeAtI = renkoPerBrickSizes ? renkoPerBrickSizes[i] : brickSize
-      const priorIsUpT2 = i > 0 ? close[i - 1] > open[i - 1] : false
-      if (state === 3 && isUp && round(open[i] - low[i], pricePrecision) > brickSizeAtI) {
-        if (priorIsUpT2) {
-          type2Counter++
-          type2 = type2Counter
-        }
-      }
-      if (state === -3 && isDown && round(high[i] - open[i], pricePrecision) > brickSizeAtI) {
-        if (!priorIsUpT2) {
-          type2Counter++
-          type2 = -type2Counter
+      const dd = isUp ? round(open[i] - low[i], pricePrecision) : round(high[i] - open[i], pricePrecision)
+
+      if (i > 0) {
+        const priorUp = close[i - 1] > open[i - 1]
+        const priorDn = close[i - 1] < open[i - 1]
+
+        // Type1: DN,UP in +3 / UP,DN in -3, DD > brick
+        if (state === 3 && isUp && priorDn && dd > brickSizeAtI) { type1Counter++; type1 = type1Counter }
+        if (state === -3 && isDown && priorUp && dd > brickSizeAtI) { type1Counter++; type1 = -type1Counter }
+
+        // Type2: UP,UP in +3 / DN,DN in -3, DD > brick, close vs MA1
+        const ma1 = ma1Values[i]
+        if (ma1 !== null) {
+          if (state === 3 && isUp && priorUp && dd > brickSizeAtI && close[i] > ma1) { type2Counter++; type2 = type2Counter }
+          if (state === -3 && isDown && priorDn && dd > brickSizeAtI && close[i] < ma1) { type2Counter++; type2 = -type2Counter }
         }
       }
     }

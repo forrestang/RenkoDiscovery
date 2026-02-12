@@ -6,8 +6,8 @@ export const COLUMN_DESCRIPTIONS = {
   'chop(rolling)': 'Choppiness Index (rolling n-period). Higher values = choppier/range-bound market. Range: 0.0-1.0',
 
   // Signals
-  'Type1': '3-bar reversal pattern counter. Positive = bullish (DN\u2192UP\u2192UP in State +3), Negative = bearish (UP\u2192DN\u2192DN in State -3).',
-  'Type2': 'Wick-based pullback counter. Triggers only when reversal > brick size and wick > brick size.',
+  'Type1': 'Pullback pattern counter. FP: 3-bar reversal (DN\u2192UP\u2192UP / UP\u2192DN\u2192DN in State \u00b13). TV: 2-bar reversal with DD > brick (DN\u2192UP / UP\u2192DN in State \u00b13).',
+  'Type2': 'Pullback pattern counter. FP: 3-bar bounce-back (UP\u2192DN\u2192UP / DN\u2192UP\u2192DN in State \u00b13). TV: 2-bar continuation with DD > brick and close vs MA1 (UP\u2192UP / DN\u2192DN in State \u00b13).',
 
   // OHLC & Price
   'open, high, low, close, direction': 'Current bar OHLC prices and bar direction.',
