@@ -1730,6 +1730,7 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
     df['DD'] = df['DD'].round(5)
     df['DD_ADR'] = (df['DD'] / df['currentADR']).round(5)
     df['DD_RR'] = (df['DD'] / df['reversal_size']).round(5)
+    df['WickError'] = np.where(df['DD'] > df['reversal_size'], 1, 0).astype(np.int8)
 
     # Calculate State based on MA order
     fast_ema = ema_columns[ma1_period]
@@ -3415,6 +3416,12 @@ def backtest_signals(request: BacktestRequest):
     adr_arr = df['currentADR'].values.astype(float)
     n = len(df)
 
+    # Pre-compute wick error array
+    if 'WickError' in df.columns:
+        wick_err = df['WickError'].values
+    else:
+        wick_err = np.where(df['DD'].values > df['reversal_size'].values, 1, 0) if 'DD' in df.columns else np.zeros(n, dtype=np.int8)
+
     # Pre-compute datetime strings for results
     if 'datetime' in df.columns:
         dt_arr = df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S').values
@@ -3595,6 +3602,7 @@ def backtest_signals(request: BacktestRequest):
             "exit_idx": exit_idx,
             "exit_dt": exit_dt,
             "exit_price": round(float(exit_price), 5),
+            "has_wick_error": bool(wick_err[i:exit_idx + 1].any()) if exit_idx is not None else bool(wick_err[i]),
         }
         if sig_name not in trades_by_signal:
             trades_by_signal[sig_name] = []

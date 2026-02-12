@@ -169,6 +169,61 @@ const stateMAOrder = {
   '-1': 'med>fast>slow', '-2': 'med>slow>fast', '-3': 'slow>med>fast',
 };
 
+function computeBacktestSummary(trades) {
+  if (!trades || trades.length === 0) return null
+  const count = trades.length
+  const closed = trades.filter(t => t.outcome !== 'open')
+  const open = trades.filter(t => t.outcome === 'open').length
+  const wins = closed.filter(t => t.result > 0)
+  const losses = closed.filter(t => t.result <= 0)
+  const winCount = wins.length
+  const lossCount = losses.length
+  const winRate = closed.length > 0 ? winCount / closed.length : 0
+  const avgWin = winCount > 0 ? (wins.reduce((s, t) => s + t.result, 0) / winCount) : 0
+  const avgLoss = lossCount > 0 ? (losses.reduce((s, t) => s + t.result, 0) / lossCount) : 0
+  const grossWin = wins.reduce((s, t) => s + t.result, 0)
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.result, 0))
+  const profitFactor = grossLoss > 0 ? (grossWin / grossLoss) : grossWin > 0 ? Infinity : 0
+  const totalR = trades.reduce((s, t) => s + t.result, 0)
+  const expectancy = closed.length > 0 ? (closed.reduce((s, t) => s + t.result, 0) / closed.length) : 0
+  let peak = 0, maxDD = 0, cum = 0
+  trades.forEach(t => {
+    cum += t.result
+    if (cum > peak) peak = cum
+    const dd = peak - cum
+    if (dd > maxDD) maxDD = dd
+  })
+  const results = closed.map(t => t.result)
+  const mean = results.length > 0 ? results.reduce((s, v) => s + v, 0) / results.length : 0
+  const variance = results.length > 1 ? results.reduce((s, v) => s + (v - mean) ** 2, 0) / (results.length - 1) : 0
+  const stdDev = Math.sqrt(variance)
+  const sharpe = stdDev > 0 ? (mean / stdDev) : null
+  let maxConsecWins = 0, maxConsecLosses = 0, cw = 0, cl = 0
+  closed.forEach(t => {
+    if (t.result > 0) { cw++; cl = 0; if (cw > maxConsecWins) maxConsecWins = cw }
+    else { cl++; cw = 0; if (cl > maxConsecLosses) maxConsecLosses = cl }
+  })
+  const barsArr = trades.filter(t => t.bars_held != null).map(t => t.bars_held)
+  const avgBarsHeld = barsArr.length > 0 ? (barsArr.reduce((s, v) => s + v, 0) / barsArr.length) : 0
+  return {
+    count,
+    wins: winCount,
+    losses: lossCount,
+    open,
+    win_rate: winRate,
+    avg_win: parseFloat(avgWin.toFixed(2)),
+    avg_loss: parseFloat(avgLoss.toFixed(2)),
+    profit_factor: profitFactor === Infinity ? '∞' : parseFloat(profitFactor.toFixed(2)),
+    expectancy: parseFloat(expectancy.toFixed(2)),
+    total_r: parseFloat(totalR.toFixed(2)),
+    max_drawdown: parseFloat(maxDD.toFixed(2)),
+    sharpe: sharpe != null ? parseFloat(sharpe.toFixed(2)) : null,
+    max_consec_wins: maxConsecWins,
+    max_consec_losses: maxConsecLosses,
+    avg_bars_held: parseFloat(avgBarsHeld.toFixed(1)),
+  }
+}
+
 function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) {
   const signalData = stats?.signalData
   const brickEqReversal = stats?.settings?.brickSize != null && stats.settings.brickSize === stats.settings.reversalSize
@@ -600,6 +655,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     return v === null ? true : v === 'true'
   })
   const [btComboMode, setBtComboMode] = useState(false)
+  const [btCullErrors, setBtCullErrors] = useState(false)
   const [btShowChart, setBtShowChart] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowChart`) === 'true')
   const [btChartDecimals, setBtChartDecimals] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btChartDecimals`)) || 5)
   const [btShowIndicator, setBtShowIndicator] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowIndicator`) === 'true')
@@ -977,10 +1033,21 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     }
   }, [filepath, apiBase, btSignals, btStopType, btStopValue, btTargetType, btTargetValue, btTargetMA, btReportUnit, btAllowOverlap])
 
+  // Filtered backtest data (cull wick error trades)
+  const filteredBtData = useMemo(() => {
+    if (!btCullErrors || !btData?.signals) return btData
+    const filtered = { ...btData, signals: {} }
+    for (const [name, sigData] of Object.entries(btData.signals)) {
+      const cleanTrades = sigData.trades.filter(t => !t.has_wick_error)
+      filtered.signals[name] = { trades: cleanTrades, summary: computeBacktestSummary(cleanTrades) }
+    }
+    return filtered
+  }, [btData, btCullErrors])
+
   // Memoized R-Curve traces for backtest
   const btCurveTraces = useMemo(() => {
     const traces = []
-    const sigs = btData.signals || {}
+    const sigs = filteredBtData.signals || {}
     btSignals.forEach((signal, i) => {
       if (signal.enabled === false) return
       const sigData = sigs[signal.name]
@@ -1003,11 +1070,11 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       })
     })
     return traces
-  }, [btData, btSignals])
+  }, [filteredBtData, btSignals])
 
   // Memoized combo equity curve for backtest (sorted by exit_idx)
   const btComboCurveTraces = useMemo(() => {
-    const sigs = btData.signals || {}
+    const sigs = filteredBtData.signals || {}
     const allTrades = []
     btSignals.forEach((signal) => {
       if (signal.enabled === false) return
@@ -1032,26 +1099,26 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
       name: 'Combo',
       line: { color: '#facc15', width: 1.5 },
     }]
-  }, [btData, btSignals])
+  }, [filteredBtData, btSignals])
 
   // Flat trade list for backtest chart
   const btChartTrades = useMemo(() => {
-    if (!btData?.signals) return []
+    if (!filteredBtData?.signals) return []
     const all = []
     btSignals.forEach((sig, i) => {
       if (sig.enabled === false) return
-      const sigData = btData.signals[sig.name]
+      const sigData = filteredBtData.signals[sig.name]
       if (!sigData?.trades) return
       sigData.trades.forEach(t => {
         all.push({ ...t, signalColor: PLAYGROUND_COLORS[i % PLAYGROUND_COLORS.length] })
       })
     })
     return all
-  }, [btData, btSignals])
+  }, [filteredBtData, btSignals])
 
   // Memoized combo summary stats for backtest
   const btComboStats = useMemo(() => {
-    const sigs = btData.signals || {}
+    const sigs = filteredBtData.signals || {}
     const allTrades = []
     btSignals.forEach((signal) => {
       if (signal.enabled === false) return
@@ -1061,62 +1128,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     })
     if (allTrades.length === 0) return null
     allTrades.sort((a, b) => (a.exit_idx ?? a.idx) - (b.exit_idx ?? b.idx))
-    const count = allTrades.length
-    const closed = allTrades.filter(t => t.outcome !== 'open')
-    const open = allTrades.filter(t => t.outcome === 'open').length
-    const wins = closed.filter(t => t.result > 0)
-    const losses = closed.filter(t => t.result <= 0)
-    const winCount = wins.length
-    const lossCount = losses.length
-    const winRate = closed.length > 0 ? winCount / closed.length : 0
-    const avgWin = winCount > 0 ? (wins.reduce((s, t) => s + t.result, 0) / winCount) : 0
-    const avgLoss = lossCount > 0 ? (losses.reduce((s, t) => s + t.result, 0) / lossCount) : 0
-    const grossWin = wins.reduce((s, t) => s + t.result, 0)
-    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.result, 0))
-    const profitFactor = grossLoss > 0 ? (grossWin / grossLoss) : grossWin > 0 ? Infinity : 0
-    const totalR = allTrades.reduce((s, t) => s + t.result, 0)
-    const expectancy = closed.length > 0 ? (closed.reduce((s, t) => s + t.result, 0) / closed.length) : 0
-    // Max drawdown
-    let peak = 0, maxDD = 0, cum = 0
-    allTrades.forEach(t => {
-      cum += t.result
-      if (cum > peak) peak = cum
-      const dd = peak - cum
-      if (dd > maxDD) maxDD = dd
-    })
-    // Sharpe
-    const results = closed.map(t => t.result)
-    const mean = results.length > 0 ? results.reduce((s, v) => s + v, 0) / results.length : 0
-    const variance = results.length > 1 ? results.reduce((s, v) => s + (v - mean) ** 2, 0) / (results.length - 1) : 0
-    const stdDev = Math.sqrt(variance)
-    const sharpe = stdDev > 0 ? (mean / stdDev) : null
-    // Streaks
-    let maxConsecWins = 0, maxConsecLosses = 0, cw = 0, cl = 0
-    closed.forEach(t => {
-      if (t.result > 0) { cw++; cl = 0; if (cw > maxConsecWins) maxConsecWins = cw }
-      else { cl++; cw = 0; if (cl > maxConsecLosses) maxConsecLosses = cl }
-    })
-    // Avg bars held
-    const barsArr = allTrades.filter(t => t.bars_held != null).map(t => t.bars_held)
-    const avgBarsHeld = barsArr.length > 0 ? (barsArr.reduce((s, v) => s + v, 0) / barsArr.length) : 0
-    return {
-      count,
-      wins: winCount,
-      losses: lossCount,
-      open,
-      win_rate: winRate,
-      avg_win: parseFloat(avgWin.toFixed(2)),
-      avg_loss: parseFloat(avgLoss.toFixed(2)),
-      profit_factor: profitFactor === Infinity ? '∞' : parseFloat(profitFactor.toFixed(2)),
-      expectancy: parseFloat(expectancy.toFixed(2)),
-      total_r: parseFloat(totalR.toFixed(2)),
-      max_drawdown: parseFloat(maxDD.toFixed(2)),
-      sharpe: sharpe != null ? parseFloat(sharpe.toFixed(2)) : null,
-      max_consec_wins: maxConsecWins,
-      max_consec_losses: maxConsecLosses,
-      avg_bars_held: parseFloat(avgBarsHeld.toFixed(1)),
-    }
-  }, [btData, btSignals])
+    return computeBacktestSummary(allTrades)
+  }, [filteredBtData, btSignals])
 
   // Reset SQF filters when a new file is loaded
   useEffect(() => {
@@ -2907,6 +2920,17 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   One Trade at a Time
                 </label>
               </div>
+              <div className="backtest-config-group" data-tooltip="Remove trades spanning bars where wick exceeds reversal size">
+                <label className="backtest-config-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <input
+                    type="checkbox"
+                    checked={btCullErrors}
+                    onChange={e => setBtCullErrors(e.target.checked)}
+                    style={{ margin: 0 }}
+                  />
+                  CULL ERRORS
+                </label>
+              </div>
             </div>
           </div>
 
@@ -3035,7 +3059,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
           {/* Summary Stats Table + Chart wrapper */}
           {(() => {
             const enabledSignals = btSignals.filter(s => s.enabled !== false)
-            const hasSummary = enabledSignals.some(s => btData.signals?.[s.name]?.summary)
+            const hasSummary = enabledSignals.some(s => filteredBtData.signals?.[s.name]?.summary)
             if (!hasSummary && !(btChartTrades.length > 0 && stats?.barData)) return null
             const btShowCombo = !btAllowOverlap || btComboMode
             return (
@@ -3068,7 +3092,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   </thead>
                   <tbody>
                     {enabledSignals.map((s, i) => {
-                      const sm = btData.signals?.[s.name]?.summary
+                      const sm = filteredBtData.signals?.[s.name]?.summary
                       if (!sm) return null
                       return (
                         <tr key={s.name + i}>
@@ -3213,11 +3237,13 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <div className="backtest-chart-resize-handle" onMouseDown={handleChartResizeMouseDown}>
                     <div className="resize-handle-grip" />
                   </div>
-                  {(() => {
+                </div>
+              )}
+              {(() => {
                     const enabledSignals = btSignals.filter(s => s.enabled !== false)
                     const allTrades = []
                     enabledSignals.forEach(s => {
-                      const sigData = btData.signals?.[s.name]
+                      const sigData = filteredBtData.signals?.[s.name]
                       if (sigData?.trades) {
                         sigData.trades.forEach(t => allTrades.push({ ...t, signalName: s.name, signalIdx: btSignals.indexOf(s) }))
                       }
@@ -3248,6 +3274,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                             <thead>
                               <tr>
                                 <th>#</th>
+                                <th data-tooltip="Wick Error — trade spans a bar where DD exceeds reversal size">Er</th>
                                 <th>Signal</th>
                                 <th>Entry Date</th>
                                 <th>Entry Price</th>
@@ -3273,6 +3300,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                                   onClick={() => setBtFocusBar({ idx: t.idx, ts: Date.now() })}
                                 >
                                   <td>{i + 1}</td>
+                                  <td style={{ textAlign: 'center', color: '#ef4444', fontWeight: 600 }}>{t.has_wick_error ? '*' : ''}</td>
                                   <td style={{ color: PLAYGROUND_COLORS[t.signalIdx % PLAYGROUND_COLORS.length] }}>{t.signalName}</td>
                                   <td>{t.entry_dt}</td>
                                   <td>{t.entry_price}</td>
@@ -3293,8 +3321,6 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       </div>
                     )
                   })()}
-                </div>
-              )}
             </div>
           )}
               </div>
