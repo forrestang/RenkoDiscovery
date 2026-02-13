@@ -1165,6 +1165,11 @@
   color: #fb923c;
 }
 
+.cache-tag.interval-tag.b {
+  background: rgba(236, 72, 153, 0.15);
+  color: #f472b6;
+}
+
 .cache-meta {
   display: flex;
   align-items: center;

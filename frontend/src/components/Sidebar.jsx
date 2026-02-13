@@ -701,6 +701,14 @@ function Sidebar({
                     >
                       Tick
                     </button>
+                    <button
+                      className={`toggle-option ${intervalType === 'B' ? 'active' : ''}`}
+                      onClick={() => onIntervalTypeChange('B')}
+                      disabled={dataFormat === 'MT4'}
+                      title={dataFormat === 'MT4' ? 'MT4 only supports minute data' : '3-Tick bar data (OHLC from 3 ticks)'}
+                    >
+                      3-Tick
+                    </button>
                   </div>
                 </div>
               </div>
@@ -868,7 +876,7 @@ function Sidebar({
                             )}
                             {item.interval_type && (
                               <span className={`cache-tag interval-tag ${item.interval_type.toLowerCase()}`}>
-                                {item.interval_type === 'M' ? 'Min' : 'Tick'}
+                                {item.interval_type === 'M' ? 'Min' : item.interval_type === 'B' ? '3-Tick' : 'Tick'}
                               </span>
                             )}
                           </div>

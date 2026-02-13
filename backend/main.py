@@ -502,6 +502,24 @@ def parse_csv_file(filepath: str, data_format: str = "MT4", interval_type: str =
 
             df = df[['datetime', 'open', 'high', 'low', 'close', 'volume', 'tick_ask', 'tick_bid']]
 
+        elif interval_type == "B":
+            # J4X 3-Tick bar format: "Time (EET),EndTime,Open,High,Low,Close,Volume"
+            # Skip header row, drop EndTime column
+            df = pd.read_csv(
+                filepath,
+                delimiter=fmt['delimiter'],
+                skiprows=1,
+                names=['datetime', 'endtime', 'open', 'high', 'low', 'close', 'volume'],
+                usecols=[0, 1, 2, 3, 4, 5, 6]
+            )
+            df = df.drop(columns=['endtime'])
+
+            # Parse datetime with milliseconds: "2025.01.02 00:04:59.488"
+            df['datetime'] = pd.to_datetime(df['datetime'], format='%Y.%m.%d %H:%M:%S.%f')
+
+            # Convert EET to UTC
+            df['datetime'] = df['datetime'].dt.tz_localize(EET).dt.tz_convert('UTC')
+
         else:
             # J4X M1 format: "Time (EET),Open,High,Low,Close,Volume"
             # Skip header row and use explicit column names to avoid issues with trailing spaces
