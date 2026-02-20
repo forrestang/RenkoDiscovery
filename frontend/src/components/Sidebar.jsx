@@ -175,7 +175,7 @@ function Sidebar({
         if (Array.isArray(parsed) && parsed.length > 0) return parsed
       }
     } catch {}
-    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0010, brickPct: 5.0, reversalPct: 5.0, adrPeriod: 14, wickMode: 'all', reversalMode: 'fp', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0] }]
+    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0010, brickPct: 5.0, reversalPct: 5.0, adrPeriod: 14, wickMode: 'all', reversalMode: 'fp', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0], htfBrickSize: null }]
   })
   const [isBypassing, setIsBypassing] = useState(false)
   const [bypassResults, setBypassResults] = useState(null)
@@ -263,6 +263,7 @@ function Sidebar({
           smae2_period: job.smae2Period,
           smae2_deviation: job.smae2Deviation,
           pwap_sigmas: job.pwapSigmas,
+          ...(job.htfBrickSize ? { htf_brick_size: job.htfBrickSize } : {}),
         })
       })
       fetchBypassTemplates()
@@ -301,6 +302,7 @@ function Sidebar({
         smae2Period: template.smae2_period ?? 50,
         smae2Deviation: template.smae2_deviation ?? 1.0,
         pwapSigmas: template.pwap_sigmas ?? [1.0, 2.0, 2.5, 3.0],
+        htfBrickSize: template.htf_brick_size || null,
         templateName: template.name,
         filenameManual: false,
       }
@@ -335,6 +337,7 @@ function Sidebar({
         smae2_period: j.smae2Period,
         smae2_deviation: j.smae2Deviation,
         pwap_sigmas: j.pwapSigmas,
+        ...(j.htfBrickSize ? { htf_brick_size: j.htfBrickSize } : {}),
       }))
       const results = await onDirectGenerate(payload)
       setBypassResults(results)

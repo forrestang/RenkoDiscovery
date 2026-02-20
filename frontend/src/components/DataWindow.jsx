@@ -1,4 +1,4 @@
-function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM1Index, pricePrecision = 5, wickErrorPct = null }) {
+function DataWindow({ chartData, renkoData, htfRenkoData = null, chartType, hoveredBarIndex, hoveredM1Index, pricePrecision = 5, wickErrorPct = null }) {
   // Need at least chartData to display anything
   if (!chartData?.data) return null
 
@@ -46,11 +46,11 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
 
   return (
     <div className="data-window">
-      {/* Timestamp - show M1 time in raw/overlay, renko time in renko mode */}
+      {/* Timestamp - show M1 time in raw/overlay, renko time in renko/o2 mode */}
       <div className="data-row">
         <span className="data-label">Time</span>
         <span className="data-value mono">
-          {chartType === 'renko' ? formatTimestamp(renkoDatetime) : formatTimestamp(m1Timestamp)}
+          {(chartType === 'renko' || chartType === 'o2') ? formatTimestamp(renkoDatetime) : formatTimestamp(m1Timestamp)}
         </span>
       </div>
 
@@ -77,8 +77,8 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
         </>
       )}
 
-      {/* Renko bar OHLC - show in renko and overlay modes */}
-      {(chartType === 'renko' || chartType === 'overlay') && renkoDataSource && (
+      {/* Renko bar OHLC - show in renko, overlay, and o2 modes */}
+      {(chartType === 'renko' || chartType === 'overlay' || chartType === 'o2') && renkoDataSource && (
         <>
           <div className="data-section-header">Renko</div>
           <div className="data-row">
@@ -127,6 +127,74 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
           )}
         </>
       )}
+
+      {/* HTF Renko data - show in O2 mode */}
+      {chartType === 'o2' && htfRenkoData && (() => {
+        // Find which HTF brick contains the hovered LTF bar
+        const ltfTickCloses = chartData?.data?.tick_index_close
+        const htfTickOpens = htfRenkoData.tick_index_open
+        const htfTickCloses = htfRenkoData.tick_index_close
+        if (!ltfTickCloses || !htfTickOpens || !htfTickCloses || renkoIndex >= ltfTickCloses.length) return null
+
+        const ltfTC = ltfTickCloses[renkoIndex]
+        let htfIdx = -1
+        for (let h = 0; h < htfTickOpens.length; h++) {
+          if (ltfTC >= htfTickOpens[h] && ltfTC <= htfTickCloses[h]) {
+            htfIdx = h
+            break
+          }
+        }
+        if (htfIdx < 0) return null
+
+        // Compute HTF wick error %
+        let htfErrorPct = null
+        if (htfRenkoData.open && htfRenkoData.high && htfRenkoData.low && htfRenkoData.close && htfRenkoData.reversal_size) {
+          let errors = 0
+          const total = htfRenkoData.open.length
+          for (let i = 0; i < total; i++) {
+            const isUp = htfRenkoData.close[i] > htfRenkoData.open[i]
+            const dd = isUp
+              ? htfRenkoData.open[i] - htfRenkoData.low[i]
+              : htfRenkoData.high[i] - htfRenkoData.open[i]
+            if (dd > htfRenkoData.reversal_size[i]) errors++
+          }
+          if (total > 0) htfErrorPct = (errors / total * 100).toFixed(1)
+        }
+
+        return (
+          <>
+            <div className="data-section-header">HTF</div>
+            <div className="data-row">
+              <span className="data-label">O</span>
+              <span className="data-value mono">{formatPrice(htfRenkoData.open?.[htfIdx])}</span>
+            </div>
+            <div className="data-row">
+              <span className="data-label">H</span>
+              <span className="data-value mono">{formatPrice(htfRenkoData.high?.[htfIdx])}</span>
+            </div>
+            <div className="data-row">
+              <span className="data-label">L</span>
+              <span className="data-value mono">{formatPrice(htfRenkoData.low?.[htfIdx])}</span>
+            </div>
+            <div className="data-row">
+              <span className="data-label">C</span>
+              <span className="data-value mono">{formatPrice(htfRenkoData.close?.[htfIdx])}</span>
+            </div>
+            {htfErrorPct !== null && (
+              <div className="data-row">
+                <span className="data-label">Error</span>
+                <span className="data-value mono">~{htfErrorPct}%</span>
+              </div>
+            )}
+            {htfRenkoData.open?.length > 0 && (
+              <div className="data-row">
+                <span className="data-label">barCount</span>
+                <span className="data-value mono">{htfRenkoData.open.length.toLocaleString()}</span>
+              </div>
+            )}
+          </>
+        )
+      })()}
     </div>
   )
 }

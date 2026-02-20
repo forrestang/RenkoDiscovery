@@ -90,6 +90,8 @@ class RenkoRequest(BaseModel):
     adr_period: int = 14  # rolling lookback
     session_schedule: Optional[dict] = None  # Per-day schedule: {"monday": {"hour": 22, "minute": 0}, ...}
     reversal_mode: str = "fp"  # "fp" (2-bar reversal) | "tv" (single-bar reversal)
+    htf_brick_size: Optional[float] = None  # Higher TF brick size (e.g. 0.0100 for 10x)
+    htf_reversal_multiplier: float = 2.0  # Reversal multiplier for HTF
 
 
 class StatsRequest(BaseModel):
@@ -110,6 +112,9 @@ class StatsRequest(BaseModel):
     pwap_sigmas: list[float] = [1.0, 2.0, 2.5, 3.0]
     renko_data: dict  # Contains datetime, open, high, low, close arrays
     session_schedule: Optional[dict] = None  # Per-day schedule: {"monday": {"hour": 22, "minute": 0}, ...}
+    htf_brick_size: Optional[float] = None  # Higher TF brick size (e.g. 0.0100)
+    htf_reversal_multiplier: float = 2.0  # Reversal multiplier for HTF
+    htf_renko_data: Optional[dict] = None  # HTF renko data (datetime, OHLC, tick indices)
 
 
 class MLTrainRequest(BaseModel):
@@ -192,6 +197,8 @@ class DirectGenerateJob(BaseModel):
     pwap_sigmas: list[float] = [1.0, 2.0, 2.5, 3.0]
     session_schedule: Optional[dict] = None
     reversal_mode: str = "fp"
+    htf_brick_size: Optional[float] = None  # Higher TF brick size
+    htf_reversal_multiplier: float = 2.0  # Reversal multiplier for HTF
 
 
 class DirectGenerateRequest(BaseModel):
@@ -218,6 +225,8 @@ class BypassTemplate(BaseModel):
     smae2_deviation: float = 1.0
     pwap_sigmas: list[float] = [1.0, 2.0, 2.5, 3.0]
     session_schedule: Optional[dict] = None
+    htf_brick_size: Optional[float] = None  # Higher TF brick size
+    htf_reversal_multiplier: float = 2.0  # Reversal multiplier for HTF
 
 
 def extract_instrument(filename: str) -> Optional[str]:
@@ -1646,6 +1655,59 @@ def get_renko_data(instrument: str, request: RenkoRequest):
     else:
         datetime_list = [f"Brick {i}" for i in range(len(renko_df))]
 
+    # Generate HTF renko if requested
+    htf_response = None
+    htf_pending = None
+    if request.htf_brick_size:
+        try:
+            htf_brick = float(request.htf_brick_size)
+            htf_rev_size = htf_brick * request.htf_reversal_multiplier
+            htf_rev_mult = htf_rev_size / htf_brick
+
+            # Build HTF size_schedule for ADR mode
+            htf_size_schedule = None
+            if request.sizing_mode == "adr" and size_schedule:
+                ratio = request.htf_brick_size / request.brick_size if request.brick_size > 0 else 10.0
+                htf_size_schedule = []
+                for (idx, bs, rs, adr_val) in size_schedule:
+                    htf_bs = round(bs * ratio, 6)
+                    htf_rs = round(htf_bs * request.htf_reversal_multiplier, 6)
+                    htf_size_schedule.append((idx, htf_bs, htf_rs, adr_val))
+                htf_brick = htf_size_schedule[0][1]
+                htf_rev_mult = htf_size_schedule[0][2] / htf_size_schedule[0][1]
+
+            htf_renko_df, htf_pending_brick = generate_renko_custom(
+                df, htf_brick, htf_rev_mult, request.wick_mode,
+                size_schedule=htf_size_schedule, reversal_mode=request.reversal_mode
+            )
+
+            if not htf_renko_df.empty:
+                htf_renko_df = htf_renko_df.reset_index()
+                for col in ['open', 'high', 'low', 'close']:
+                    htf_renko_df[col] = htf_renko_df[col].round(5)
+
+                htf_dt_col = None
+                for col in ['datetime', 'date', 'index']:
+                    if col in htf_renko_df.columns:
+                        htf_dt_col = col
+                        break
+                htf_dt_list = htf_renko_df[htf_dt_col].dt.strftime('%Y-%m-%d %H:%M:%S').tolist() if htf_dt_col and hasattr(htf_renko_df[htf_dt_col], 'dt') else [f"Brick {i}" for i in range(len(htf_renko_df))]
+
+                htf_response = {
+                    "datetime": htf_dt_list,
+                    "open": htf_renko_df['open'].tolist(),
+                    "high": htf_renko_df['high'].tolist(),
+                    "low": htf_renko_df['low'].tolist(),
+                    "close": htf_renko_df['close'].tolist(),
+                    "tick_index_open": htf_renko_df['tick_index_open'].tolist() if 'tick_index_open' in htf_renko_df.columns else None,
+                    "tick_index_close": htf_renko_df['tick_index_close'].tolist() if 'tick_index_close' in htf_renko_df.columns else None,
+                    "brick_size": htf_renko_df['brick_size'].tolist() if 'brick_size' in htf_renko_df.columns else None,
+                    "reversal_size": htf_renko_df['reversal_size'].tolist() if 'reversal_size' in htf_renko_df.columns else None,
+                }
+                htf_pending = htf_pending_brick
+        except Exception:
+            pass  # HTF generation failure is non-fatal
+
     return {
         "instrument": instrument,
         "brick_size": brick_size,
@@ -1666,8 +1728,118 @@ def get_renko_data(instrument: str, request: RenkoRequest):
             "adr_value": renko_df['adr_value'].tolist() if 'adr_value' in renko_df.columns else None,
         },
         "pending_brick": pending_brick,
-        "total_bricks": len(renko_df)
+        "total_bricks": len(renko_df),
+        "htf_data": htf_response,
+        "htf_pending_brick": htf_pending,
+        "htf_total_bricks": len(htf_renko_df) if htf_response else 0,
     }
+
+
+def align_htf_to_ltf(ltf_df, htf_df):
+    """Map HTF renko bars onto LTF renko rows using M1 tick indices.
+
+    Both DataFrames must have 'tick_index_open' and 'tick_index_close' columns.
+    Returns a dict mapping each LTF row index to the HTF bar index it belongs to,
+    plus arrays of HTF values forward-filled onto LTF rows.
+    """
+    import numpy as np
+
+    ltf_tick_close = ltf_df['tick_index_close'].values
+    htf_tick_open = htf_df['tick_index_open'].values
+    htf_tick_close = htf_df['tick_index_close'].values
+
+    n_ltf = len(ltf_df)
+    htf_bar_idx = np.full(n_ltf, -1, dtype=np.int64)
+
+    # For each LTF bar, find which HTF bar contains its tick_index_close
+    # HTF bars are chronological, so we can walk forward through both
+    h = 0
+    n_htf = len(htf_df)
+    for i in range(n_ltf):
+        tc = ltf_tick_close[i]
+        # Advance HTF pointer until we find one that contains this LTF bar
+        while h < n_htf - 1 and tc > htf_tick_close[h]:
+            h += 1
+        if h < n_htf and tc >= htf_tick_open[h] and tc <= htf_tick_close[h]:
+            htf_bar_idx[i] = h
+        elif h > 0:
+            # LTF bar falls between HTF bars (in the forming zone) — use previous completed HTF bar
+            htf_bar_idx[i] = h - 1 if tc > htf_tick_close[h - 1] else h
+
+    # Build mapping: for each HTF bar, find LTF index range it spans
+    htf_ltf_open = np.zeros(n_htf, dtype=np.int64)
+    htf_ltf_close = np.zeros(n_htf, dtype=np.int64)
+    for h_idx in range(n_htf):
+        mask = htf_bar_idx == h_idx
+        if mask.any():
+            indices = np.where(mask)[0]
+            htf_ltf_open[h_idx] = indices[0]
+            htf_ltf_close[h_idx] = indices[-1]
+
+    return {
+        'htf_bar_idx': htf_bar_idx,       # per-LTF-row: which HTF bar index
+        'htf_ltf_open': htf_ltf_open,     # per-HTF-bar: first LTF index
+        'htf_ltf_close': htf_ltf_close,   # per-HTF-bar: last LTF index
+    }
+
+
+def merge_htf_columns_to_ltf(ltf_df, htf_stats_df, alignment):
+    """Forward-fill HTF stats columns onto LTF rows using alignment mapping.
+
+    htf_stats_df: HTF DataFrame with computed stats columns.
+    alignment: dict from align_htf_to_ltf().
+    Adds HTF_ prefixed columns to ltf_df in-place.
+    """
+    import numpy as np
+
+    htf_bar_idx = alignment['htf_bar_idx']
+    htf_ltf_open = alignment['htf_ltf_open']
+    htf_ltf_close = alignment['htf_ltf_close']
+
+    # Core HTF columns to forward-fill
+    core_cols = ['open', 'high', 'low', 'close', 'direction', 'brick_size', 'reversal_size']
+
+    # Stats columns to forward-fill (if they exist in htf_stats_df)
+    stats_cols = [
+        'State', 'prState', 'fromState', 'Type1', 'Type2',
+        'EMA1_Price', 'EMA2_Price', 'EMA3_Price',
+        'currentADR', 'session_date',
+        'Con_UP_bars', 'Con_DN_bars', 'Con_UP_bars(state)', 'Con_DN_bars(state)',
+        'stateBarCount', 'stateDuration', 'barDuration',
+        'chop(rolling)',
+        'MFE_clr_Bars', 'MFE_clr_price', 'MFE_clr_ADR', 'MFE_clr_RR',
+        'REAL_clr_ADR', 'REAL_clr_RR',
+        'DD', 'DD_RR', 'DD_ADR', 'WickError',
+        'EMA_rawDistance(20)', 'EMA_adrDistance(20)', 'EMA_rrDistance(20)',
+        'EMA_rawDistance(50)', 'EMA_adrDistance(50)', 'EMA_rrDistance(50)',
+        'EMA_rawDistance(200)', 'EMA_adrDistance(200)', 'EMA_rrDistance(200)',
+    ]
+
+    all_cols = core_cols + [c for c in stats_cols if c in htf_stats_df.columns]
+    n_ltf = len(ltf_df)
+    valid_mask = htf_bar_idx >= 0
+
+    for col in all_cols:
+        if col not in htf_stats_df.columns:
+            continue
+        htf_values = htf_stats_df[col].values
+        ltf_col = np.empty(n_ltf, dtype=htf_values.dtype)
+        ltf_col[:] = np.nan if np.issubdtype(htf_values.dtype, np.floating) else 0
+        ltf_col[valid_mask] = htf_values[htf_bar_idx[valid_mask]]
+        ltf_df[f'HTF_{col}'] = ltf_col
+
+    # Add alignment indices for frontend rendering
+    ltf_df['HTF_bar_index'] = htf_bar_idx
+    # Store LTF index ranges per HTF bar as arrays (for the frontend overlay)
+    ltf_df['HTF_ltf_bar_index_open'] = np.nan
+    ltf_df['HTF_ltf_bar_index_close'] = np.nan
+    for h_idx in range(len(htf_ltf_open)):
+        mask = htf_bar_idx == h_idx
+        if mask.any():
+            ltf_df.loc[mask, 'HTF_ltf_bar_index_open'] = int(htf_ltf_open[h_idx])
+            ltf_df.loc[mask, 'HTF_ltf_bar_index_close'] = int(htf_ltf_close[h_idx])
+
+    return ltf_df
 
 
 def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2_period, ma3_period, chop_period,
@@ -2097,6 +2269,72 @@ async def generate_stats(instrument: str, request: StatsRequest):
         request.pwap_sigmas
     )
 
+    # HTF processing: if HTF renko data provided, compute HTF stats and merge
+    htf_settings_meta = None
+    if request.htf_renko_data and request.htf_brick_size:
+        htf_renko = request.htf_renko_data
+        htf_df = pd.DataFrame({
+            'datetime': htf_renko.get('datetime', []),
+            'open': htf_renko.get('open', []),
+            'high': htf_renko.get('high', []),
+            'low': htf_renko.get('low', []),
+            'close': htf_renko.get('close', []),
+        })
+        for col in ['open', 'high', 'low', 'close']:
+            htf_df[col] = htf_df[col].round(5)
+
+        # Add settings columns for HTF
+        htf_df['adr_period'] = request.adr_period
+        if 'brick_size' in htf_renko and isinstance(htf_renko['brick_size'], list):
+            htf_df['brick_size'] = htf_renko['brick_size']
+            htf_df['reversal_size'] = htf_renko['reversal_size']
+        else:
+            htf_df['brick_size'] = request.htf_brick_size
+            htf_df['reversal_size'] = request.htf_brick_size * request.htf_reversal_multiplier
+        htf_df['wick_mode'] = request.wick_mode
+        htf_df['ma1_period'] = request.ma1_period
+        htf_df['ma2_period'] = request.ma2_period
+        htf_df['ma3_period'] = request.ma3_period
+        htf_df['chopPeriod'] = request.chop_period
+
+        # Need tick_index columns for alignment
+        if 'tick_index_open' in htf_renko:
+            htf_df['tick_index_open'] = htf_renko['tick_index_open']
+            htf_df['tick_index_close'] = htf_renko['tick_index_close']
+
+        # We also need tick_index on LTF for alignment
+        if 'tick_index_open' in renko_data:
+            df['tick_index_open'] = renko_data['tick_index_open'][:len(df)]
+            df['tick_index_close'] = renko_data['tick_index_close'][:len(df)]
+
+        # Compute HTF stats
+        htf_stats = compute_stats_columns(
+            htf_df, raw_df, session_sched,
+            request.adr_period, request.ma1_period, request.ma2_period,
+            request.ma3_period, request.chop_period,
+            request.smae1_period, request.smae1_deviation,
+            request.smae2_period, request.smae2_deviation,
+            request.pwap_sigmas
+        )
+
+        # Align and merge HTF onto LTF
+        if 'tick_index_open' in df.columns and 'tick_index_open' in htf_stats.columns:
+            alignment = align_htf_to_ltf(df, htf_stats)
+            df = merge_htf_columns_to_ltf(df, htf_stats, alignment)
+
+        # Clean up tick_index columns (not needed in parquet)
+        for c in ['tick_index_open', 'tick_index_close']:
+            if c in df.columns:
+                df.drop(columns=[c], inplace=True)
+
+        htf_settings_meta = {
+            'brick_size': request.htf_brick_size,
+            'reversal_multiplier': request.htf_reversal_multiplier,
+            'ma1_period': request.ma1_period,
+            'ma2_period': request.ma2_period,
+            'ma3_period': request.ma3_period,
+        }
+
     # Write to parquet with session_schedule and indicator params in metadata
     table = pa.Table.from_pandas(df, preserve_index=False)
     existing_meta = table.schema.metadata or {}
@@ -2108,6 +2346,8 @@ async def generate_stats(instrument: str, request: StatsRequest):
         }).encode('utf-8'),
         b'pwap_sigmas': json.dumps(request.pwap_sigmas).encode('utf-8'),
     }
+    if htf_settings_meta:
+        extra_meta[b'htf_settings'] = json.dumps(htf_settings_meta).encode('utf-8')
     table = table.replace_schema_metadata({**existing_meta, **extra_meta})
     pq.write_table(table, output_path)
 
@@ -2298,6 +2538,10 @@ def direct_generate(request: DirectGenerateRequest):
             stats_df['smae2_deviation'] = job.smae2_deviation
             stats_df['pwap_sigmas'] = json.dumps(job.pwap_sigmas)
 
+            # Preserve tick_index columns for HTF alignment before stats computation
+            ltf_tick_index_open = renko_df['tick_index_open'].values.copy() if 'tick_index_open' in renko_df.columns else None
+            ltf_tick_index_close = renko_df['tick_index_close'].values.copy() if 'tick_index_close' in renko_df.columns else None
+
             # Compute stats columns
             stats_df = compute_stats_columns(
                 stats_df, raw_df, session_sched,
@@ -2307,6 +2551,87 @@ def direct_generate(request: DirectGenerateRequest):
                 job.smae2_period, job.smae2_deviation,
                 job.pwap_sigmas
             )
+
+            # HTF processing: if htf_brick_size is set, generate HTF renko and merge
+            htf_settings_meta = None
+            if job.htf_brick_size and ltf_tick_index_open is not None:
+                htf_brick = float(job.htf_brick_size)
+                htf_rev_size = htf_brick * job.htf_reversal_multiplier
+                htf_rev_mult = htf_rev_size / htf_brick
+
+                # Build HTF size_schedule if ADR mode
+                htf_size_schedule = None
+                if job.sizing_mode == "adr" and size_schedule:
+                    # Scale HTF sizes proportionally: htf_brick_pct = htf_brick_size / brick_size * brick_pct
+                    ratio = job.htf_brick_size / job.brick_size if job.brick_size > 0 else 10.0
+                    htf_size_schedule = []
+                    for (idx, bs, rs, adr_val) in size_schedule:
+                        htf_bs = round(bs * ratio, 6)
+                        htf_rs = round(htf_bs * job.htf_reversal_multiplier, 6)
+                        htf_size_schedule.append((idx, htf_bs, htf_rs, adr_val))
+                    htf_brick = htf_size_schedule[0][1]
+                    htf_rev_mult = htf_size_schedule[0][2] / htf_size_schedule[0][1]
+
+                htf_renko_df, _ = generate_renko_custom(
+                    df, htf_brick, htf_rev_mult, job.wick_mode,
+                    size_schedule=htf_size_schedule, reversal_mode=job.reversal_mode
+                )
+
+                if not htf_renko_df.empty:
+                    htf_renko_df = htf_renko_df.reset_index()
+                    htf_stats = pd.DataFrame({
+                        'datetime': htf_renko_df['datetime'] if 'datetime' in htf_renko_df.columns else htf_renko_df.index,
+                        'open': htf_renko_df['open'].round(5),
+                        'high': htf_renko_df['high'].round(5),
+                        'low': htf_renko_df['low'].round(5),
+                        'close': htf_renko_df['close'].round(5),
+                    })
+                    htf_stats['adr_period'] = job.adr_period
+                    if 'brick_size' in htf_renko_df.columns:
+                        htf_stats['brick_size'] = htf_renko_df['brick_size'].values
+                        htf_stats['reversal_size'] = htf_renko_df['reversal_size'].values
+                    else:
+                        htf_stats['brick_size'] = htf_brick
+                        htf_stats['reversal_size'] = htf_rev_size
+                    htf_stats['wick_mode'] = job.wick_mode
+                    htf_stats['ma1_period'] = job.ma1_period
+                    htf_stats['ma2_period'] = job.ma2_period
+                    htf_stats['ma3_period'] = job.ma3_period
+                    htf_stats['chopPeriod'] = job.chop_period
+
+                    if 'tick_index_open' in htf_renko_df.columns:
+                        htf_stats['tick_index_open'] = htf_renko_df['tick_index_open'].values
+                        htf_stats['tick_index_close'] = htf_renko_df['tick_index_close'].values
+
+                    htf_stats = compute_stats_columns(
+                        htf_stats, raw_df, session_sched,
+                        job.adr_period, job.ma1_period, job.ma2_period,
+                        job.ma3_period, job.chop_period,
+                        job.smae1_period, job.smae1_deviation,
+                        job.smae2_period, job.smae2_deviation,
+                        job.pwap_sigmas
+                    )
+
+                    # Add tick indices to LTF stats_df for alignment
+                    stats_df['tick_index_open'] = ltf_tick_index_open[:len(stats_df)]
+                    stats_df['tick_index_close'] = ltf_tick_index_close[:len(stats_df)]
+
+                    if 'tick_index_open' in htf_stats.columns:
+                        alignment = align_htf_to_ltf(stats_df, htf_stats)
+                        stats_df = merge_htf_columns_to_ltf(stats_df, htf_stats, alignment)
+
+                    # Clean up tick_index columns
+                    for c in ['tick_index_open', 'tick_index_close']:
+                        if c in stats_df.columns:
+                            stats_df.drop(columns=[c], inplace=True)
+
+                    htf_settings_meta = {
+                        'brick_size': job.htf_brick_size,
+                        'reversal_multiplier': job.htf_reversal_multiplier,
+                        'ma1_period': job.ma1_period,
+                        'ma2_period': job.ma2_period,
+                        'ma3_period': job.ma3_period,
+                    }
 
             # Save parquet with session_schedule and indicator params in metadata
             fname = job.filename.replace('.parquet', '')
@@ -2321,6 +2646,8 @@ def direct_generate(request: DirectGenerateRequest):
                 }).encode('utf-8'),
                 b'pwap_sigmas': json.dumps(job.pwap_sigmas).encode('utf-8'),
             }
+            if htf_settings_meta:
+                extra_meta[b'htf_settings'] = json.dumps(htf_settings_meta).encode('utf-8')
             table = table.replace_schema_metadata({**existing_meta, **extra_meta})
             pq.write_table(table, output_path)
 
@@ -2418,6 +2745,12 @@ def get_parquet_stats(filepath: str):
         if b'session_schedule' in parquet_meta:
             try:
                 session_schedule = json.loads(parquet_meta[b'session_schedule'].decode('utf-8'))
+            except Exception:
+                pass
+        htf_settings = None
+        if b'htf_settings' in parquet_meta:
+            try:
+                htf_settings = json.loads(parquet_meta[b'htf_settings'].decode('utf-8'))
             except Exception:
                 pass
     except Exception as e:
@@ -3237,7 +3570,8 @@ def get_parquet_stats(filepath: str):
         "barData": bar_data,
         "maPeriods": ma_periods,
         "sessionSchedule": session_schedule,
-        "sessionBreaks": session_breaks
+        "sessionBreaks": session_breaks,
+        "htfSettings": htf_settings
     }
 
     # Serialize with allow_nan=True, then replace NaN/Infinity with null
@@ -3276,6 +3610,12 @@ def playground_signals(request: PlaygroundRequest):
     for ma in ['MA1', 'MA2', 'MA3']:
         df[f'{ma}_1'] = df[ma].shift(1)
         df[f'{ma}_2'] = df[ma].shift(2)
+
+    # HTF aliases (if HTF columns exist in parquet)
+    if 'HTF_EMA1_Price' in df.columns:
+        df['HTF_MA1'] = df['HTF_EMA1_Price']
+        df['HTF_MA2'] = df['HTF_EMA2_Price']
+        df['HTF_MA3'] = df['HTF_EMA3_Price']
 
     # Build extra_metric_cols (same mapping as parquet-stats)
     ma_periods = [ma1_period, ma2_period, ma3_period]
@@ -3432,6 +3772,12 @@ def backtest_signals(request: BacktestRequest):
     for ma in ['MA1', 'MA2', 'MA3']:
         df[f'{ma}_1'] = df[ma].shift(1)
         df[f'{ma}_2'] = df[ma].shift(2)
+
+    # HTF aliases (if HTF columns exist in parquet)
+    if 'HTF_EMA1_Price' in df.columns:
+        df['HTF_MA1'] = df['HTF_EMA1_Price']
+        df['HTF_MA2'] = df['HTF_EMA2_Price']
+        df['HTF_MA3'] = df['HTF_EMA3_Price']
 
     # Pre-compute arrays for fast scanning
     close_arr = df['close'].values.astype(float)

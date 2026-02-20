@@ -245,6 +245,58 @@
   border-color: var(--accent-primary);
 }
 
+.indicator-toggle-disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Gear Settings Dropdown */
+.gear-wrapper {
+  position: relative;
+}
+
+.gear-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 1000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  min-width: 160px;
+}
+
+.gear-section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-2);
+}
+
+.gear-section-label:not(:first-child) {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.gear-color-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.gear-color-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 /* Renko Controls */
 .renko-controls {
   display: flex;
@@ -292,6 +344,16 @@
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+.renko-controls-disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.renko-input-disabled {
+  opacity: 0.35;
+  pointer-events: none;
 }
 
 /* Data Window */

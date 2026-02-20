@@ -247,6 +247,141 @@ class RenkoBricksRenderer {
   }
 }
 
+// Custom primitive for drawing HTF Renko brick overlays on LTF renko chart (O2 mode)
+class HTFRenkoBricksPrimitive {
+  constructor() {
+    this._bricks = []
+    this._chart = null
+    this._series = null
+    this._colors = null
+  }
+
+  setBricks(bricks) {
+    this._bricks = bricks || []
+  }
+
+  setColors(colors) {
+    this._colors = colors || null
+  }
+
+  attached(param) {
+    this._chart = param.chart
+    this._series = param.series
+  }
+
+  detached() {
+    this._chart = null
+    this._series = null
+  }
+
+  updateAllViews() {}
+
+  paneViews() {
+    return [new HTFRenkoBricksPaneView(this)]
+  }
+}
+
+class HTFRenkoBricksPaneView {
+  constructor(source) {
+    this._source = source
+  }
+  update() {}
+  renderer() {
+    return new HTFRenkoBricksRenderer(this._source)
+  }
+  zOrder() {
+    return 'top'
+  }
+}
+
+class HTFRenkoBricksRenderer {
+  constructor(source) {
+    this._source = source
+  }
+
+  draw(target, priceConverter) {
+    const bricks = this._source._bricks
+    const chart = this._source._chart
+    const series = this._source._series
+
+    if (!bricks.length || !chart || !series) return
+
+    const timeScale = chart.timeScale()
+
+    const bricksToDraw = []
+    for (const brick of bricks) {
+      const { ltfBarIndexOpen, ltfBarIndexClose, priceOpen, priceClose, priceHigh, priceLow, isUp } = brick
+
+      // Map HTF brick to screen coordinates via LTF bar indices
+      const x1 = timeScale.logicalToCoordinate(ltfBarIndexOpen)
+      const x2 = timeScale.logicalToCoordinate(ltfBarIndexClose)
+
+      if (x1 === null || x2 === null) continue
+
+      const bodyTop = series.priceToCoordinate(Math.max(priceOpen, priceClose))
+      const bodyBottom = series.priceToCoordinate(Math.min(priceOpen, priceClose))
+      const wickTop = priceHigh ? series.priceToCoordinate(priceHigh) : bodyTop
+      const wickBottom = priceLow ? series.priceToCoordinate(priceLow) : bodyBottom
+
+      if (bodyTop === null || bodyBottom === null) continue
+
+      bricksToDraw.push({ x1, x2, bodyTop, bodyBottom, wickTop, wickBottom, isUp })
+    }
+
+    if (!bricksToDraw.length) return
+
+    target.useBitmapCoordinateSpace(scope => {
+      const ctx = scope.context
+      const hRatio = scope.horizontalPixelRatio
+      const vRatio = scope.verticalPixelRatio
+
+      for (const { x1, x2, bodyTop, bodyBottom, wickTop, wickBottom, isUp } of bricksToDraw) {
+        const left = Math.round(Math.min(x1, x2) * hRatio)
+        const right = Math.round(Math.max(x1, x2) * hRatio)
+        const xCenter = Math.round((left + right) / 2)
+
+        const bTop = Math.round(Math.min(bodyTop, bodyBottom) * vRatio)
+        const bBottom = Math.round(Math.max(bodyTop, bodyBottom) * vRatio)
+        const wTop = Math.round(Math.min(wickTop, wickBottom) * vRatio)
+        const wBottom = Math.round(Math.max(wickTop, wickBottom) * vRatio)
+
+        const width = Math.max(right - left, 4)
+        const height = Math.max(bBottom - bTop, 2)
+
+        // HTF uses distinct tones at low opacity so they read as background zones
+        const colors = this._source._colors
+        const fillColor = colors
+          ? hexToRgba(isUp ? colors.upColor : colors.downColor, 0.18)
+          : (isUp ? 'rgba(59, 130, 246, 0.18)' : 'rgba(251, 146, 60, 0.18)')
+        const strokeColor = colors
+          ? hexToRgba(isUp ? colors.upColor : colors.downColor, 0.50)
+          : (isUp ? 'rgba(59, 130, 246, 0.50)' : 'rgba(251, 146, 60, 0.50)')
+
+        // Draw wick
+        ctx.strokeStyle = strokeColor
+        ctx.lineWidth = 2 * hRatio
+
+        if (wTop < bTop) {
+          ctx.beginPath()
+          ctx.moveTo(xCenter, wTop)
+          ctx.lineTo(xCenter, bTop)
+          ctx.stroke()
+        }
+        if (wBottom > bBottom) {
+          ctx.beginPath()
+          ctx.moveTo(xCenter, bBottom)
+          ctx.lineTo(xCenter, wBottom)
+          ctx.stroke()
+        }
+
+        // Draw body
+        ctx.fillStyle = fillColor
+        ctx.fillRect(left, bTop, width, height)
+      }
+    })
+  }
+}
+
 // Custom primitive for drawing Type markers (text "1" and "2") in the indicator pane
 class TypeMarkersPrimitive {
   constructor() {
@@ -599,9 +734,16 @@ function calculatePWAP(highs, lows, closes, datetimes, schedule) {
   return { mean, stdDev, sessionBreaks }
 }
 
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
-function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, smaeSettings = null, pwapSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002, renkoPerBrickSizes = null, renkoPerReversalSizes = null, sessionSchedule = null }) {
+function ChartArea({ chartData, renkoData = null, htfRenkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, smaeSettings = null, pwapSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002, renkoPerBrickSizes = null, renkoPerReversalSizes = null, sessionSchedule = null, chartColors = null }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const indicatorPaneHeightRef = useRef(
@@ -610,6 +752,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   const seriesRef = useRef(null)  // Candlestick series for OHLC data
   const tickLineSeriesRef = useRef(null)  // Line series for tick data
   const primitiveRef = useRef(null)
+  const htfPrimitiveRef = useRef(null)
   const datetimesRef = useRef([])
   const ma1SeriesRef = useRef(null)
   const ma2SeriesRef = useRef(null)
@@ -649,7 +792,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   useEffect(() => {
     if (!containerRef.current) return
 
-    const label = chartType === 'renko' ? 'Brick' : 'Bar'
+    const label = chartType === 'renko' || chartType === 'o2' ? 'Brick' : 'Bar'
 
     const chart = createChart(containerRef.current, {
       layout: {
@@ -659,7 +802,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       },
       grid: {
         vertLines: { color: '#27272a', visible: false },  // Use custom session boundary lines instead
-        horzLines: { color: '#27272a', visible: chartType !== 'renko' },  // Disable in Renko mode for indicator pane
+        horzLines: { color: '#27272a', visible: chartType !== 'renko' && chartType !== 'o2' },  // Disable in Renko/O2 mode for indicator pane
       },
       crosshair: {
         mode: 0, // Normal crosshair
@@ -685,13 +828,13 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       },
       timeScale: {
         borderColor: '#27272a',
-        timeVisible: chartType !== 'renko',  // Enable native time for Raw and overlay
+        timeVisible: chartType !== 'renko' && chartType !== 'o2',  // Enable native time for Raw and overlay
         secondsVisible: false,
         barSpacing: 6 * compressionFactor,
         minBarSpacing: Math.min(0.5, 6 * compressionFactor),  // Dynamic: lower only when compression requires it
         // Custom formatter for Renko mode and tick data (both use index-based time)
         tickMarkFormatter: (time, tickMarkType, locale) => {
-          if (chartType === 'renko' || isTickDataRef.current) {
+          if (chartType === 'renko' || chartType === 'o2' || isTickDataRef.current) {
             const dt = datetimesRef.current[time]
             return dt ? formatTickMark(dt) : String(time)
           }
@@ -705,7 +848,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       localization: {
         // Custom time formatter for Renko mode and tick data
         timeFormatter: (time) => {
-          if (chartType === 'renko' || isTickDataRef.current) {
+          if (chartType === 'renko' || chartType === 'o2' || isTickDataRef.current) {
             const dt = datetimesRef.current[time]
             return dt ? formatTimestamp(dt) : `${label} ${time}`
           }
@@ -737,13 +880,15 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     // Add candlestick series using v5 API
     // For overlay mode, use semi-transparent colors
     const isOverlay = chartType === 'overlay'
+    const ltfUp = chartColors?.ltf?.upColor || '#ffffff'
+    const ltfDn = chartColors?.ltf?.downColor || '#888888'
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: isOverlay ? 'rgba(255, 255, 255, 0.5)' : '#ffffff',
-      downColor: isOverlay ? 'rgba(136, 136, 136, 0.5)' : '#888888',
-      borderUpColor: isOverlay ? 'rgba(255, 255, 255, 0.7)' : '#ffffff',
-      borderDownColor: isOverlay ? 'rgba(136, 136, 136, 0.7)' : '#888888',
-      wickUpColor: isOverlay ? 'rgba(255, 255, 255, 0.7)' : '#ffffff',
-      wickDownColor: isOverlay ? 'rgba(136, 136, 136, 0.7)' : '#888888',
+      upColor: isOverlay ? hexToRgba(ltfUp, 0.5) : ltfUp,
+      downColor: isOverlay ? hexToRgba(ltfDn, 0.5) : ltfDn,
+      borderUpColor: isOverlay ? hexToRgba(ltfUp, 0.7) : ltfUp,
+      borderDownColor: isOverlay ? hexToRgba(ltfDn, 0.7) : ltfDn,
+      wickUpColor: isOverlay ? hexToRgba(ltfUp, 0.7) : ltfUp,
+      wickDownColor: isOverlay ? hexToRgba(ltfDn, 0.7) : ltfDn,
       lastValueVisible: false,
       priceLineVisible: false,
       visible: true,  // Will be hidden for tick data
@@ -770,9 +915,16 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       primitiveRef.current = primitive
     }
 
+    // O2 mode: attach HTF overlay primitive on LTF renko base chart
+    if (chartType === 'o2') {
+      const htfPrimitive = new HTFRenkoBricksPrimitive()
+      candleSeries.attachPrimitive(htfPrimitive)
+      htfPrimitiveRef.current = htfPrimitive
+    }
+
     // Create session boundary primitive for all chart types
     {
-      const useTimestamps = chartType !== 'renko'
+      const useTimestamps = chartType !== 'renko' && chartType !== 'o2'
       const dayBoundaryPrimitive = new DayBoundaryGridPrimitive(useTimestamps)
       candleSeries.attachPrimitive(dayBoundaryPrimitive)
       dayBoundaryPrimitiveRef.current = dayBoundaryPrimitive
@@ -814,8 +966,8 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         return
       }
 
-      // For renko mode, the index directly maps to renko bar index
-      if (chartType === 'renko') {
+      // For renko and O2 mode, the index directly maps to renko bar index
+      if (chartType === 'renko' || chartType === 'o2') {
         const roundedIndex = Math.round(logicalIndex)
         setHoveredBarIndex(roundedIndex >= 0 ? roundedIndex : null)
         setHoveredM1Index(null)
@@ -918,6 +1070,22 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     })
   }, [compressionFactor])
 
+  // Reactively update LTF candle colors when chartColors change
+  useEffect(() => {
+    if (!seriesRef.current || !chartColors) return
+    const isOverlay = chartType === 'overlay'
+    const ltfUp = chartColors.ltf?.upColor || '#ffffff'
+    const ltfDn = chartColors.ltf?.downColor || '#888888'
+    seriesRef.current.applyOptions({
+      upColor: isOverlay ? hexToRgba(ltfUp, 0.5) : ltfUp,
+      downColor: isOverlay ? hexToRgba(ltfDn, 0.5) : ltfDn,
+      borderUpColor: isOverlay ? hexToRgba(ltfUp, 0.7) : ltfUp,
+      borderDownColor: isOverlay ? hexToRgba(ltfDn, 0.7) : ltfDn,
+      wickUpColor: isOverlay ? hexToRgba(ltfUp, 0.7) : ltfUp,
+      wickDownColor: isOverlay ? hexToRgba(ltfDn, 0.7) : ltfDn,
+    })
+  }, [chartColors, chartType])
+
   // Update data when chartData or chartType changes
   useEffect(() => {
     if (!seriesRef.current || !chartData?.data) return
@@ -947,7 +1115,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     // Update timeScale for tick data (use index-based axis like renko mode)
     if (chartRef.current) {
       chartRef.current.timeScale().applyOptions({
-        timeVisible: !isTickData && chartType !== 'renko',
+        timeVisible: !isTickData && chartType !== 'renko' && chartType !== 'o2',
       })
     }
 
@@ -989,7 +1157,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
     } else {
       // For OHLC data, use candlestick series
       const candleData = open.map((_, i) => {
-        if (chartType !== 'renko' && datetime[i]) {
+        if (chartType !== 'renko' && chartType !== 'o2' && datetime[i]) {
           // Convert to Unix timestamp (seconds) for lightweight-charts
           const timestamp = Math.floor(parseUTC(datetime[i]).getTime() / 1000)
           return { time: timestamp, open: open[i], high: high[i], low: low[i], close: close[i] }
@@ -1011,7 +1179,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       const toIndex = close.length - 1
 
       // For tick data, use indices; for OHLC with timestamps, calculate time range
-      if (isTickData || chartType === 'renko') {
+      if (isTickData || chartType === 'renko' || chartType === 'o2') {
         chartRef.current.timeScale().setVisibleRange({
           from: fromIndex,
           to: toIndex,
@@ -1026,7 +1194,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
 
     // Update session boundary lines for all modes
     if (dayBoundaryPrimitiveRef.current && datetime && sessionSchedule) {
-      if (chartType === 'renko') {
+      if (chartType === 'renko' || chartType === 'o2') {
         const boundaries = findSessionBoundaryIndices(datetime, sessionSchedule)
         dayBoundaryPrimitiveRef.current.setBoundaries(boundaries)
       } else {
@@ -1068,6 +1236,59 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       chartRef.current.timeScale().applyOptions({})
     }
   }, [renkoData, chartType])
+
+  // Update HTF overlay when htfRenkoData changes (O2 mode)
+  useEffect(() => {
+    if (!htfPrimitiveRef.current || !htfRenkoData || chartType !== 'o2') return
+
+    const { tick_index_open: htfTickOpen, tick_index_close: htfTickClose, open, high, low, close } = htfRenkoData
+    const ltfTickOpen = chartData?.data?.tick_index_open
+    const ltfTickClose = chartData?.data?.tick_index_close
+
+    if (!htfTickOpen || !htfTickClose || !ltfTickOpen || !ltfTickClose) {
+      htfPrimitiveRef.current.setBricks([])
+      return
+    }
+
+    // Map HTF bricks to LTF bar index ranges
+    // Chain the search so each brick starts where the previous ended + 1 (no overlap)
+    const htfBricks = []
+    let searchStart = 0
+    for (let i = 0; i < open.length; i++) {
+      const htfTClose = htfTickClose[i]
+
+      const ltfStart = searchStart
+
+      // Find last LTF bar whose tick_index_close <= htfTClose
+      let ltfEnd = ltfStart
+      for (let j = ltfStart; j < ltfTickClose.length; j++) {
+        if (ltfTickClose[j] <= htfTClose) {
+          ltfEnd = j
+        } else {
+          break
+        }
+      }
+
+      htfBricks.push({
+        ltfBarIndexOpen: ltfStart,
+        ltfBarIndexClose: ltfEnd,
+        priceOpen: open[i],
+        priceHigh: high[i],
+        priceLow: low[i],
+        priceClose: close[i],
+        isUp: close[i] > open[i],
+      })
+
+      searchStart = ltfEnd + 1
+    }
+
+    htfPrimitiveRef.current.setBricks(htfBricks)
+    htfPrimitiveRef.current.setColors(chartColors?.htf)
+
+    if (chartRef.current) {
+      chartRef.current.timeScale().applyOptions({})
+    }
+  }, [htfRenkoData, chartData, chartType, chartColors])
 
   // Update MA series when data or settings change
   useEffect(() => {
@@ -1446,8 +1667,8 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
       }
     }
 
-    // Only show indicator pane in Renko mode when enabled
-    if (chartType !== 'renko' || !showIndicatorPane) {
+    // Only show indicator pane in Renko/O2 mode when enabled
+    if ((chartType !== 'renko' && chartType !== 'o2') || !showIndicatorPane) {
       removeIndicatorSeries()
       return
     }
@@ -1617,7 +1838,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
 
   // Compute wick error % (bars where DD > reversal_size)
   const wickErrorPct = useMemo(() => {
-    const src = renkoData?.data || (chartType === 'renko' ? chartData?.data : null)
+    const src = renkoData?.data || ((chartType === 'renko' || chartType === 'o2') ? chartData?.data : null)
     if (!src?.open || !src?.high || !src?.low || !src?.close || !src?.reversal_size) return null
     const { open, high, low, close, reversal_size } = src
     // Skip warmup bars to align with parquet left cut (EMA warmup)
@@ -1687,7 +1908,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
   }
 
   // Get the renko data source for DataWindow (either passed directly or when chartData is renko)
-  const renkoDataForWindow = renkoData || (chartType === 'renko' ? chartData : null)
+  const renkoDataForWindow = renkoData || ((chartType === 'renko' || chartType === 'o2') ? chartData : null)
   // Show data window in all modes when we have chart data
   const showDataWindow = chartData?.data
 
@@ -1697,6 +1918,7 @@ function ChartArea({ chartData, renkoData = null, chartType = 'raw', isLoading, 
         <DataWindow
           chartData={chartData}
           renkoData={renkoDataForWindow}
+          htfRenkoData={htfRenkoData}
           chartType={chartType}
           hoveredBarIndex={hoveredBarIndex}
           hoveredM1Index={hoveredM1Index}

@@ -2841,6 +2841,37 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <ColumnItem label="REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR']} />
                 </ul>
 
+                {stats?.htfSettings && (
+                  <>
+                    <h4>HTF (Higher Timeframe)</h4>
+                    <h5>Core</h5>
+                    <ul>
+                      <ColumnItem label="HTF_open" desc="HTF bar open price" />
+                      <ColumnItem label="HTF_close" desc="HTF bar close price" />
+                      <ColumnItem label="HTF_direction" desc="HTF bar direction: 1=up, -1=down" />
+                    </ul>
+                    <h5>State & Structure</h5>
+                    <ul>
+                      <ColumnItem label="HTF_State" desc="HTF MA ordering state (-3 to +3)" />
+                      <ColumnItem label="HTF_Type1" desc="HTF Type1 pullback counter" />
+                      <ColumnItem label="HTF_Type2" desc="HTF Type2 pullback counter" />
+                      <ColumnItem label="HTF_Con_UP_bars" desc="HTF consecutive UP bars" />
+                      <ColumnItem label="HTF_Con_DN_bars" desc="HTF consecutive DN bars" />
+                    </ul>
+                    <h5>Moving Averages</h5>
+                    <ul>
+                      <ColumnItem label="HTF_EMA1_Price" desc="HTF EMA1 price" />
+                      <ColumnItem label="HTF_EMA2_Price" desc="HTF EMA2 price" />
+                      <ColumnItem label="HTF_EMA3_Price" desc="HTF EMA3 price" />
+                    </ul>
+                    <h5>Outcome</h5>
+                    <ul>
+                      <ColumnItem label="HTF_MFE_clr_RR" desc="HTF MFE to color change in RR" />
+                      <ColumnItem label="HTF_REAL_clr_RR" desc="HTF REAL to color change in RR" />
+                    </ul>
+                  </>
+                )}
+
                 <h4>Tips</h4>
                 <ul>
                   <li>Column names are case-sensitive</li>
@@ -3499,6 +3530,37 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                   <ColumnItem label="REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR']} />
                   <ColumnItem label="REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR" desc={COLUMN_DESCRIPTIONS['REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR']} />
                 </ul>
+
+                {stats?.htfSettings && (
+                  <>
+                    <h4>HTF (Higher Timeframe)</h4>
+                    <h5>Core</h5>
+                    <ul>
+                      <ColumnItem label="HTF_open" desc="HTF bar open price" />
+                      <ColumnItem label="HTF_close" desc="HTF bar close price" />
+                      <ColumnItem label="HTF_direction" desc="HTF bar direction: 1=up, -1=down" />
+                    </ul>
+                    <h5>State & Structure</h5>
+                    <ul>
+                      <ColumnItem label="HTF_State" desc="HTF MA ordering state (-3 to +3)" />
+                      <ColumnItem label="HTF_Type1" desc="HTF Type1 pullback counter" />
+                      <ColumnItem label="HTF_Type2" desc="HTF Type2 pullback counter" />
+                      <ColumnItem label="HTF_Con_UP_bars" desc="HTF consecutive UP bars" />
+                      <ColumnItem label="HTF_Con_DN_bars" desc="HTF consecutive DN bars" />
+                    </ul>
+                    <h5>Moving Averages</h5>
+                    <ul>
+                      <ColumnItem label="HTF_EMA1_Price" desc="HTF EMA1 price" />
+                      <ColumnItem label="HTF_EMA2_Price" desc="HTF EMA2 price" />
+                      <ColumnItem label="HTF_EMA3_Price" desc="HTF EMA3 price" />
+                    </ul>
+                    <h5>Outcome</h5>
+                    <ul>
+                      <ColumnItem label="HTF_MFE_clr_RR" desc="HTF MFE to color change in RR" />
+                      <ColumnItem label="HTF_REAL_clr_RR" desc="HTF REAL to color change in RR" />
+                    </ul>
+                  </>
+                )}
 
                 <h4>Tips</h4>
                 <ul>

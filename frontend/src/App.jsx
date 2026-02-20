@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import ChartArea from './components/ChartArea'
 import RenkoControls from './components/RenkoControls'
@@ -80,7 +80,7 @@ function App() {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}chartType`)
     if (saved === 'm1') return 'raw'
     return saved || 'raw'
-  }) // 'raw' | 'renko' | 'overlay'
+  }) // 'raw' | 'renko' | 'overlay' | 'o2'
   const [renkoSettings, setRenkoSettings] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}renkoSettings`)
     if (saved) {
@@ -115,7 +115,9 @@ function App() {
         brickPct: parsed.brickPct,
         reversalPct: parsed.reversalPct,
         adrPeriod: parsed.adrPeriod,
-        reversalMode: parsed.reversalMode
+        reversalMode: parsed.reversalMode,
+        htfBrickSize: parsed.htfBrickSize || null,
+        htfReversalMultiplier: parsed.htfReversalMultiplier || 2.0,
       }
     }
     return {
@@ -126,7 +128,9 @@ function App() {
       brickPct: 5,
       reversalPct: 5,
       adrPeriod: 14,
-      reversalMode: 'fp'
+      reversalMode: 'fp',
+      htfBrickSize: null,
+      htfReversalMultiplier: 2.0,
     }
   })
   const [renkoData, setRenkoData] = useState(null)
@@ -710,7 +714,12 @@ function App() {
           smae2_deviation: statsConfig.smae2Deviation ?? 1.0,
           pwap_sigmas: statsConfig.pwapSigmas ?? [1.0, 2.0, 2.5, 3.0],
           renko_data: renkoData.data,
-          session_schedule: sessionSchedule
+          session_schedule: sessionSchedule,
+          ...(renkoData.htf_data && renkoSettings.htfBrickSize ? {
+            htf_brick_size: renkoSettings.htfBrickSize,
+            htf_reversal_multiplier: renkoSettings.htfReversalMultiplier || 2.0,
+            htf_renko_data: renkoData.htf_data,
+          } : {})
         })
       })
 
@@ -770,7 +779,7 @@ function App() {
           setChartSessionSchedule(null)
         }
         // If renko or overlay mode is active, also load renko data
-        if (chartType === 'renko' || chartType === 'overlay') {
+        if (chartType === 'renko' || chartType === 'overlay' || chartType === 'o2') {
           loadRenko(instrument)
         }
       } else {
@@ -826,6 +835,10 @@ function App() {
         body.brick_size = settings.brickSize
         body.reversal_size = settings.reversalSize
       }
+      if (settings.htfBrickSize && settings.htfBrickSize > 0) {
+        body.htf_brick_size = settings.htfBrickSize
+        body.htf_reversal_multiplier = settings.htfReversalMultiplier || 2.0
+      }
       const res = await fetch(`${apiBase}/renko/${instrument}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -847,7 +860,7 @@ function App() {
 
   const handleChartTypeChange = (type) => {
     setChartType(type)
-    if ((type === 'renko' || type === 'overlay') && activeInstrument && !renkoData) {
+    if ((type === 'renko' || type === 'overlay' || type === 'o2') && activeInstrument && !renkoData) {
       loadRenko(activeInstrument)
     }
   }
@@ -855,7 +868,7 @@ function App() {
   const handleRenkoSettingsChange = (newSettings) => {
     setRenkoSettings(newSettings)
     localStorage.setItem(`${STORAGE_PREFIX}renkoSettings`, JSON.stringify(newSettings))
-    if (activeInstrument && (chartType === 'renko' || chartType === 'overlay')) {
+    if (activeInstrument && (chartType === 'renko' || chartType === 'overlay' || chartType === 'o2')) {
       loadRenko(activeInstrument, newSettings)
     }
   }
@@ -904,6 +917,34 @@ function App() {
 
   const sessionSchedule = chartSessionSchedule || templateSessionSchedule
 
+  // Chart colors state with localStorage persistence
+  const [chartColors, setChartColors] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}chartColors`)
+    if (saved) return JSON.parse(saved)
+    return {
+      ltf: { upColor: '#ffffff', downColor: '#888888' },
+      htf: { upColor: '#3b82f6', downColor: '#fb923c' },
+    }
+  })
+  const [gearOpen, setGearOpen] = useState(false)
+  const gearRef = useRef(null)
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}chartColors`, JSON.stringify(chartColors))
+  }, [chartColors])
+
+  // Click outside to close gear dropdown
+  useEffect(() => {
+    if (!gearOpen) return
+    const handleClickOutside = (e) => {
+      if (gearRef.current && !gearRef.current.contains(e.target)) {
+        setGearOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [gearOpen])
+
   // Resize handling
   const handleResizeStart = useCallback((e) => {
     e.preventDefault()
@@ -948,10 +989,10 @@ function App() {
         )}
         <div className="header-status">
           {activeTab !== 'stats' && (<>
-          {activeInstrument && (
-            <span className="active-instrument mono">{activeInstrument}</span>
+          {(activeInstrument || pendingInstrument) && (
+            <span className="active-instrument mono">{activeInstrument || pendingInstrument}</span>
           )}
-          {activeInstrument && (
+          {(activeInstrument || pendingInstrument) && (
             <div className="chart-type-toggle">
               <button
                 className={`toggle-btn ${chartType === 'raw' ? 'active' : ''}`}
@@ -971,36 +1012,25 @@ function App() {
               >
                 Overlay
               </button>
+              <button
+                className={`toggle-btn ${chartType === 'o2' ? 'active' : ''}`}
+                onClick={() => handleChartTypeChange('o2')}
+              >
+                O2
+              </button>
             </div>
           )}
-          {chartType === 'raw' && chartData && (
-            <span className="data-count mono">
-              {(chartData.displayed_rows || chartData.total_rows || 0).toLocaleString()}
-              {chartData.displayed_rows !== chartData.total_rows && (
-                <span className="total-hint"> / {(chartData.total_rows || 0).toLocaleString()}</span>
-              )}
-            </span>
-          )}
-          {chartType === 'renko' && renkoData && (
-            <span className="data-count mono">
-              {renkoData.total_bricks.toLocaleString()} bricks
-            </span>
-          )}
-          {chartType === 'overlay' && chartData && renkoData && (
-            <span className="data-count mono">
-              {(chartData.displayed_rows || chartData.total_rows || 0).toLocaleString()} bars + {renkoData.total_bricks.toLocaleString()} bricks
-            </span>
-          )}
-          {(chartType === 'renko' || chartType === 'overlay') && (activeInstrument || pendingInstrument) && (
+          {(activeInstrument || pendingInstrument) && (
             <RenkoControls
               settings={renkoSettings}
               onChange={handleRenkoSettingsChange}
+              chartType={chartType}
             />
           )}
-          {chartType === 'renko' && (activeInstrument || pendingInstrument) && (
+          {(activeInstrument || pendingInstrument) && (
             <button
-              className={`indicator-toggle-btn ${showIndicatorPane ? 'active' : ''}`}
-              onClick={() => setShowIndicatorPane(!showIndicatorPane)}
+              className={`indicator-toggle-btn ${showIndicatorPane ? 'active' : ''}${chartType !== 'renko' && chartType !== 'o2' ? ' indicator-toggle-disabled' : ''}`}
+              onClick={() => { if (chartType === 'renko' || chartType === 'o2') setShowIndicatorPane(!showIndicatorPane) }}
               title="Toggle State/Type indicator pane"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1052,6 +1082,61 @@ function App() {
               <path d="M12 5v14M5 12l7 7 7-7" />
             </svg>
           </button>
+          <div className="gear-wrapper" ref={gearRef}>
+            <button
+              className="load-chart-btn"
+              style={{ opacity: 1, cursor: 'pointer' }}
+              onClick={() => setGearOpen(!gearOpen)}
+              title="Chart Settings"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+            {gearOpen && (
+              <div className="gear-dropdown">
+                <div className="gear-section-label">LTF Candles</div>
+                <div className="gear-color-row">
+                  <span className="gear-color-label">Up</span>
+                  <input
+                    type="color"
+                    className="ma-color-picker"
+                    value={chartColors.ltf.upColor}
+                    onChange={(e) => setChartColors(prev => ({ ...prev, ltf: { ...prev.ltf, upColor: e.target.value } }))}
+                  />
+                </div>
+                <div className="gear-color-row">
+                  <span className="gear-color-label">Down</span>
+                  <input
+                    type="color"
+                    className="ma-color-picker"
+                    value={chartColors.ltf.downColor}
+                    onChange={(e) => setChartColors(prev => ({ ...prev, ltf: { ...prev.ltf, downColor: e.target.value } }))}
+                  />
+                </div>
+                <div className="gear-section-label">HTF Bricks</div>
+                <div className="gear-color-row">
+                  <span className="gear-color-label">Up</span>
+                  <input
+                    type="color"
+                    className="ma-color-picker"
+                    value={chartColors.htf.upColor}
+                    onChange={(e) => setChartColors(prev => ({ ...prev, htf: { ...prev.htf, upColor: e.target.value } }))}
+                  />
+                </div>
+                <div className="gear-color-row">
+                  <span className="gear-color-label">Down</span>
+                  <input
+                    type="color"
+                    className="ma-color-picker"
+                    value={chartColors.htf.downColor}
+                    onChange={(e) => setChartColors(prev => ({ ...prev, htf: { ...prev.htf, downColor: e.target.value } }))}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
           </>)}
         </div>
       </header>
@@ -1170,8 +1255,9 @@ function App() {
             />
           ) : activeTab !== 'stats' ? (
             <ChartArea
-              chartData={chartType === 'renko' ? renkoData : chartData}
+              chartData={chartType === 'renko' || chartType === 'o2' ? renkoData : chartData}
               renkoData={chartType === 'overlay' ? renkoData : null}
+              htfRenkoData={chartType === 'o2' && renkoData ? renkoData.htf_data : null}
               chartType={chartType}
               isLoading={isLoading}
               activeInstrument={activeInstrument}
@@ -1186,6 +1272,7 @@ function App() {
               renkoPerBrickSizes={renkoData?.data?.brick_size}
               renkoPerReversalSizes={renkoData?.data?.reversal_size}
               sessionSchedule={sessionSchedule}
+              chartColors={chartColors}
             />
           ) : null}
           <div style={{ display: activeTab === 'stats' && statsView !== 'parquet' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
