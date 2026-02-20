@@ -58,32 +58,32 @@ function DataWindow({ chartData, renkoData, htfRenkoData = null, chartType, hove
       {(chartType === 'raw' || chartType === 'overlay') && (
         <div className="data-row">
           <span className="data-row-label">LTF</span>
-          <span className="data-pair"><span className="data-label">O</span> <span className="data-value mono">{formatPrice(m1Open?.[m1Index])}</span></span>
-          <span className="data-pair"><span className="data-label">H</span> <span className="data-value mono">{formatPrice(m1High?.[m1Index])}</span></span>
-          <span className="data-pair"><span className="data-label">L</span> <span className="data-value mono">{formatPrice(m1Low?.[m1Index])}</span></span>
-          <span className="data-pair"><span className="data-label">C</span> <span className="data-value mono">{formatPrice(m1Close?.[m1Index])}</span></span>
+          <span className="data-pair"><span className="data-label">O:</span> <span className="data-value mono">{formatPrice(m1Open?.[m1Index])}</span></span>
+          <span className="data-pair"><span className="data-label">H:</span> <span className="data-value mono">{formatPrice(m1High?.[m1Index])}</span></span>
+          <span className="data-pair"><span className="data-label">L:</span> <span className="data-value mono">{formatPrice(m1Low?.[m1Index])}</span></span>
+          <span className="data-pair"><span className="data-label">C:</span> <span className="data-value mono">{formatPrice(m1Close?.[m1Index])}</span></span>
         </div>
       )}
 
       {(chartType === 'renko' || chartType === 'overlay' || chartType === 'o2') && renkoDataSource && (
         <div className="data-row">
           <span className="data-row-label">LTF</span>
-          <span className="data-pair"><span className="data-label">O</span> <span className="data-value mono">{formatPrice(renkoDataSource.open?.[renkoIndex])}</span></span>
-          <span className="data-pair"><span className="data-label">H</span> <span className="data-value mono">{formatPrice(renkoDataSource.high?.[renkoIndex])}</span></span>
-          <span className="data-pair"><span className="data-label">L</span> <span className="data-value mono">{formatPrice(renkoDataSource.low?.[renkoIndex])}</span></span>
-          <span className="data-pair"><span className="data-label">C</span> <span className="data-value mono">{formatPrice(renkoDataSource.close?.[renkoIndex])}</span></span>
+          <span className="data-pair"><span className="data-label">O:</span> <span className="data-value mono">{formatPrice(renkoDataSource.open?.[renkoIndex])}</span></span>
+          <span className="data-pair"><span className="data-label">H:</span> <span className="data-value mono">{formatPrice(renkoDataSource.high?.[renkoIndex])}</span></span>
+          <span className="data-pair"><span className="data-label">L:</span> <span className="data-value mono">{formatPrice(renkoDataSource.low?.[renkoIndex])}</span></span>
+          <span className="data-pair"><span className="data-label">C:</span> <span className="data-value mono">{formatPrice(renkoDataSource.close?.[renkoIndex])}</span></span>
           {renkoData?.adr_period && renkoDataSource?.adr_value && (
             <>
-              <span className="data-pair"><span className="data-label">ADR({renkoData.adr_period})</span> <span className="data-value mono">{formatPrice(renkoDataSource.adr_value?.[renkoIndex])}</span></span>
-              <span className="data-pair"><span className="data-label">Brick</span> <span className="data-value mono">{formatPrice(renkoDataSource.brick_size?.[renkoIndex])}</span></span>
-              <span className="data-pair"><span className="data-label">Rev</span> <span className="data-value mono">{formatPrice(renkoDataSource.reversal_size?.[renkoIndex])}</span></span>
+              <span className="data-pair"><span className="data-label">ADR({renkoData.adr_period}):</span> <span className="data-value mono">{formatPrice(renkoDataSource.adr_value?.[renkoIndex])}</span></span>
+              <span className="data-pair"><span className="data-label">Brick:</span> <span className="data-value mono">{formatPrice(renkoDataSource.brick_size?.[renkoIndex])}</span></span>
+              <span className="data-pair"><span className="data-label">Rev:</span> <span className="data-value mono">{formatPrice(renkoDataSource.reversal_size?.[renkoIndex])}</span></span>
             </>
           )}
           {wickErrorPct !== null && (
-            <span className="data-pair"><span className="data-label">Error</span> <span className="data-value mono">~{wickErrorPct}%</span></span>
+            <span className="data-pair"><span className="data-label">Error:</span> <span className="data-value mono">~{wickErrorPct}%</span></span>
           )}
           {renkoDataSource?.close?.length > 0 && (
-            <span className="data-pair"><span className="data-label">barCount</span> <span className="data-value mono">{renkoDataSource.close.length.toLocaleString()}</span></span>
+            <span className="data-pair"><span className="data-label">barCount:</span> <span className="data-value mono">{renkoDataSource.close.length.toLocaleString()}</span></span>
           )}
         </div>
       )}
@@ -92,14 +92,14 @@ function DataWindow({ chartData, renkoData, htfRenkoData = null, chartType, hove
       {chartType === 'o2' && htfRenkoData && htfIdx >= 0 && (
         <div className="data-row">
           <span className="data-row-label">HTF</span>
-          <span className="data-pair"><span className="data-label">O</span> <span className="data-value mono">{formatPrice(htfRenkoData.open?.[htfIdx])}</span></span>
-          <span className="data-pair"><span className="data-label">H</span> <span className="data-value mono">{formatPrice(htfRenkoData.high?.[htfIdx])}</span></span>
-          <span className="data-pair"><span className="data-label">L</span> <span className="data-value mono">{formatPrice(htfRenkoData.low?.[htfIdx])}</span></span>
-          <span className="data-pair"><span className="data-label">C</span> <span className="data-value mono">{formatPrice(htfRenkoData.close?.[htfIdx])}</span></span>
+          <span className="data-pair"><span className="data-label">O:</span> <span className="data-value mono">{formatPrice(htfRenkoData.open?.[htfIdx])}</span></span>
+          <span className="data-pair"><span className="data-label">H:</span> <span className="data-value mono">{formatPrice(htfRenkoData.high?.[htfIdx])}</span></span>
+          <span className="data-pair"><span className="data-label">L:</span> <span className="data-value mono">{formatPrice(htfRenkoData.low?.[htfIdx])}</span></span>
+          <span className="data-pair"><span className="data-label">C:</span> <span className="data-value mono">{formatPrice(htfRenkoData.close?.[htfIdx])}</span></span>
           {htfErrorPct !== null && (
-            <span className="data-pair"><span className="data-label">Error</span> <span className="data-value mono">~{htfErrorPct}%</span></span>
+            <span className="data-pair"><span className="data-label">Error:</span> <span className="data-value mono">~{htfErrorPct}%</span></span>
           )}
-          <span className="data-pair"><span className="data-label">barCount</span> <span className="data-value mono">{htfRenkoData.open.length.toLocaleString()}</span></span>
+          <span className="data-pair"><span className="data-label">barCount:</span> <span className="data-value mono">{htfRenkoData.open.length.toLocaleString()}</span></span>
         </div>
       )}
     </div>
