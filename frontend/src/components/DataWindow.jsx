@@ -119,6 +119,12 @@ function DataWindow({ chartData, renkoData, chartType, hoveredBarIndex, hoveredM
               <span className="data-value mono">~{wickErrorPct}%</span>
             </div>
           )}
+          {renkoDataSource?.close?.length > 0 && (
+            <div className="data-row">
+              <span className="data-label">barCount</span>
+              <span className="data-value mono">{renkoDataSource.close.length.toLocaleString()}</span>
+            </div>
+          )}
         </>
       )}
     </div>
