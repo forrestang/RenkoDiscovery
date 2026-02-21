@@ -2139,6 +2139,22 @@ input.no-spinners[type="number"] {
   cursor: default;
 }
 
+.bypass-o2-label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: #e8a849;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto !important;
+}
+
+.bypass-o2-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
 /* Bypass results */
 .bypass-results {
   display: flex;

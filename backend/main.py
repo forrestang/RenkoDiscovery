@@ -206,6 +206,13 @@ class DirectGenerateJob(BaseModel):
     reversal_mode: str = "fp"
     htf_brick_size: Optional[float] = None  # Higher TF brick size
     htf_reversal_multiplier: float = 2.0  # Reversal multiplier for HTF
+    htf_ma1_period: int = 20
+    htf_ma2_period: int = 50
+    htf_ma3_period: int = 200
+    htf_smae1_period: int = 20
+    htf_smae1_deviation: float = 1.0
+    htf_smae2_period: int = 50
+    htf_smae2_deviation: float = 1.0
 
 
 class DirectGenerateRequest(BaseModel):
@@ -234,6 +241,13 @@ class BypassTemplate(BaseModel):
     session_schedule: Optional[dict] = None
     htf_brick_size: Optional[float] = None  # Higher TF brick size
     htf_reversal_multiplier: float = 2.0  # Reversal multiplier for HTF
+    htf_ma1_period: int = 20
+    htf_ma2_period: int = 50
+    htf_ma3_period: int = 200
+    htf_smae1_period: int = 20
+    htf_smae1_deviation: float = 1.0
+    htf_smae2_period: int = 50
+    htf_smae2_deviation: float = 1.0
 
 
 def extract_instrument(filename: str) -> Optional[str]:
@@ -2633,9 +2647,13 @@ def direct_generate(request: DirectGenerateRequest):
                         htf_stats['brick_size'] = htf_brick
                         htf_stats['reversal_size'] = htf_rev_size
                     htf_stats['wick_mode'] = job.wick_mode
-                    htf_stats['ma1_period'] = job.ma1_period
-                    htf_stats['ma2_period'] = job.ma2_period
-                    htf_stats['ma3_period'] = job.ma3_period
+                    htf_stats['ma1_period'] = job.htf_ma1_period
+                    htf_stats['ma2_period'] = job.htf_ma2_period
+                    htf_stats['ma3_period'] = job.htf_ma3_period
+                    htf_stats['smae1_period'] = job.htf_smae1_period
+                    htf_stats['smae1_deviation'] = job.htf_smae1_deviation
+                    htf_stats['smae2_period'] = job.htf_smae2_period
+                    htf_stats['smae2_deviation'] = job.htf_smae2_deviation
                     htf_stats['chopPeriod'] = job.chop_period
 
                     if 'tick_index_open' in htf_renko_df.columns:
@@ -2644,10 +2662,10 @@ def direct_generate(request: DirectGenerateRequest):
 
                     htf_stats = compute_stats_columns(
                         htf_stats, raw_df, session_sched,
-                        job.adr_period, job.ma1_period, job.ma2_period,
-                        job.ma3_period, job.chop_period,
-                        job.smae1_period, job.smae1_deviation,
-                        job.smae2_period, job.smae2_deviation,
+                        job.adr_period, job.htf_ma1_period, job.htf_ma2_period,
+                        job.htf_ma3_period, job.chop_period,
+                        job.htf_smae1_period, job.htf_smae1_deviation,
+                        job.htf_smae2_period, job.htf_smae2_deviation,
                         job.pwap_sigmas
                     )
 
@@ -2658,9 +2676,13 @@ def direct_generate(request: DirectGenerateRequest):
                     htf_settings_meta = {
                         'brick_size': job.htf_brick_size,
                         'reversal_multiplier': job.htf_reversal_multiplier,
-                        'ma1_period': job.ma1_period,
-                        'ma2_period': job.ma2_period,
-                        'ma3_period': job.ma3_period,
+                        'ma1_period': job.htf_ma1_period,
+                        'ma2_period': job.htf_ma2_period,
+                        'ma3_period': job.htf_ma3_period,
+                        'smae1_period': job.htf_smae1_period,
+                        'smae1_deviation': job.htf_smae1_deviation,
+                        'smae2_period': job.htf_smae2_period,
+                        'smae2_deviation': job.htf_smae2_deviation,
                     }
 
             # Single trim: remove leading/trailing NaN rows (LTF + HTF warmup/forward-scan)
@@ -3566,6 +3588,134 @@ def get_parquet_stats(filepath: str):
             if sd.iloc[i] != sd.iloc[i - 1]:
                 session_breaks.append(i)
 
+    # O2 Stats: LTF bar breakdown within HTF bars
+    o2_stats = None
+    if 'HTF_close' in df.columns and 'HTF_open' in df.columns:
+        htf_up_mask = df['HTF_close'] > df['HTF_open']
+        htf_dn_mask = df['HTF_close'] < df['HTF_open']
+
+        htf_up_total = int(htf_up_mask.sum())
+        htf_dn_total = int(htf_dn_mask.sum())
+
+        o2_stats = {
+            "htfUpBars": htf_up_total,
+            "htfDnBars": htf_dn_total,
+            "ltfUpInHtfUp": int((htf_up_mask & is_up_bar).sum()),
+            "ltfDnInHtfUp": int((htf_up_mask & is_down_bar).sum()),
+            "ltfUpInHtfDn": int((htf_dn_mask & is_up_bar).sum()),
+            "ltfDnInHtfDn": int((htf_dn_mask & is_down_bar).sum()),
+        }
+
+        # HTF MA bar location stats
+        htf_ma_stats = None
+        htf_all_ma_stats = None
+        htf_beyond_ma_stats = None
+        htf_beyond_all_ma_stats = None
+        if 'HTF_EMA1_Price' in df.columns and htf_settings:
+            htf_ma_periods = [htf_settings.get('ma1_period', 20), htf_settings.get('ma2_period', 50), htf_settings.get('ma3_period', 200)]
+            htf_ma_stats = []
+            htf_above_all = pd.Series(True, index=df.index)
+            htf_below_all = pd.Series(True, index=df.index)
+
+            for idx, period in enumerate(htf_ma_periods, 1):
+                ema_col = f'HTF_EMA{idx}_Price'
+                if ema_col not in df.columns:
+                    continue
+                above_mask = df['close'] > df[ema_col]
+                below_mask = df['close'] < df[ema_col]
+                htf_ma_stats.append({
+                    "period": period,
+                    "above": int(above_mask.sum()),
+                    "below": int(below_mask.sum()),
+                    "aboveUp": int((above_mask & is_up_bar).sum()),
+                    "aboveDown": int((above_mask & is_down_bar).sum()),
+                    "belowUp": int((below_mask & is_up_bar).sum()),
+                    "belowDown": int((below_mask & is_down_bar).sum()),
+                })
+                htf_above_all &= above_mask
+                htf_below_all &= below_mask
+
+            htf_all_ma_stats = {
+                "aboveAll": int(htf_above_all.sum()),
+                "belowAll": int(htf_below_all.sum()),
+                "aboveAllUp": int((htf_above_all & is_up_bar).sum()),
+                "aboveAllDown": int((htf_above_all & is_down_bar).sum()),
+                "belowAllUp": int((htf_below_all & is_up_bar).sum()),
+                "belowAllDown": int((htf_below_all & is_down_bar).sum()),
+            }
+
+            # BEYOND: entire bar above/below HTF MA
+            htf_beyond_ma_stats = []
+            htf_beyond_above_all = pd.Series(True, index=df.index)
+            htf_beyond_below_all = pd.Series(True, index=df.index)
+
+            for idx, period in enumerate(htf_ma_periods, 1):
+                ema_col = f'HTF_EMA{idx}_Price'
+                if ema_col not in df.columns:
+                    continue
+                above_mask = df['low'] > df[ema_col]
+                below_mask = df['high'] < df[ema_col]
+                htf_beyond_ma_stats.append({
+                    "period": period,
+                    "above": int(above_mask.sum()),
+                    "below": int(below_mask.sum()),
+                    "aboveUp": int((above_mask & is_up_bar).sum()),
+                    "aboveDown": int((above_mask & is_down_bar).sum()),
+                    "belowUp": int((below_mask & is_up_bar).sum()),
+                    "belowDown": int((below_mask & is_down_bar).sum()),
+                })
+                htf_beyond_above_all &= above_mask
+                htf_beyond_below_all &= below_mask
+
+            htf_beyond_all_ma_stats = {
+                "aboveAll": int(htf_beyond_above_all.sum()),
+                "belowAll": int(htf_beyond_below_all.sum()),
+                "aboveAllUp": int((htf_beyond_above_all & is_up_bar).sum()),
+                "aboveAllDown": int((htf_beyond_above_all & is_down_bar).sum()),
+                "belowAllUp": int((htf_beyond_below_all & is_up_bar).sum()),
+                "belowAllDown": int((htf_beyond_below_all & is_down_bar).sum()),
+            }
+
+        o2_stats["htfMaStats"] = htf_ma_stats
+        o2_stats["htfAllMaStats"] = htf_all_ma_stats
+        o2_stats["htfBeyondMaStats"] = htf_beyond_ma_stats
+        o2_stats["htfBeyondAllMaStats"] = htf_beyond_all_ma_stats
+
+        # Prior HTF bar breakdown
+        prior_htf_stats = None
+        if 'HTF_bar_index' in df.columns:
+            htf_idx = df['HTF_bar_index']
+            valid = htf_idx >= 0
+            # Get unique HTF bar indices sorted, with their direction
+            htf_bars = df[valid].groupby('HTF_bar_index').first()[['HTF_open', 'HTF_close']]
+            sorted_htf = htf_bars.index.sort_values()
+
+            # Map each HTF bar index -> prior HTF bar direction
+            prior_dir_map = {}
+            for i in range(1, len(sorted_htf)):
+                prev = sorted_htf[i - 1]
+                prev_open = htf_bars.loc[prev, 'HTF_open']
+                prev_close = htf_bars.loc[prev, 'HTF_close']
+                if prev_close > prev_open:
+                    prior_dir_map[sorted_htf[i]] = 'up'
+                elif prev_close < prev_open:
+                    prior_dir_map[sorted_htf[i]] = 'dn'
+
+            prior_dir = htf_idx.map(prior_dir_map)
+            prior_up_mask = prior_dir == 'up'
+            prior_dn_mask = prior_dir == 'dn'
+
+            prior_htf_stats = {
+                "priorUpTotal": int(prior_up_mask.sum()),
+                "priorDnTotal": int(prior_dn_mask.sum()),
+                "ltfUpAfterHtfUp": int((prior_up_mask & is_up_bar).sum()),
+                "ltfDnAfterHtfUp": int((prior_up_mask & is_down_bar).sum()),
+                "ltfUpAfterHtfDn": int((prior_dn_mask & is_up_bar).sum()),
+                "ltfDnAfterHtfDn": int((prior_dn_mask & is_down_bar).sum()),
+            }
+
+        o2_stats["priorHtfStats"] = prior_htf_stats
+
     result = {
         "totalBars": total_bars,
         "upBars": up_bars,
@@ -3609,7 +3759,8 @@ def get_parquet_stats(filepath: str):
         "maPeriods": ma_periods,
         "sessionSchedule": session_schedule,
         "sessionBreaks": session_breaks,
-        "htfSettings": htf_settings
+        "htfSettings": htf_settings,
+        "o2Stats": o2_stats
     }
 
     # Serialize with allow_nan=True, then replace NaN/Infinity with null

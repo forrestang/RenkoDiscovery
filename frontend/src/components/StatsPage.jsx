@@ -262,7 +262,7 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
   // Active tab — persist to localStorage
   const [activeTab, setActiveTab] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}statsActiveTab`)
-    const validTabs = ['general', 'signals', 'playground', 'backtest', 'optimizer']
+    const validTabs = ['general', 'o2', 'signals', 'playground', 'backtest', 'optimizer']
     return validTabs.includes(saved) ? saved : 'general'
   })
   useEffect(() => {
@@ -1547,6 +1547,12 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             className={`stats-tab ${activeTab === 'general' ? 'active' : ''}`}
             onClick={() => setActiveTab('general')}
           >General</button>
+          {stats.o2Stats && (
+            <button
+              className={`stats-tab ${activeTab === 'o2' ? 'active' : ''}`}
+              onClick={() => setActiveTab('o2')}
+            >O2</button>
+          )}
           <button
             className={`stats-tab ${activeTab === 'signals' ? 'active' : ''}`}
             onClick={() => setActiveTab('signals')}
@@ -2462,6 +2468,204 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
             </div>
           )}
 
+        </div>
+      )}
+
+      {/* ==================== O2 Tab ==================== */}
+      {activeTab === 'o2' && (
+        <div className="stats-tab-content">
+          {stats.o2Stats ? (() => {
+            const o2 = stats.o2Stats
+            const totalBarsO2 = stats.totalBars
+            const htfMaRows = o2.htfMaStats ? [
+              ...o2.htfMaStats.map((ma, idx) => ({
+                label: `MA(${ma.period})`,
+                colorClass: `ma-color-${idx + 1}`,
+                above: ma.above,
+                below: ma.below,
+                aboveUp: ma.aboveUp ?? 0,
+                aboveDown: ma.aboveDown ?? 0,
+                belowUp: ma.belowUp ?? 0,
+                belowDown: ma.belowDown ?? 0,
+              })),
+              {
+                label: 'ALL MAs',
+                colorClass: 'ma-color-all',
+                above: o2.htfAllMaStats.aboveAll,
+                below: o2.htfAllMaStats.belowAll,
+                aboveUp: o2.htfAllMaStats.aboveAllUp ?? 0,
+                aboveDown: o2.htfAllMaStats.aboveAllDown ?? 0,
+                belowUp: o2.htfAllMaStats.belowAllUp ?? 0,
+                belowDown: o2.htfAllMaStats.belowAllDown ?? 0,
+              }
+            ] : null
+            const htfBeyondRows = o2.htfBeyondMaStats ? [
+              ...o2.htfBeyondMaStats.map((ma, idx) => ({
+                label: `MA(${ma.period})`,
+                colorClass: `ma-color-${idx + 1}`,
+                above: ma.above,
+                below: ma.below,
+                aboveUp: ma.aboveUp ?? 0,
+                aboveDown: ma.aboveDown ?? 0,
+                belowUp: ma.belowUp ?? 0,
+                belowDown: ma.belowDown ?? 0,
+              })),
+              {
+                label: 'ALL MAs',
+                colorClass: 'ma-color-all',
+                above: o2.htfBeyondAllMaStats.aboveAll,
+                below: o2.htfBeyondAllMaStats.belowAll,
+                aboveUp: o2.htfBeyondAllMaStats.aboveAllUp ?? 0,
+                aboveDown: o2.htfBeyondAllMaStats.aboveAllDown ?? 0,
+                belowUp: o2.htfBeyondAllMaStats.belowAllUp ?? 0,
+                belowDown: o2.htfBeyondAllMaStats.belowAllDown ?? 0,
+              }
+            ] : null
+            return (
+              <>
+              <div className="stats-module">
+                <table className="stats-table">
+                  <thead>
+                    <tr className="module-title-row">
+                      <th colSpan="4" className="module-title" data-tooltip="LTF bar direction breakdown within HTF bars">LTF BARS in HTF(DEVELOPING)</th>
+                    </tr>
+                    <tr>
+                      <th></th>
+                      <th>Total</th>
+                      <th className="up">LTF UP</th>
+                      <th className="dn">LTF DN</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="up">HTF UP</td>
+                      <td>{o2.htfUpBars.toLocaleString()}</td>
+                      <td>{o2.ltfUpInHtfUp.toLocaleString()} <span className={`up${o2.ltfUpInHtfUp > o2.ltfDnInHtfUp ? ' highlight' : ''}`}>({pct(o2.ltfUpInHtfUp, o2.htfUpBars)}%)</span></td>
+                      <td>{o2.ltfDnInHtfUp.toLocaleString()} <span className={`dn${o2.ltfDnInHtfUp > o2.ltfUpInHtfUp ? ' highlight' : ''}`}>({pct(o2.ltfDnInHtfUp, o2.htfUpBars)}%)</span></td>
+                    </tr>
+                    <tr>
+                      <td className="dn">HTF DN</td>
+                      <td>{o2.htfDnBars.toLocaleString()}</td>
+                      <td>{o2.ltfUpInHtfDn.toLocaleString()} <span className={`up${o2.ltfUpInHtfDn > o2.ltfDnInHtfDn ? ' highlight' : ''}`}>({pct(o2.ltfUpInHtfDn, o2.htfDnBars)}%)</span></td>
+                      <td>{o2.ltfDnInHtfDn.toLocaleString()} <span className={`dn${o2.ltfDnInHtfDn > o2.ltfUpInHtfDn ? ' highlight' : ''}`}>({pct(o2.ltfDnInHtfDn, o2.htfDnBars)}%)</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {o2.priorHtfStats && (
+                <div className="stats-module">
+                  <table className="stats-table">
+                    <thead>
+                      <tr className="module-title-row">
+                        <th colSpan="4" className="module-title" data-tooltip="LTF bar breakdown grouped by the prior completed HTF bar's direction">MTF BAR BREAKDOWN(PRIOR HTF BAR)</th>
+                      </tr>
+                      <tr>
+                        <th></th>
+                        <th>Total</th>
+                        <th className="up">LTF UP</th>
+                        <th className="dn">LTF DN</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="up">Prior HTF UP</td>
+                        <td>{o2.priorHtfStats.priorUpTotal.toLocaleString()}</td>
+                        <td>{o2.priorHtfStats.ltfUpAfterHtfUp.toLocaleString()} <span className={`up${o2.priorHtfStats.ltfUpAfterHtfUp > o2.priorHtfStats.ltfDnAfterHtfUp ? ' highlight' : ''}`}>({pct(o2.priorHtfStats.ltfUpAfterHtfUp, o2.priorHtfStats.priorUpTotal)}%)</span></td>
+                        <td>{o2.priorHtfStats.ltfDnAfterHtfUp.toLocaleString()} <span className={`dn${o2.priorHtfStats.ltfDnAfterHtfUp > o2.priorHtfStats.ltfUpAfterHtfUp ? ' highlight' : ''}`}>({pct(o2.priorHtfStats.ltfDnAfterHtfUp, o2.priorHtfStats.priorUpTotal)}%)</span></td>
+                      </tr>
+                      <tr>
+                        <td className="dn">Prior HTF DN</td>
+                        <td>{o2.priorHtfStats.priorDnTotal.toLocaleString()}</td>
+                        <td>{o2.priorHtfStats.ltfUpAfterHtfDn.toLocaleString()} <span className={`up${o2.priorHtfStats.ltfUpAfterHtfDn > o2.priorHtfStats.ltfDnAfterHtfDn ? ' highlight' : ''}`}>({pct(o2.priorHtfStats.ltfUpAfterHtfDn, o2.priorHtfStats.priorDnTotal)}%)</span></td>
+                        <td>{o2.priorHtfStats.ltfDnAfterHtfDn.toLocaleString()} <span className={`dn${o2.priorHtfStats.ltfDnAfterHtfDn > o2.priorHtfStats.ltfUpAfterHtfDn ? ' highlight' : ''}`}>({pct(o2.priorHtfStats.ltfDnAfterHtfDn, o2.priorHtfStats.priorDnTotal)}%)</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {htfMaRows && (
+                <div className="stats-module">
+                  <table className="stats-table">
+                    <thead>
+                      <tr className="module-title-row">
+                        <th colSpan="7" className="module-title" data-tooltip="LTF bars where close is above or below each HTF MA">LTF BAR LOCATION W/HTF MAs(ALL)</th>
+                      </tr>
+                      <tr>
+                        <th></th>
+                        <th colSpan="3">Above</th>
+                        <th colSpan="3">Below</th>
+                      </tr>
+                      <tr>
+                        <th>MA</th>
+                        <th>Count</th>
+                        <th className="up">UP%</th>
+                        <th className="dn">DN%</th>
+                        <th>Count</th>
+                        <th className="up">UP%</th>
+                        <th className="dn">DN%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {htfMaRows.map(row => (
+                        <tr key={row.label}>
+                          <td className={row.colorClass}>{row.label}</td>
+                          <td>{row.above} <span className="pct">({pct(row.above, totalBarsO2)}%)</span></td>
+                          <td className={`up${row.aboveUp > row.aboveDown ? ' highlight' : ''}`}>{pct(row.aboveUp, row.above)}%</td>
+                          <td className={`dn${row.aboveDown > row.aboveUp ? ' highlight' : ''}`}>{pct(row.aboveDown, row.above)}%</td>
+                          <td>{row.below} <span className="pct">({pct(row.below, totalBarsO2)}%)</span></td>
+                          <td className={`up${row.belowUp > row.belowDown ? ' highlight' : ''}`}>{pct(row.belowUp, row.below)}%</td>
+                          <td className={`dn${row.belowDown > row.belowUp ? ' highlight' : ''}`}>{pct(row.belowDown, row.below)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {htfBeyondRows && (
+                      <>
+                        <thead>
+                          <tr className="module-title-row">
+                            <th colSpan="7" className="module-title" data-tooltip="LTF bars entirely above or below each HTF MA (no part of the bar touches the MA)">LTF BAR LOCATION W/HTF MAs(BEYOND)</th>
+                          </tr>
+                          <tr>
+                            <th></th>
+                            <th colSpan="3">Above</th>
+                            <th colSpan="3">Below</th>
+                          </tr>
+                          <tr>
+                            <th>MA</th>
+                            <th>Count</th>
+                            <th className="up">UP%</th>
+                            <th className="dn">DN%</th>
+                            <th>Count</th>
+                            <th className="up">UP%</th>
+                            <th className="dn">DN%</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {htfBeyondRows.map(row => (
+                            <tr key={row.label}>
+                              <td className={row.colorClass}>{row.label}</td>
+                              <td>{row.above} <span className="pct">({pct(row.above, totalBarsO2)}%)</span></td>
+                              <td className={`up${row.aboveUp > row.aboveDown ? ' highlight' : ''}`}>{pct(row.aboveUp, row.above)}%</td>
+                              <td className={`dn${row.aboveDown > row.aboveUp ? ' highlight' : ''}`}>{pct(row.aboveDown, row.above)}%</td>
+                              <td>{row.below} <span className="pct">({pct(row.below, totalBarsO2)}%)</span></td>
+                              <td className={`up${row.belowUp > row.belowDown ? ' highlight' : ''}`}>{pct(row.belowUp, row.below)}%</td>
+                              <td className={`dn${row.belowDown > row.belowUp ? ' highlight' : ''}`}>{pct(row.belowDown, row.below)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </>
+                    )}
+                  </table>
+                </div>
+              )}
+              </>
+            )
+          })() : (
+            <div className="stats-module module-box" style={{ padding: '20px', color: 'var(--text-secondary)' }}>
+              No HTF data — generate parquet in O2 mode.
+            </div>
+          )}
         </div>
       )}
 

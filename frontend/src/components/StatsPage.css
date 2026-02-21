@@ -253,11 +253,13 @@
   color: var(--text-primary);
 }
 
-.stats-table td.up {
+.stats-table td.up,
+.stats-table td span.up {
   color: #22c55e;
 }
 
-.stats-table td.dn {
+.stats-table td.dn,
+.stats-table td span.dn {
   color: #ef4444;
 }
 
@@ -570,7 +572,8 @@
 }
 
 /* Highlight for highest value in UP/DN pairs */
-.stats-table td.highlight {
+.stats-table td.highlight,
+.stats-table td span.highlight {
   text-decoration: underline;
   text-decoration-color: #eab308;
   text-underline-offset: 2px;

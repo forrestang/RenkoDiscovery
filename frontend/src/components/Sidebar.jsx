@@ -164,6 +164,15 @@ function Sidebar({
     smae2Period: 50,
     smae2Deviation: 1.0,
     pwapSigmas: [1.0, 2.0, 2.5, 3.0],
+    htfBrickSize: null,
+    htfReversalMultiplier: 2.0,
+    htfMa1Period: 20,
+    htfMa2Period: 50,
+    htfMa3Period: 200,
+    htfSmae1Period: 20,
+    htfSmae1Deviation: 1.0,
+    htfSmae2Period: 50,
+    htfSmae2Deviation: 1.0,
     templateName: '',
   }), [])
 
@@ -175,7 +184,7 @@ function Sidebar({
         if (Array.isArray(parsed) && parsed.length > 0) return parsed
       }
     } catch {}
-    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0010, brickPct: 5.0, reversalPct: 5.0, adrPeriod: 14, wickMode: 'all', reversalMode: 'fp', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0], htfBrickSize: null }]
+    return [{ id: Date.now(), instrument: '', filename: '', filenameManual: false, sizingMode: 'price', brickSize: 0.0010, reversalSize: 0.0010, brickPct: 5.0, reversalPct: 5.0, adrPeriod: 14, wickMode: 'all', reversalMode: 'fp', ma1Period: 20, ma2Period: 50, ma3Period: 200, chopPeriod: 20, smae1Period: 20, smae1Deviation: 1.0, smae2Period: 50, smae2Deviation: 1.0, pwapSigmas: [1.0, 2.0, 2.5, 3.0], htfBrickSize: null, htfReversalMultiplier: 2.0, htfMa1Period: 20, htfMa2Period: 50, htfMa3Period: 200, htfSmae1Period: 20, htfSmae1Deviation: 1.0, htfSmae2Period: 50, htfSmae2Deviation: 1.0 }]
   })
   const [isBypassing, setIsBypassing] = useState(false)
   const [bypassResults, setBypassResults] = useState(null)
@@ -188,22 +197,30 @@ function Sidebar({
 
   const autoBypassFilename = useCallback((job) => {
     if (!job.instrument) return ''
+    let base
     if (job.sizingMode === 'adr') {
-      return `${job.instrument}_ADR${job.adrPeriod}_${job.brickPct}pct_${job.reversalMode || 'fp'}`
+      base = `${job.instrument}_ADR${job.adrPeriod}_${job.brickPct}pct_${job.reversalMode || 'fp'}`
+    } else {
+      base = `${job.instrument}_${job.brickSize}_${job.reversalMode || 'fp'}`
     }
-    return `${job.instrument}_${job.brickSize}_${job.reversalMode || 'fp'}`
+    if (job.htfBrickSize) return `${base}_O2`
+    return base
   }, [])
 
   const updateBypassJob = useCallback((id, field, value) => {
     setBypassJobs(prev => prev.map(j => {
       if (j.id !== id) return j
       const updated = { ...j, [field]: value }
+      // When O2 is enabled, force price sizing mode
+      if (field === 'htfBrickSize' && value) {
+        updated.sizingMode = 'price'
+      }
       // Always derive reversal from brick + mode
       updated.reversalSize = updated.reversalMode === 'tv' ? updated.brickSize * 2 : updated.brickSize
       updated.reversalPct = updated.reversalMode === 'tv' ? updated.brickPct * 2 : updated.brickPct
       if (field === 'filename') {
         updated.filenameManual = value !== '' && value !== autoBypassFilename(j)
-      } else if (['instrument', 'sizingMode', 'brickSize', 'brickPct', 'adrPeriod', 'reversalMode'].includes(field) && !j.filenameManual) {
+      } else if (['instrument', 'sizingMode', 'brickSize', 'brickPct', 'adrPeriod', 'reversalMode', 'htfBrickSize'].includes(field) && !j.filenameManual) {
         updated.filename = autoBypassFilename(updated)
       }
       return updated
@@ -263,7 +280,17 @@ function Sidebar({
           smae2_period: job.smae2Period,
           smae2_deviation: job.smae2Deviation,
           pwap_sigmas: job.pwapSigmas,
-          ...(job.htfBrickSize ? { htf_brick_size: job.htfBrickSize } : {}),
+          ...(job.htfBrickSize ? {
+            htf_brick_size: job.htfBrickSize,
+            htf_reversal_multiplier: job.htfReversalMultiplier || 2.0,
+            htf_ma1_period: job.htfMa1Period,
+            htf_ma2_period: job.htfMa2Period,
+            htf_ma3_period: job.htfMa3Period,
+            htf_smae1_period: job.htfSmae1Period,
+            htf_smae1_deviation: job.htfSmae1Deviation,
+            htf_smae2_period: job.htfSmae2Period,
+            htf_smae2_deviation: job.htfSmae2Deviation,
+          } : {}),
         })
       })
       fetchBypassTemplates()
@@ -303,6 +330,14 @@ function Sidebar({
         smae2Deviation: template.smae2_deviation ?? 1.0,
         pwapSigmas: template.pwap_sigmas ?? [1.0, 2.0, 2.5, 3.0],
         htfBrickSize: template.htf_brick_size || null,
+        htfReversalMultiplier: template.htf_reversal_multiplier ?? 2.0,
+        htfMa1Period: template.htf_ma1_period ?? 20,
+        htfMa2Period: template.htf_ma2_period ?? 50,
+        htfMa3Period: template.htf_ma3_period ?? 200,
+        htfSmae1Period: template.htf_smae1_period ?? 20,
+        htfSmae1Deviation: template.htf_smae1_deviation ?? 1.0,
+        htfSmae2Period: template.htf_smae2_period ?? 50,
+        htfSmae2Deviation: template.htf_smae2_deviation ?? 1.0,
         templateName: template.name,
         filenameManual: false,
       }
@@ -337,7 +372,17 @@ function Sidebar({
         smae2_period: j.smae2Period,
         smae2_deviation: j.smae2Deviation,
         pwap_sigmas: j.pwapSigmas,
-        ...(j.htfBrickSize ? { htf_brick_size: j.htfBrickSize } : {}),
+        ...(j.htfBrickSize ? {
+          htf_brick_size: j.htfBrickSize,
+          htf_reversal_multiplier: j.htfReversalMultiplier || 2.0,
+          htf_ma1_period: j.htfMa1Period,
+          htf_ma2_period: j.htfMa2Period,
+          htf_ma3_period: j.htfMa3Period,
+          htf_smae1_period: j.htfSmae1Period,
+          htf_smae1_deviation: j.htfSmae1Deviation,
+          htf_smae2_period: j.htfSmae2Period,
+          htf_smae2_deviation: j.htfSmae2Deviation,
+        } : {}),
       }))
       const results = await onDirectGenerate(payload)
       setBypassResults(results)
@@ -1127,14 +1172,16 @@ function Sidebar({
                     </div>
                     <div className="bypass-job-row">
                       <label className="option-label">Sizing</label>
-                      <select
-                        className="stats-input mono bypass-half-select"
-                        value={job.sizingMode}
-                        onChange={e => updateBypassJob(job.id, 'sizingMode', e.target.value)}
-                      >
-                        <option value="price">Price</option>
-                        <option value="adr">ADR</option>
-                      </select>
+                      {!job.htfBrickSize && (
+                        <select
+                          className="stats-input mono bypass-half-select"
+                          value={job.sizingMode}
+                          onChange={e => updateBypassJob(job.id, 'sizingMode', e.target.value)}
+                        >
+                          <option value="price">Price</option>
+                          <option value="adr">ADR</option>
+                        </select>
+                      )}
                       <select className="stats-input mono bypass-half-select" value={job.wickMode} onChange={e => updateBypassJob(job.id, 'wickMode', e.target.value)}>
                         <option value="all">Wick: All</option>
                         <option value="big">Wick: Big</option>
@@ -1148,6 +1195,20 @@ function Sidebar({
                         <option value="fp">Rev: FP</option>
                         <option value="tv">Rev: TV</option>
                       </select>
+                      <label className="option-label bypass-o2-label" title="Enable O2 (multi-timeframe)">
+                        <input
+                          type="checkbox"
+                          checked={!!job.htfBrickSize}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              updateBypassJob(job.id, 'htfBrickSize', job.brickSize * 10)
+                            } else {
+                              updateBypassJob(job.id, 'htfBrickSize', null)
+                            }
+                          }}
+                        />
+                        O2
+                      </label>
                     </div>
                     {job.sizingMode === 'price' ? (
                       <div className="bypass-job-row">
@@ -1160,6 +1221,12 @@ function Sidebar({
                         <input type="number" className="stats-input mono" step="0.5" value={job.brickPct} onChange={e => updateBypassJob(job.id, 'brickPct', parseFloat(e.target.value) || 0)} />
                       </div>
                     )}
+                    {!!job.htfBrickSize && (
+                      <div className="bypass-job-row">
+                        <label className="option-label">HTF Brick</label>
+                        <input type="number" className="stats-input mono" step="0.0001" value={job.htfBrickSize} onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateBypassJob(job.id, 'htfBrickSize', v) }} />
+                      </div>
+                    )}
                     <div className="bypass-job-row">
                       <label className="option-label">MA1</label>
                       <input type="number" className="stats-input mono bypass-input-sm" value={job.ma1Period} onChange={e => updateBypassJob(job.id, 'ma1Period', parseInt(e.target.value) || 20)} />
@@ -1168,6 +1235,16 @@ function Sidebar({
                       <label className="option-label">MA3</label>
                       <input type="number" className="stats-input mono bypass-input-sm" value={job.ma3Period} onChange={e => updateBypassJob(job.id, 'ma3Period', parseInt(e.target.value) || 200)} />
                     </div>
+                    {!!job.htfBrickSize && (
+                      <div className="bypass-job-row">
+                        <label className="option-label">HTF MA1</label>
+                        <input type="number" className="stats-input mono bypass-input-sm" value={job.htfMa1Period} onChange={e => updateBypassJob(job.id, 'htfMa1Period', parseInt(e.target.value) || 20)} />
+                        <label className="option-label">MA2</label>
+                        <input type="number" className="stats-input mono bypass-input-sm" value={job.htfMa2Period} onChange={e => updateBypassJob(job.id, 'htfMa2Period', parseInt(e.target.value) || 50)} />
+                        <label className="option-label">MA3</label>
+                        <input type="number" className="stats-input mono bypass-input-sm" value={job.htfMa3Period} onChange={e => updateBypassJob(job.id, 'htfMa3Period', parseInt(e.target.value) || 200)} />
+                      </div>
+                    )}
                     <div className="bypass-job-row">
                       <label className="option-label">ADR</label>
                       <input type="number" className="stats-input mono bypass-input-sm" value={job.adrPeriod} onChange={e => updateBypassJob(job.id, 'adrPeriod', parseInt(e.target.value) || 14)} />
@@ -1184,6 +1261,18 @@ function Sidebar({
                       <label className="option-label">Dev</label>
                       <input type="number" className="stats-input mono bypass-input-sm" step="0.1" value={job.smae2Deviation} onChange={e => updateBypassJob(job.id, 'smae2Deviation', parseFloat(e.target.value) || 1.0)} />
                     </div>
+                    {!!job.htfBrickSize && (
+                      <div className="bypass-job-row">
+                        <label className="option-label">HTF ENV1</label>
+                        <input type="number" className="stats-input mono bypass-input-sm" value={job.htfSmae1Period} onChange={e => updateBypassJob(job.id, 'htfSmae1Period', parseInt(e.target.value) || 20)} />
+                        <label className="option-label">Dev</label>
+                        <input type="number" className="stats-input mono bypass-input-sm" step="0.1" value={job.htfSmae1Deviation} onChange={e => updateBypassJob(job.id, 'htfSmae1Deviation', parseFloat(e.target.value) || 1.0)} />
+                        <label className="option-label">ENV2</label>
+                        <input type="number" className="stats-input mono bypass-input-sm" value={job.htfSmae2Period} onChange={e => updateBypassJob(job.id, 'htfSmae2Period', parseInt(e.target.value) || 50)} />
+                        <label className="option-label">Dev</label>
+                        <input type="number" className="stats-input mono bypass-input-sm" step="0.1" value={job.htfSmae2Deviation} onChange={e => updateBypassJob(job.id, 'htfSmae2Deviation', parseFloat(e.target.value) || 1.0)} />
+                      </div>
+                    )}
                     <div className="bypass-job-row">
                       <label className="option-label">PWAP σ</label>
                       {(job.pwapSigmas || [1.0, 2.0, 2.5, 3.0]).map((sigma, si) => (
