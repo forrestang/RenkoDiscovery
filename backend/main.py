@@ -1852,19 +1852,48 @@ def merge_htf_columns_to_ltf(ltf_df, htf_stats_df, alignment):
     return ltf_df
 
 
+def trim_parquet_data(df):
+    """Single trim: remove leading/trailing rows where warmup or forward-scan columns are NaN.
+    Handles both LTF columns and HTF columns (if present after merge)."""
+    # LEFT CUT: warmup-dependent columns
+    left_cols = ['currentADR']
+    left_cols += [c for c in df.columns if c.startswith('EMA_rawDistance(')]
+    left_cols += ['SMAE1_Center', 'SMAE2_Center']
+    # HTF warmup columns (present only after HTF merge)
+    left_cols += [c for c in df.columns if c.startswith('HTF_EMA') and c.endswith('_Price')]
+    left_cols += [c for c in df.columns if c.startswith('HTF_SMAE') and c.endswith('_Center')]
+    left_cols = [c for c in left_cols if c in df.columns]
+
+    # RIGHT CUT: forward-scan columns
+    right_cols = [c for c in df.columns if c.startswith('REAL_MA') and c.endswith('_Price')]
+    right_cols += [c for c in df.columns if c.startswith('HTF_REAL_MA') and c.endswith('_Price')]
+    right_cols = [c for c in right_cols if c in df.columns]
+
+    left_valid = df[left_cols].notna().all(axis=1) if left_cols else pd.Series(True, index=df.index)
+    right_valid = df[right_cols].notna().all(axis=1) if right_cols else pd.Series(True, index=df.index)
+
+    if not left_valid.any() or not right_valid.any():
+        return df.iloc[0:0].reset_index(drop=True)
+
+    left_cut = left_valid.idxmax()
+    right_cut = right_valid[::-1].idxmax()
+    return df.loc[left_cut:right_cut].reset_index(drop=True)
+
+
 def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2_period, ma3_period, chop_period,
                            smae1_period=20, smae1_deviation=1.0, smae2_period=50, smae2_deviation=1.0,
                            pwap_sigmas=None):
     """Compute all stats/ML columns on a renko DataFrame.
     df: must already have datetime, OHLC, brick_size, reversal_size, settings columns.
     raw_df: raw M1 OHLC (with 'datetime' column) for ADR computation.
-    Returns enriched df with all columns, trimmed. Includes session_date and EMA price columns."""
+    Returns enriched df with all columns (untrimmed). Includes session_date and EMA price columns."""
     if pwap_sigmas is None:
         pwap_sigmas = [1.0, 2.0, 2.5, 3.0]
     adr_series = compute_adr_lookup(raw_df, adr_period, session_sched)
 
     # Map currentADR back to renko bars based on their session date
     df['datetime'] = pd.to_datetime(df['datetime'])
+    df.insert(1, 'bar_index', range(len(df)))
     df['session_date'] = df['datetime'].apply(lambda dt: _get_session_date(dt, session_sched))
     df['Year'] = df['datetime'].dt.year
     df['Month'] = df['datetime'].dt.month
@@ -2201,18 +2230,6 @@ def compute_stats_columns(df, raw_df, session_sched, adr_period, ma1_period, ma2
         df[f'REAL_MA{idx}_ADR'] = (mfe_ma_price / df['currentADR']).round(2)
         df[f'REAL_MA{idx}_RR'] = (mfe_ma_price / df['reversal_size']).round(2)
 
-    # LEFT CUT: first row where all warmup columns are valid
-    left_cols = ['currentADR'] + [f'EMA_rawDistance({p})' for p in ma_periods] + ['SMAE1_Center', 'SMAE2_Center']
-    left_valid = df[left_cols].notna().all(axis=1)
-    left_cut = left_valid.idxmax()
-
-    # RIGHT CUT: last row where all forward-scan columns are valid
-    right_cols = [f'REAL_MA{idx}_Price' for idx in range(1, len(ma_periods) + 1)]
-    right_valid = df[right_cols].notna().all(axis=1)
-    right_cut = right_valid[::-1].idxmax()
-
-    df = df.loc[left_cut:right_cut].reset_index(drop=True)
-
     return df
 
 
@@ -2347,6 +2364,9 @@ async def generate_stats(instrument: str, request: StatsRequest):
             'smae2_period': request.htf_smae2_period,
             'smae2_deviation': request.htf_smae2_deviation,
         }
+
+    # Single trim: remove leading/trailing NaN rows (LTF + HTF warmup/forward-scan)
+    df = trim_parquet_data(df)
 
     # Clean up tick_index columns (not needed in parquet)
     for c in ['tick_index_open', 'tick_index_close']:
@@ -2556,9 +2576,10 @@ def direct_generate(request: DirectGenerateRequest):
             stats_df['smae2_deviation'] = job.smae2_deviation
             stats_df['pwap_sigmas'] = json.dumps(job.pwap_sigmas)
 
-            # Preserve tick_index columns for HTF alignment before stats computation
-            ltf_tick_index_open = renko_df['tick_index_open'].values.copy() if 'tick_index_open' in renko_df.columns else None
-            ltf_tick_index_close = renko_df['tick_index_close'].values.copy() if 'tick_index_close' in renko_df.columns else None
+            # Add tick_index columns to stats_df before computation (survives trim)
+            if 'tick_index_open' in renko_df.columns:
+                stats_df['tick_index_open'] = renko_df['tick_index_open'].values
+                stats_df['tick_index_close'] = renko_df['tick_index_close'].values
 
             # Compute stats columns
             stats_df = compute_stats_columns(
@@ -2572,7 +2593,7 @@ def direct_generate(request: DirectGenerateRequest):
 
             # HTF processing: if htf_brick_size is set, generate HTF renko and merge
             htf_settings_meta = None
-            if job.htf_brick_size and ltf_tick_index_open is not None:
+            if job.htf_brick_size and 'tick_index_open' in stats_df.columns:
                 htf_brick = float(job.htf_brick_size)
                 htf_rev_size = htf_brick * job.htf_reversal_multiplier
                 htf_rev_mult = htf_rev_size / htf_brick
@@ -2630,18 +2651,9 @@ def direct_generate(request: DirectGenerateRequest):
                         job.pwap_sigmas
                     )
 
-                    # Add tick indices to LTF stats_df for alignment
-                    stats_df['tick_index_open'] = ltf_tick_index_open[:len(stats_df)]
-                    stats_df['tick_index_close'] = ltf_tick_index_close[:len(stats_df)]
-
                     if 'tick_index_open' in htf_stats.columns:
                         alignment = align_htf_to_ltf(stats_df, htf_stats)
                         stats_df = merge_htf_columns_to_ltf(stats_df, htf_stats, alignment)
-
-                    # Clean up tick_index columns
-                    for c in ['tick_index_open', 'tick_index_close']:
-                        if c in stats_df.columns:
-                            stats_df.drop(columns=[c], inplace=True)
 
                     htf_settings_meta = {
                         'brick_size': job.htf_brick_size,
@@ -2650,6 +2662,14 @@ def direct_generate(request: DirectGenerateRequest):
                         'ma2_period': job.ma2_period,
                         'ma3_period': job.ma3_period,
                     }
+
+            # Single trim: remove leading/trailing NaN rows (LTF + HTF warmup/forward-scan)
+            stats_df = trim_parquet_data(stats_df)
+
+            # Clean up tick_index columns (not needed in parquet)
+            for c in ['tick_index_open', 'tick_index_close']:
+                if c in stats_df.columns:
+                    stats_df.drop(columns=[c], inplace=True)
 
             # Save parquet with session_schedule and indicator params in metadata
             fname = job.filename.replace('.parquet', '')

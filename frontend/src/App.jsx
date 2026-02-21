@@ -744,7 +744,7 @@ function App() {
           pwap_sigmas: statsConfig.pwapSigmas ?? [1.0, 2.0, 2.5, 3.0],
           renko_data: renkoData.data,
           session_schedule: sessionSchedule,
-          ...(renkoData.htf_data && renkoSettings.htfBrickSize ? {
+          ...(chartType === 'o2' && renkoData.htf_data && renkoSettings.htfBrickSize ? {
             htf_brick_size: renkoSettings.htfBrickSize,
             htf_reversal_multiplier: renkoSettings.htfReversalMultiplier || 2.0,
             htf_renko_data: renkoData.htf_data,
