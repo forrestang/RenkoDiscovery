@@ -70,6 +70,48 @@ export const COLUMN_DESCRIPTIONS = {
   'REAL_MA1_Price, REAL_MA1_ADR, REAL_MA1_RR': 'Exit on first close back thru MA1 (fast EMA) in price/ADR/RR.',
   'REAL_MA2_Price, REAL_MA2_ADR, REAL_MA2_RR': 'Exit on first close back thru MA2 (medium EMA) in price/ADR/RR.',
   'REAL_MA3_Price, REAL_MA3_ADR, REAL_MA3_RR': 'Exit on first close back thru MA3 (slow EMA) in price/ADR/RR.',
+
+  // HTF System
+  'HTF_chop(rolling)': 'HTF rolling chop index. Higher values = choppier. Range: 0.0-1.0',
+
+  // HTF OHLC & Price
+  'HTF_open, HTF_high, HTF_low, HTF_close, HTF_direction': 'Current HTF bar OHLC prices and direction (forward-filled onto LTF rows).',
+  'HTF_open1, HTF_high1, HTF_low1, HTF_close1, HTF_direction1': 'Prior HTF bar (-1) OHLC prices & direction.',
+  'HTF_open2, HTF_high2, HTF_low2, HTF_close2, HTF_direction2': 'Two HTF bars back (-2) OHLC prices & direction.',
+
+  // HTF Moving Averages
+  'HTF_EMA_rawDistance(period)': 'HTF raw price distance from HTF EMA (HTF close \u2212 HTF EMA value).',
+  'HTF_EMA_adrDistance(period)': 'HTF price distance from HTF EMA normalized by ADR.',
+  'HTF_EMA_rrDistance(period)': 'HTF price distance from HTF EMA normalized by reversal size.',
+  'HTF_MA1, HTF_MA2, HTF_MA3': 'Current HTF EMA values (fast, medium, slow).',
+  'HTF_MA1_1, HTF_MA2_1, HTF_MA3_1': 'Prior HTF bar EMA values.',
+  'HTF_MA1_2, HTF_MA2_2, HTF_MA3_2': 'Two HTF bars back EMA values.',
+
+  // HTF SMAE Channel
+  'HTF_SMAE1_Upper, HTF_SMAE1_Lower': 'HTF SMAE1 envelope upper and lower bands.',
+  'HTF_SMAE2_Upper, HTF_SMAE2_Lower': 'HTF SMAE2 envelope upper and lower bands.',
+
+  // HTF State & Structure
+  'HTF_State': 'HTF MA alignment state (-3 to +3).',
+  'HTF_prState': 'Prior HTF bar State value.',
+  'HTF_fromState': 'HTF state of the previous run.',
+  'HTF_stateBarCount': 'Number of HTF bars since the current HTF State began.',
+
+  // HTF Consecutive Bars
+  'HTF_Con_UP_bars': 'HTF consecutive UP direction bars.',
+  'HTF_Con_DN_bars': 'HTF consecutive DOWN direction bars.',
+  'HTF_Con_UP_bars(state)': 'HTF consecutive UP bars within the same HTF State.',
+  'HTF_Con_DN_bars(state)': 'HTF consecutive DOWN bars within the same HTF State.',
+  'HTF_priorRunCount': 'HTF prior run count within an HTF state run.',
+
+  // HTF Drawdown / Wick
+  'HTF_DD': 'HTF drawdown from entry in raw price.',
+  'HTF_DD_RR': 'HTF drawdown normalized by HTF reversal size.',
+  'HTF_DD_ADR': 'HTF drawdown normalized by ADR.',
+
+  // HTF Duration
+  'HTF_barDuration': 'Time in minutes for the HTF bar to complete.',
+  'HTF_stateDuration': 'Number of HTF bars since the last HTF State change.',
 };
 
 export function ColumnItem({ label, desc }) {

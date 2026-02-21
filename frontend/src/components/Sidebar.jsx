@@ -739,7 +739,7 @@ function Sidebar({
                       disabled={dataFormat === 'MT4'}
                       title={dataFormat === 'MT4' ? 'MT4 only supports minute data' : 'Minute data (M1)'}
                     >
-                      Minute
+                      Time
                     </button>
                     <button
                       className={`toggle-option ${intervalType === 'T' ? 'active' : ''}`}
@@ -1672,6 +1672,7 @@ function Sidebar({
                 <ul>
                   <ColumnItem label="currentADR" desc={COLUMN_DESCRIPTIONS['currentADR']} />
                   <ColumnItem label="chop(rolling)" desc={COLUMN_DESCRIPTIONS['chop(rolling)']} />
+                  <ColumnItem label="HTF_chop(rolling)" desc={COLUMN_DESCRIPTIONS['HTF_chop(rolling)']} />
                 </ul>
 
                 <h5>Signals</h5>
@@ -1685,6 +1686,9 @@ function Sidebar({
                   <ColumnItem label="open, high, low, close, direction" desc={COLUMN_DESCRIPTIONS['open, high, low, close, direction']} />
                   <ColumnItem label="open1, high1, low1, close1, direction1" desc={COLUMN_DESCRIPTIONS['open1, high1, low1, close1, direction1']} />
                   <ColumnItem label="open2, high2, low2, close2, direction2" desc={COLUMN_DESCRIPTIONS['open2, high2, low2, close2, direction2']} />
+                  <ColumnItem label="HTF_open, HTF_high, HTF_low, HTF_close, HTF_direction" desc={COLUMN_DESCRIPTIONS['HTF_open, HTF_high, HTF_low, HTF_close, HTF_direction']} />
+                  <ColumnItem label="HTF_open1, HTF_high1, HTF_low1, HTF_close1, HTF_direction1" desc={COLUMN_DESCRIPTIONS['HTF_open1, HTF_high1, HTF_low1, HTF_close1, HTF_direction1']} />
+                  <ColumnItem label="HTF_open2, HTF_high2, HTF_low2, HTF_close2, HTF_direction2" desc={COLUMN_DESCRIPTIONS['HTF_open2, HTF_high2, HTF_low2, HTF_close2, HTF_direction2']} />
                 </ul>
 
                 <h5>DateTimes</h5>
@@ -1700,12 +1704,20 @@ function Sidebar({
                   <ColumnItem label="MA1, MA2, MA3" desc={COLUMN_DESCRIPTIONS['MA1, MA2, MA3']} />
                   <ColumnItem label="MA1_1, MA2_1, MA3_1" desc={COLUMN_DESCRIPTIONS['MA1_1, MA2_1, MA3_1']} />
                   <ColumnItem label="MA1_2, MA2_2, MA3_2" desc={COLUMN_DESCRIPTIONS['MA1_2, MA2_2, MA3_2']} />
+                  <ColumnItem label="HTF_EMA_rawDistance(period)" desc={COLUMN_DESCRIPTIONS['HTF_EMA_rawDistance(period)']} />
+                  <ColumnItem label="HTF_EMA_adrDistance(period)" desc={COLUMN_DESCRIPTIONS['HTF_EMA_adrDistance(period)']} />
+                  <ColumnItem label="HTF_EMA_rrDistance(period)" desc={COLUMN_DESCRIPTIONS['HTF_EMA_rrDistance(period)']} />
+                  <ColumnItem label="HTF_MA1, HTF_MA2, HTF_MA3" desc={COLUMN_DESCRIPTIONS['HTF_MA1, HTF_MA2, HTF_MA3']} />
+                  <ColumnItem label="HTF_MA1_1, HTF_MA2_1, HTF_MA3_1" desc={COLUMN_DESCRIPTIONS['HTF_MA1_1, HTF_MA2_1, HTF_MA3_1']} />
+                  <ColumnItem label="HTF_MA1_2, HTF_MA2_2, HTF_MA3_2" desc={COLUMN_DESCRIPTIONS['HTF_MA1_2, HTF_MA2_2, HTF_MA3_2']} />
                 </ul>
 
                 <h5>SMAE Channel</h5>
                 <ul>
                   <ColumnItem label="SMAE1_Upper, SMAE1_Lower" desc={COLUMN_DESCRIPTIONS['SMAE1_Upper, SMAE1_Lower']} />
                   <ColumnItem label="SMAE2_Upper, SMAE2_Lower" desc={COLUMN_DESCRIPTIONS['SMAE2_Upper, SMAE2_Lower']} />
+                  <ColumnItem label="HTF_SMAE1_Upper, HTF_SMAE1_Lower" desc={COLUMN_DESCRIPTIONS['HTF_SMAE1_Upper, HTF_SMAE1_Lower']} />
+                  <ColumnItem label="HTF_SMAE2_Upper, HTF_SMAE2_Lower" desc={COLUMN_DESCRIPTIONS['HTF_SMAE2_Upper, HTF_SMAE2_Lower']} />
                 </ul>
 
                 <h5>PWAP</h5>
@@ -1725,6 +1737,10 @@ function Sidebar({
                   <ColumnItem label="prState" desc={COLUMN_DESCRIPTIONS['prState']} />
                   <ColumnItem label="fromState" desc={COLUMN_DESCRIPTIONS['fromState']} />
                   <ColumnItem label="stateBarCount" desc={COLUMN_DESCRIPTIONS['stateBarCount']} />
+                  <ColumnItem label="HTF_State" desc={COLUMN_DESCRIPTIONS['HTF_State']} />
+                  <ColumnItem label="HTF_prState" desc={COLUMN_DESCRIPTIONS['HTF_prState']} />
+                  <ColumnItem label="HTF_fromState" desc={COLUMN_DESCRIPTIONS['HTF_fromState']} />
+                  <ColumnItem label="HTF_stateBarCount" desc={COLUMN_DESCRIPTIONS['HTF_stateBarCount']} />
                 </ul>
 
                 <h5>Consecutive Bars</h5>
@@ -1734,6 +1750,11 @@ function Sidebar({
                   <ColumnItem label="Con_UP_bars(state)" desc={COLUMN_DESCRIPTIONS['Con_UP_bars(state)']} />
                   <ColumnItem label="Con_DN_bars(state)" desc={COLUMN_DESCRIPTIONS['Con_DN_bars(state)']} />
                   <ColumnItem label="priorRunCount" desc={COLUMN_DESCRIPTIONS['priorRunCount']} />
+                  <ColumnItem label="HTF_Con_UP_bars" desc={COLUMN_DESCRIPTIONS['HTF_Con_UP_bars']} />
+                  <ColumnItem label="HTF_Con_DN_bars" desc={COLUMN_DESCRIPTIONS['HTF_Con_DN_bars']} />
+                  <ColumnItem label="HTF_Con_UP_bars(state)" desc={COLUMN_DESCRIPTIONS['HTF_Con_UP_bars(state)']} />
+                  <ColumnItem label="HTF_Con_DN_bars(state)" desc={COLUMN_DESCRIPTIONS['HTF_Con_DN_bars(state)']} />
+                  <ColumnItem label="HTF_priorRunCount" desc={COLUMN_DESCRIPTIONS['HTF_priorRunCount']} />
                 </ul>
 
                 <h5>Drawdown/Wick</h5>
@@ -1741,12 +1762,17 @@ function Sidebar({
                   <ColumnItem label="DD" desc={COLUMN_DESCRIPTIONS['DD']} />
                   <ColumnItem label="DD_RR" desc={COLUMN_DESCRIPTIONS['DD_RR']} />
                   <ColumnItem label="DD_ADR" desc={COLUMN_DESCRIPTIONS['DD_ADR']} />
+                  <ColumnItem label="HTF_DD" desc={COLUMN_DESCRIPTIONS['HTF_DD']} />
+                  <ColumnItem label="HTF_DD_RR" desc={COLUMN_DESCRIPTIONS['HTF_DD_RR']} />
+                  <ColumnItem label="HTF_DD_ADR" desc={COLUMN_DESCRIPTIONS['HTF_DD_ADR']} />
                 </ul>
 
                 <h5>Duration</h5>
                 <ul>
                   <ColumnItem label="barDuration" desc={COLUMN_DESCRIPTIONS['barDuration']} />
                   <ColumnItem label="stateDuration" desc={COLUMN_DESCRIPTIONS['stateDuration']} />
+                  <ColumnItem label="HTF_barDuration" desc={COLUMN_DESCRIPTIONS['HTF_barDuration']} />
+                  <ColumnItem label="HTF_stateDuration" desc={COLUMN_DESCRIPTIONS['HTF_stateDuration']} />
                 </ul>
 
                 <h5>MFE / Outcome Metrics</h5>

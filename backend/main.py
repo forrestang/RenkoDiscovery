@@ -1866,6 +1866,43 @@ def merge_htf_columns_to_ltf(ltf_df, htf_stats_df, alignment):
     return ltf_df
 
 
+def generate_htf_lookback_columns(df):
+    """Generate HTF lookback columns (1 and 2 bars back) using HTF_bar_index deduplication.
+
+    HTF columns are forward-filled onto LTF rows, so shift(1) on the raw column
+    gives the same HTF bar value. We deduplicate by HTF_bar_index, shift on the
+    HTF-level frame, then map back by HTF_bar_index.
+    """
+    if 'HTF_bar_index' not in df.columns:
+        return df
+
+    valid_mask = df['HTF_bar_index'] >= 0
+    htf_dedup = (
+        df[valid_mask]
+        .drop_duplicates(subset='HTF_bar_index')
+        .sort_values('HTF_bar_index')
+        .set_index('HTF_bar_index')
+    )
+
+    for shift_n in [1, 2]:
+        # OHLC + direction: HTF_open1, HTF_open2, etc.
+        for suffix in ['open', 'high', 'low', 'close', 'direction']:
+            src_col = f'HTF_{suffix}'
+            if src_col in htf_dedup.columns:
+                dest_col = f'{src_col}{shift_n}'
+                mapping = htf_dedup[src_col].shift(shift_n).to_dict()
+                df[dest_col] = df['HTF_bar_index'].map(mapping)
+
+        # MA: HTF_MA1_1, HTF_MA1_2, etc.
+        for ma in ['HTF_MA1', 'HTF_MA2', 'HTF_MA3']:
+            if ma in htf_dedup.columns:
+                dest_col = f'{ma}_{shift_n}'
+                mapping = htf_dedup[ma].shift(shift_n).to_dict()
+                df[dest_col] = df['HTF_bar_index'].map(mapping)
+
+    return df
+
+
 def trim_parquet_data(df):
     """Single trim: remove leading/trailing rows where warmup or forward-scan columns are NaN.
     Handles both LTF columns and HTF columns (if present after merge)."""
@@ -3828,6 +3865,8 @@ def playground_signals(request: PlaygroundRequest):
         df['HTF_MA2'] = df['HTF_EMA2_Price']
         df['HTF_MA3'] = df['HTF_EMA3_Price']
 
+    df = generate_htf_lookback_columns(df)
+
     # Build extra_metric_cols (same mapping as parquet-stats)
     ma_periods = [ma1_period, ma2_period, ma3_period]
 
@@ -3989,6 +4028,8 @@ def backtest_signals(request: BacktestRequest):
         df['HTF_MA1'] = df['HTF_EMA1_Price']
         df['HTF_MA2'] = df['HTF_EMA2_Price']
         df['HTF_MA3'] = df['HTF_EMA3_Price']
+
+    df = generate_htf_lookback_columns(df)
 
     # Pre-compute arrays for fast scanning
     close_arr = df['close'].values.astype(float)
@@ -4453,6 +4494,14 @@ def train_ml_model(req: MLTrainRequest):
         for ma in ['MA1', 'MA2', 'MA3']:
             df[f'{ma}_1'] = df[ma].shift(1)
             df[f'{ma}_2'] = df[ma].shift(2)
+
+        # HTF aliases (if HTF columns exist in parquet)
+        if 'HTF_EMA1_Price' in df.columns:
+            df['HTF_MA1'] = df['HTF_EMA1_Price']
+            df['HTF_MA2'] = df['HTF_EMA2_Price']
+            df['HTF_MA3'] = df['HTF_EMA3_Price']
+
+        df = generate_htf_lookback_columns(df)
 
         # Apply filter expression
         if req.filter_expr and req.filter_expr.strip():
