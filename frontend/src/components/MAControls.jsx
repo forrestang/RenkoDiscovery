@@ -179,7 +179,7 @@ function SMAERow({ label, smae, onChange }) {
   )
 }
 
-function MAControls({ settings, onChange, smaeSettings, onSmaeChange, pwapSettings, onPwapChange }) {
+function MAControls({ settings, onChange, smaeSettings, onSmaeChange, pwapSettings, onPwapChange, htfMaSettings, onHTFMAChange, htfSmaeSettings, onHTFSmaeChange }) {
   const [isOpen, setIsOpen] = useState(false)
 
   const handleMAChange = (key, value) => {
@@ -194,10 +194,20 @@ function MAControls({ settings, onChange, smaeSettings, onSmaeChange, pwapSettin
     onPwapChange({ ...pwapSettings, ...updates })
   }
 
+  const handleHTFMAChange = (key, value) => {
+    onHTFMAChange({ ...htfMaSettings, [key]: value })
+  }
+
+  const handleHTFSmaeChange = (key, value) => {
+    onHTFSmaeChange({ ...htfSmaeSettings, [key]: value })
+  }
+
   const enabledCount =
     [settings.ma1, settings.ma2, settings.ma3].filter((m) => m.enabled).length +
     [smaeSettings?.smae1, smaeSettings?.smae2].filter((s) => s?.enabled).length +
-    (pwapSettings?.enabled ? 1 : 0)
+    (pwapSettings?.enabled ? 1 : 0) +
+    (htfMaSettings ? [htfMaSettings.ma1, htfMaSettings.ma2, htfMaSettings.ma3].filter((m) => m.enabled).length : 0) +
+    (htfSmaeSettings ? [htfSmaeSettings.smae1, htfSmaeSettings.smae2].filter((s) => s?.enabled).length : 0)
 
   return (
     <div className="ma-controls-wrapper">
@@ -391,6 +401,65 @@ function MAControls({ settings, onChange, smaeSettings, onSmaeChange, pwapSettin
                   </select>
                 </div>
               </div>
+            )}
+            {/* HTF Section */}
+            {htfMaSettings && (
+              <>
+                <div className="ma-section-divider" />
+                <div className="ma-section-label">HTF Moving Averages</div>
+                <div className="ma-header-row">
+                  <span></span>
+                  <span>Type</span>
+                  <span>Period</span>
+                  <span>Color</span>
+                  <span>Width</span>
+                  <span>Style</span>
+                </div>
+
+                <MARow
+                  label="MA1"
+                  ma={htfMaSettings.ma1}
+                  onChange={(v) => handleHTFMAChange('ma1', v)}
+                />
+                <MARow
+                  label="MA2"
+                  ma={htfMaSettings.ma2}
+                  onChange={(v) => handleHTFMAChange('ma2', v)}
+                />
+                <MARow
+                  label="MA3"
+                  ma={htfMaSettings.ma3}
+                  onChange={(v) => handleHTFMAChange('ma3', v)}
+                />
+              </>
+            )}
+
+            {htfSmaeSettings && (
+              <>
+                <div className="ma-section-divider" />
+                <div className="ma-section-label">HTF MA Envelope</div>
+                <div className="ma-header-row ma-smae-header">
+                  <span></span>
+                  <span>Period</span>
+                  <span>Dev%</span>
+                  <span></span>
+                  <span>Ctr</span>
+                  <span>Band</span>
+                  <span>Width</span>
+                  <span>Style</span>
+                </div>
+
+                <SMAERow
+                  label="ENV1"
+                  smae={htfSmaeSettings.smae1}
+                  onChange={(v) => handleHTFSmaeChange('smae1', v)}
+                />
+                <SMAERow
+                  label="ENV2"
+                  smae={htfSmaeSettings.smae2}
+                  onChange={(v) => handleHTFSmaeChange('smae2', v)}
+                />
+              </>
             )}
           </div>
         </div>

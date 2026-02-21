@@ -743,7 +743,7 @@ function hexToRgba(hex, alpha) {
 
 const STORAGE_PREFIX = 'RenkoDiscovery_'
 
-function ChartArea({ chartData, renkoData = null, htfRenkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, smaeSettings = null, pwapSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002, renkoPerBrickSizes = null, renkoPerReversalSizes = null, sessionSchedule = null, chartColors = null }) {
+function ChartArea({ chartData, renkoData = null, htfRenkoData = null, chartType = 'raw', isLoading, activeInstrument, pricePrecision = 5, maSettings = null, smaeSettings = null, pwapSettings = null, compressionFactor = 1.0, showIndicatorPane = false, brickSize = 0.001, reversalSize = 0.002, renkoPerBrickSizes = null, renkoPerReversalSizes = null, sessionSchedule = null, chartColors = null, htfMaSettings = null, htfSmaeSettings = null }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const indicatorPaneHeightRef = useRef(
@@ -764,6 +764,17 @@ function ChartArea({ chartData, renkoData = null, htfRenkoData = null, chartType
   const smae2CenterRef = useRef(null)
   const smae2UpperRef = useRef(null)
   const smae2LowerRef = useRef(null)
+  // HTF MA refs
+  const htfMa1SeriesRef = useRef(null)
+  const htfMa2SeriesRef = useRef(null)
+  const htfMa3SeriesRef = useRef(null)
+  // HTF SMAE refs
+  const htfSmae1CenterRef = useRef(null)
+  const htfSmae1UpperRef = useRef(null)
+  const htfSmae1LowerRef = useRef(null)
+  const htfSmae2CenterRef = useRef(null)
+  const htfSmae2UpperRef = useRef(null)
+  const htfSmae2LowerRef = useRef(null)
   // PWAP refs: mean + up to 4 upper + 4 lower bands
   const pwapMeanRef = useRef(null)
   const pwapBandRefs = useRef([null, null, null, null, null, null, null, null])
@@ -1050,6 +1061,15 @@ function ChartArea({ chartData, renkoData = null, htfRenkoData = null, chartType
       smae2CenterRef.current = null
       smae2UpperRef.current = null
       smae2LowerRef.current = null
+      htfMa1SeriesRef.current = null
+      htfMa2SeriesRef.current = null
+      htfMa3SeriesRef.current = null
+      htfSmae1CenterRef.current = null
+      htfSmae1UpperRef.current = null
+      htfSmae1LowerRef.current = null
+      htfSmae2CenterRef.current = null
+      htfSmae2UpperRef.current = null
+      htfSmae2LowerRef.current = null
       pwapMeanRef.current = null
       pwapBandRefs.current = [null, null, null, null, null, null, null, null]
       indicatorStateSeriesRef.current = null
@@ -1649,6 +1669,127 @@ function ChartArea({ chartData, renkoData = null, htfRenkoData = null, chartType
       pwapBandRefs.current[lowerIdx].setData(buildLineData(lowerValues))
     }
   }, [chartData, renkoData, chartType, pwapSettings, sessionSchedule])
+
+  // HTF MA and SMAE series (O2 mode only)
+  useEffect(() => {
+    if (!chartRef.current || !seriesRef.current) return
+
+    const chart = chartRef.current
+
+    // Build LTF-to-HTF brick mapping (same logic as HTF overlay useEffect)
+    let htfBrickMap = null  // array of { ltfEnd } per HTF brick index
+    if (chartType === 'o2' && htfRenkoData && chartData?.data) {
+      const { tick_index_open: htfTickOpen, tick_index_close: htfTickClose } = htfRenkoData
+      const ltfTickClose = chartData.data.tick_index_close
+      if (htfTickOpen && htfTickClose && ltfTickClose) {
+        htfBrickMap = []
+        let searchStart = 0
+        for (let i = 0; i < htfTickClose.length; i++) {
+          const htfTClose = htfTickClose[i]
+          let ltfEnd = searchStart
+          for (let j = searchStart; j < ltfTickClose.length; j++) {
+            if (ltfTickClose[j] <= htfTClose) {
+              ltfEnd = j
+            } else {
+              break
+            }
+          }
+          htfBrickMap.push({ ltfEnd })
+          searchStart = ltfEnd + 1
+        }
+      }
+    }
+
+    // Helper to create/update/remove a line series
+    const updateHTFLineSeries = (ref, enabled, values, color, lineWidth, lineStyle) => {
+      if (!enabled || chartType !== 'o2' || !htfBrickMap) {
+        if (ref.current) {
+          chart.removeSeries(ref.current)
+          ref.current = null
+        }
+        return
+      }
+      if (!ref.current) {
+        ref.current = chart.addSeries(LineSeries, {
+          color, lineWidth, lineStyle,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: null }),
+        })
+      } else {
+        ref.current.applyOptions({ color, lineWidth, lineStyle })
+      }
+      // Map HTF values to LTF bar indices
+      const data = values
+        .map((value, i) => {
+          if (value === null || !htfBrickMap[i]) return null
+          return { time: htfBrickMap[i].ltfEnd, value }
+        })
+        .filter(d => d !== null)
+      ref.current.setData(data)
+    }
+
+    // HTF MAs
+    if (htfMaSettings && htfRenkoData?.close) {
+      const htfClose = htfRenkoData.close
+
+      const updateHTFMA = (ref, maConfig) => {
+        if (!maConfig.enabled || chartType !== 'o2' || !htfBrickMap) {
+          if (ref.current) {
+            chart.removeSeries(ref.current)
+            ref.current = null
+          }
+          return
+        }
+        const maValues = maConfig.type === 'ema'
+          ? calculateEMA(htfClose, maConfig.period)
+          : calculateSMA(htfClose, maConfig.period)
+        updateHTFLineSeries(ref, true, maValues, maConfig.color, maConfig.lineWidth, maConfig.lineStyle)
+      }
+
+      updateHTFMA(htfMa1SeriesRef, htfMaSettings.ma1)
+      updateHTFMA(htfMa2SeriesRef, htfMaSettings.ma2)
+      updateHTFMA(htfMa3SeriesRef, htfMaSettings.ma3)
+    } else {
+      // Clean up if no HTF data
+      for (const ref of [htfMa1SeriesRef, htfMa2SeriesRef, htfMa3SeriesRef]) {
+        if (ref.current) {
+          chart.removeSeries(ref.current)
+          ref.current = null
+        }
+      }
+    }
+
+    // HTF SMAEs
+    if (htfSmaeSettings && htfRenkoData?.close) {
+      const htfClose = htfRenkoData.close
+
+      const updateHTFSmae = (centerRef, upperRef, lowerRef, smaeConfig) => {
+        if (!smaeConfig.enabled || chartType !== 'o2' || !htfBrickMap) {
+          for (const ref of [centerRef, upperRef, lowerRef]) {
+            if (ref.current) {
+              chart.removeSeries(ref.current)
+              ref.current = null
+            }
+          }
+          return
+        }
+        const { center, upper, lower } = calculateSMAE(htfClose, smaeConfig.period, smaeConfig.deviation)
+        updateHTFLineSeries(centerRef, smaeConfig.showCenter, center, smaeConfig.centerColor, smaeConfig.lineWidth, smaeConfig.lineStyle)
+        updateHTFLineSeries(upperRef, true, upper, smaeConfig.bandColor, smaeConfig.bandLineWidth || 1, smaeConfig.bandLineStyle)
+        updateHTFLineSeries(lowerRef, true, lower, smaeConfig.bandColor, smaeConfig.bandLineWidth || 1, smaeConfig.bandLineStyle)
+      }
+
+      updateHTFSmae(htfSmae1CenterRef, htfSmae1UpperRef, htfSmae1LowerRef, htfSmaeSettings.smae1)
+      updateHTFSmae(htfSmae2CenterRef, htfSmae2UpperRef, htfSmae2LowerRef, htfSmaeSettings.smae2)
+    } else {
+      for (const ref of [htfSmae1CenterRef, htfSmae1UpperRef, htfSmae1LowerRef, htfSmae2CenterRef, htfSmae2UpperRef, htfSmae2LowerRef]) {
+        if (ref.current) {
+          chart.removeSeries(ref.current)
+          ref.current = null
+        }
+      }
+    }
+  }, [htfRenkoData, chartData, chartType, htfMaSettings, htfSmaeSettings])
 
   // State & Type Indicator Pane (Renko mode only)
   useEffect(() => {

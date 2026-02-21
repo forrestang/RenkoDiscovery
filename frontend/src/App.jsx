@@ -155,6 +155,27 @@ function App() {
                lineWidth: 1, lineStyle: 0, bandLineWidth: 1, bandLineStyle: 1 },
     }
   })
+  const [htfMaSettings, setHTFMASettings] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}htfMaSettings`)
+    if (saved) return JSON.parse(saved)
+    return {
+      ma1: { enabled: false, type: 'sma', period: 20, color: '#34d399', lineWidth: 2, lineStyle: 0 },
+      ma2: { enabled: false, type: 'sma', period: 50, color: '#60a5fa', lineWidth: 2, lineStyle: 0 },
+      ma3: { enabled: false, type: 'sma', period: 200, color: '#c084fc', lineWidth: 2, lineStyle: 0 }
+    }
+  })
+  const [htfSmaeSettings, setHTFSmaeSettings] = useState(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}htfSmaeSettings`)
+    if (saved) return JSON.parse(saved)
+    return {
+      smae1: { enabled: false, period: 20, deviation: 1.0, showCenter: true,
+               centerColor: '#67e8f9', bandColor: '#67e8f9',
+               lineWidth: 1, lineStyle: 0, bandLineWidth: 1, bandLineStyle: 1 },
+      smae2: { enabled: false, period: 50, deviation: 1.0, showCenter: true,
+               centerColor: '#fdba74', bandColor: '#fdba74',
+               lineWidth: 1, lineStyle: 0, bandLineWidth: 1, bandLineStyle: 1 },
+    }
+  })
   const [pwapSettings, setPwapSettings] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}pwapSettings`)
     if (saved) return JSON.parse(saved)
@@ -262,6 +283,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}smaeSettings`, JSON.stringify(smaeSettings))
   }, [smaeSettings])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}htfMaSettings`, JSON.stringify(htfMaSettings))
+  }, [htfMaSettings])
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}htfSmaeSettings`, JSON.stringify(htfSmaeSettings))
+  }, [htfSmaeSettings])
 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}pwapSettings`, JSON.stringify(pwapSettings))
@@ -719,6 +748,13 @@ function App() {
             htf_brick_size: renkoSettings.htfBrickSize,
             htf_reversal_multiplier: renkoSettings.htfReversalMultiplier || 2.0,
             htf_renko_data: renkoData.htf_data,
+            htf_ma1_period: htfMaSettings.ma1.period,
+            htf_ma2_period: htfMaSettings.ma2.period,
+            htf_ma3_period: htfMaSettings.ma3.period,
+            htf_smae1_period: htfSmaeSettings.smae1.period,
+            htf_smae1_deviation: htfSmaeSettings.smae1.deviation,
+            htf_smae2_period: htfSmaeSettings.smae2.period,
+            htf_smae2_deviation: htfSmaeSettings.smae2.deviation,
           } : {})
         })
       })
@@ -1043,7 +1079,7 @@ function App() {
             </button>
           )}
           {(activeInstrument || pendingInstrument) && (
-            <MAControls settings={maSettings} onChange={setMASettings} smaeSettings={smaeSettings} onSmaeChange={setSmaeSettings} pwapSettings={pwapSettings} onPwapChange={setPwapSettings} />
+            <MAControls settings={maSettings} onChange={setMASettings} smaeSettings={smaeSettings} onSmaeChange={setSmaeSettings} pwapSettings={pwapSettings} onPwapChange={setPwapSettings} htfMaSettings={htfMaSettings} onHTFMAChange={setHTFMASettings} htfSmaeSettings={htfSmaeSettings} onHTFSmaeChange={setHTFSmaeSettings} />
           )}
           {(activeInstrument || pendingInstrument) && (
             <select
@@ -1273,6 +1309,8 @@ function App() {
               renkoPerReversalSizes={renkoData?.data?.reversal_size}
               sessionSchedule={sessionSchedule}
               chartColors={chartColors}
+              htfMaSettings={htfMaSettings}
+              htfSmaeSettings={htfSmaeSettings}
             />
           ) : null}
           <div style={{ display: activeTab === 'stats' && statsView !== 'parquet' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>

@@ -115,6 +115,13 @@ class StatsRequest(BaseModel):
     htf_brick_size: Optional[float] = None  # Higher TF brick size (e.g. 0.0100)
     htf_reversal_multiplier: float = 2.0  # Reversal multiplier for HTF
     htf_renko_data: Optional[dict] = None  # HTF renko data (datetime, OHLC, tick indices)
+    htf_ma1_period: int = 20
+    htf_ma2_period: int = 50
+    htf_ma3_period: int = 200
+    htf_smae1_period: int = 20
+    htf_smae1_deviation: float = 1.0
+    htf_smae2_period: int = 50
+    htf_smae2_deviation: float = 1.0
 
 
 class MLTrainRequest(BaseModel):
@@ -1796,48 +1803,51 @@ def merge_htf_columns_to_ltf(ltf_df, htf_stats_df, alignment):
     htf_ltf_open = alignment['htf_ltf_open']
     htf_ltf_close = alignment['htf_ltf_close']
 
-    # Core HTF columns to forward-fill
-    core_cols = ['open', 'high', 'low', 'close', 'direction', 'brick_size', 'reversal_size']
+    # Columns to exclude from HTF merge (config/internal, PWAP, ADR, time components)
+    exclude_cols = {
+        'datetime', 'adr_period', 'wick_mode', 'chopPeriod', 'currentADR',
+        'tick_index_open', 'tick_index_close', 'pwap_sigmas',
+        'Year', 'Month', 'Day', 'Hour', 'Minute',
+        'Type1', 'Type2',
+    }
+    exclude_prefixes = ('PWAP_',)
 
-    # Stats columns to forward-fill (if they exist in htf_stats_df)
-    stats_cols = [
-        'State', 'prState', 'fromState', 'Type1', 'Type2',
-        'EMA1_Price', 'EMA2_Price', 'EMA3_Price',
-        'currentADR', 'session_date',
-        'Con_UP_bars', 'Con_DN_bars', 'Con_UP_bars(state)', 'Con_DN_bars(state)',
-        'stateBarCount', 'stateDuration', 'barDuration',
-        'chop(rolling)',
-        'MFE_clr_Bars', 'MFE_clr_price', 'MFE_clr_ADR', 'MFE_clr_RR',
-        'REAL_clr_ADR', 'REAL_clr_RR',
-        'DD', 'DD_RR', 'DD_ADR', 'WickError',
-        'EMA_rawDistance(20)', 'EMA_adrDistance(20)', 'EMA_rrDistance(20)',
-        'EMA_rawDistance(50)', 'EMA_adrDistance(50)', 'EMA_rrDistance(50)',
-        'EMA_rawDistance(200)', 'EMA_adrDistance(200)', 'EMA_rrDistance(200)',
+    all_cols = [
+        c for c in htf_stats_df.columns
+        if c not in exclude_cols and not any(c.startswith(p) for p in exclude_prefixes)
     ]
-
-    all_cols = core_cols + [c for c in stats_cols if c in htf_stats_df.columns]
     n_ltf = len(ltf_df)
     valid_mask = htf_bar_idx >= 0
 
+    # Build all HTF columns in a dict first, then concat once (avoids fragmentation)
+    htf_col_dict = {}
     for col in all_cols:
-        if col not in htf_stats_df.columns:
-            continue
         htf_values = htf_stats_df[col].values
-        ltf_col = np.empty(n_ltf, dtype=htf_values.dtype)
-        ltf_col[:] = np.nan if np.issubdtype(htf_values.dtype, np.floating) else 0
+        if np.issubdtype(htf_values.dtype, np.floating):
+            ltf_col = np.full(n_ltf, np.nan, dtype=htf_values.dtype)
+        elif htf_values.dtype == object:
+            ltf_col = np.empty(n_ltf, dtype=object)
+            ltf_col[:] = None
+        else:
+            ltf_col = np.zeros(n_ltf, dtype=htf_values.dtype)
         ltf_col[valid_mask] = htf_values[htf_bar_idx[valid_mask]]
-        ltf_df[f'HTF_{col}'] = ltf_col
+        htf_col_dict[f'HTF_{col}'] = ltf_col
 
-    # Add alignment indices for frontend rendering
-    ltf_df['HTF_bar_index'] = htf_bar_idx
-    # Store LTF index ranges per HTF bar as arrays (for the frontend overlay)
-    ltf_df['HTF_ltf_bar_index_open'] = np.nan
-    ltf_df['HTF_ltf_bar_index_close'] = np.nan
+    # Add alignment indices
+    htf_col_dict['HTF_bar_index'] = htf_bar_idx
+    ltf_open_col = np.full(n_ltf, np.nan)
+    ltf_close_col = np.full(n_ltf, np.nan)
     for h_idx in range(len(htf_ltf_open)):
         mask = htf_bar_idx == h_idx
         if mask.any():
-            ltf_df.loc[mask, 'HTF_ltf_bar_index_open'] = int(htf_ltf_open[h_idx])
-            ltf_df.loc[mask, 'HTF_ltf_bar_index_close'] = int(htf_ltf_close[h_idx])
+            ltf_open_col[mask] = int(htf_ltf_open[h_idx])
+            ltf_close_col[mask] = int(htf_ltf_close[h_idx])
+    htf_col_dict['HTF_ltf_bar_index_open'] = ltf_open_col
+    htf_col_dict['HTF_ltf_bar_index_close'] = ltf_close_col
+
+    # Concat all HTF columns at once
+    htf_frame = pd.DataFrame(htf_col_dict, index=ltf_df.index)
+    ltf_df = pd.concat([ltf_df, htf_frame], axis=1)
 
     return ltf_df
 
@@ -2254,6 +2264,11 @@ async def generate_stats(instrument: str, request: StatsRequest):
     df['smae2_deviation'] = request.smae2_deviation
     df['pwap_sigmas'] = json.dumps(request.pwap_sigmas)
 
+    # Add tick indices before compute so they survive trimming
+    if 'tick_index_open' in renko_data:
+        df['tick_index_open'] = renko_data['tick_index_open'][:len(df)]
+        df['tick_index_close'] = renko_data['tick_index_close'][:len(df)]
+
     # Compute all stats columns using shared helper
     cache_dir = base_dir / "cache"
     feather_path = cache_dir / f"{instrument}.feather"
@@ -2292,28 +2307,27 @@ async def generate_stats(instrument: str, request: StatsRequest):
             htf_df['brick_size'] = request.htf_brick_size
             htf_df['reversal_size'] = request.htf_brick_size * request.htf_reversal_multiplier
         htf_df['wick_mode'] = request.wick_mode
-        htf_df['ma1_period'] = request.ma1_period
-        htf_df['ma2_period'] = request.ma2_period
-        htf_df['ma3_period'] = request.ma3_period
+        htf_df['ma1_period'] = request.htf_ma1_period
+        htf_df['ma2_period'] = request.htf_ma2_period
+        htf_df['ma3_period'] = request.htf_ma3_period
         htf_df['chopPeriod'] = request.chop_period
+        htf_df['smae1_period'] = request.htf_smae1_period
+        htf_df['smae1_deviation'] = request.htf_smae1_deviation
+        htf_df['smae2_period'] = request.htf_smae2_period
+        htf_df['smae2_deviation'] = request.htf_smae2_deviation
 
         # Need tick_index columns for alignment
         if 'tick_index_open' in htf_renko:
             htf_df['tick_index_open'] = htf_renko['tick_index_open']
             htf_df['tick_index_close'] = htf_renko['tick_index_close']
 
-        # We also need tick_index on LTF for alignment
-        if 'tick_index_open' in renko_data:
-            df['tick_index_open'] = renko_data['tick_index_open'][:len(df)]
-            df['tick_index_close'] = renko_data['tick_index_close'][:len(df)]
-
-        # Compute HTF stats
+        # Compute HTF stats with independent MA/SMAE periods
         htf_stats = compute_stats_columns(
             htf_df, raw_df, session_sched,
-            request.adr_period, request.ma1_period, request.ma2_period,
-            request.ma3_period, request.chop_period,
-            request.smae1_period, request.smae1_deviation,
-            request.smae2_period, request.smae2_deviation,
+            request.adr_period, request.htf_ma1_period, request.htf_ma2_period,
+            request.htf_ma3_period, request.chop_period,
+            request.htf_smae1_period, request.htf_smae1_deviation,
+            request.htf_smae2_period, request.htf_smae2_deviation,
             request.pwap_sigmas
         )
 
@@ -2322,18 +2336,22 @@ async def generate_stats(instrument: str, request: StatsRequest):
             alignment = align_htf_to_ltf(df, htf_stats)
             df = merge_htf_columns_to_ltf(df, htf_stats, alignment)
 
-        # Clean up tick_index columns (not needed in parquet)
-        for c in ['tick_index_open', 'tick_index_close']:
-            if c in df.columns:
-                df.drop(columns=[c], inplace=True)
-
         htf_settings_meta = {
             'brick_size': request.htf_brick_size,
             'reversal_multiplier': request.htf_reversal_multiplier,
-            'ma1_period': request.ma1_period,
-            'ma2_period': request.ma2_period,
-            'ma3_period': request.ma3_period,
+            'ma1_period': request.htf_ma1_period,
+            'ma2_period': request.htf_ma2_period,
+            'ma3_period': request.htf_ma3_period,
+            'smae1_period': request.htf_smae1_period,
+            'smae1_deviation': request.htf_smae1_deviation,
+            'smae2_period': request.htf_smae2_period,
+            'smae2_deviation': request.htf_smae2_deviation,
         }
+
+    # Clean up tick_index columns (not needed in parquet)
+    for c in ['tick_index_open', 'tick_index_close']:
+        if c in df.columns:
+            df.drop(columns=[c], inplace=True)
 
     # Write to parquet with session_schedule and indicator params in metadata
     table = pa.Table.from_pandas(df, preserve_index=False)
