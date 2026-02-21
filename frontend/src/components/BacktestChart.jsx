@@ -324,7 +324,101 @@ class DayBoundaryGridRenderer {
   }
 }
 
-function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBar, lineWeight, lineStyle, markerSize, sessionBreaks, showEMA, showSMAE, showPWAP }) {
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+// Custom primitive for drawing HTF Renko brick overlays on backtest chart
+class HTFRenkoBricksPrimitive {
+  constructor() {
+    this._bricks = []
+    this._chart = null
+    this._series = null
+    this._colors = null
+  }
+  setBricks(bricks) { this._bricks = bricks || [] }
+  setColors(colors) { this._colors = colors || null }
+  attached(param) { this._chart = param.chart; this._series = param.series }
+  detached() { this._chart = null; this._series = null }
+  updateAllViews() {}
+  paneViews() { return [new HTFRenkoBricksPaneView(this)] }
+}
+
+class HTFRenkoBricksPaneView {
+  constructor(source) { this._source = source }
+  update() {}
+  renderer() { return new HTFRenkoBricksRenderer(this._source) }
+  zOrder() { return 'top' }
+}
+
+class HTFRenkoBricksRenderer {
+  constructor(source) { this._source = source }
+  draw(target) {
+    const bricks = this._source._bricks
+    const chart = this._source._chart
+    const series = this._source._series
+    if (!bricks.length || !chart || !series) return
+    const timeScale = chart.timeScale()
+    const bricksToDraw = []
+    for (const brick of bricks) {
+      const { ltfBarIndexOpen, ltfBarIndexClose, priceOpen, priceClose, priceHigh, priceLow, isUp } = brick
+      const x1 = timeScale.logicalToCoordinate(ltfBarIndexOpen)
+      const x2 = timeScale.logicalToCoordinate(ltfBarIndexClose)
+      if (x1 === null || x2 === null) continue
+      const bodyTop = series.priceToCoordinate(Math.max(priceOpen, priceClose))
+      const bodyBottom = series.priceToCoordinate(Math.min(priceOpen, priceClose))
+      const wickTop = priceHigh ? series.priceToCoordinate(priceHigh) : bodyTop
+      const wickBottom = priceLow ? series.priceToCoordinate(priceLow) : bodyBottom
+      if (bodyTop === null || bodyBottom === null) continue
+      bricksToDraw.push({ x1, x2, bodyTop, bodyBottom, wickTop, wickBottom, isUp })
+    }
+    if (!bricksToDraw.length) return
+    target.useBitmapCoordinateSpace(scope => {
+      const ctx = scope.context
+      const hRatio = scope.horizontalPixelRatio
+      const vRatio = scope.verticalPixelRatio
+      for (const { x1, x2, bodyTop, bodyBottom, wickTop, wickBottom, isUp } of bricksToDraw) {
+        const left = Math.round(Math.min(x1, x2) * hRatio)
+        const right = Math.round(Math.max(x1, x2) * hRatio)
+        const xCenter = Math.round((left + right) / 2)
+        const bTop = Math.round(Math.min(bodyTop, bodyBottom) * vRatio)
+        const bBottom = Math.round(Math.max(bodyTop, bodyBottom) * vRatio)
+        const wTop = Math.round(Math.min(wickTop, wickBottom) * vRatio)
+        const wBottom = Math.round(Math.max(wickTop, wickBottom) * vRatio)
+        const width = Math.max(right - left, 4)
+        const height = Math.max(bBottom - bTop, 2)
+        const colors = this._source._colors
+        const fillColor = colors
+          ? hexToRgba(isUp ? colors.upColor : colors.downColor, 0.18)
+          : (isUp ? 'rgba(59, 130, 246, 0.18)' : 'rgba(251, 146, 60, 0.18)')
+        const strokeColor = colors
+          ? hexToRgba(isUp ? colors.upColor : colors.downColor, 0.50)
+          : (isUp ? 'rgba(59, 130, 246, 0.50)' : 'rgba(251, 146, 60, 0.50)')
+        ctx.strokeStyle = strokeColor
+        ctx.lineWidth = 2 * hRatio
+        if (wTop < bTop) {
+          ctx.beginPath()
+          ctx.moveTo(xCenter, wTop)
+          ctx.lineTo(xCenter, bTop)
+          ctx.stroke()
+        }
+        if (wBottom > bBottom) {
+          ctx.beginPath()
+          ctx.moveTo(xCenter, bBottom)
+          ctx.lineTo(xCenter, wBottom)
+          ctx.stroke()
+        }
+        ctx.fillStyle = fillColor
+        ctx.fillRect(left, bTop, width, height)
+      }
+    })
+  }
+}
+
+function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBar, lineWeight, lineStyle, markerSize, sessionBreaks, indicatorSettings }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
@@ -401,79 +495,73 @@ function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBa
 
     chartRef.current = chart
 
-    // MA line series from parquet (added first so bars render on top)
-    if (showEMA !== false) {
-      const emaKeys = ['ema1Price', 'ema2Price', 'ema3Price']
-      for (let m = 0; m < 3; m++) {
-        const emaArr = barData[emaKeys[m]]
-        if (!emaArr) continue
-        const maData = []
-        for (let i = 0; i < len; i++) {
-          if (emaArr[i] != null) maData.push({ time: i, value: emaArr[i] })
-        }
-        if (maData.length === 0) continue
-        const maSeries = chart.addSeries(LineSeries, {
-          color: MA_COLORS[m],
-          lineWidth: 2,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-          autoscaleInfoProvider: () => ({ priceRange: null }),
-          priceFormat: {
-            type: 'price',
-            precision: pricePrecision,
-            minMove: Math.pow(10, -pricePrecision),
-          },
-        })
-        maSeries.setData(maData)
-        maSeriesRefs.current[m] = maSeries
+    // Helper: add a line series from array data
+    const addLineSeries = (arr, opts) => {
+      if (!arr) return null
+      const data = []
+      for (let i = 0; i < len; i++) {
+        if (arr[i] != null) data.push({ time: i, value: arr[i] })
       }
+      if (data.length === 0) return null
+      const priceFormat = { type: 'price', precision: pricePrecision, minMove: Math.pow(10, -pricePrecision) }
+      const s = chart.addSeries(LineSeries, {
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        autoscaleInfoProvider: () => ({ priceRange: null }), priceFormat,
+        ...opts,
+      })
+      s.setData(data)
+      return s
     }
 
-    // SMAE (ENV1/ENV2) overlay series
-    if (showSMAE) {
-      const envConfigs = [
-        { prefix: 'smae1', color: '#22d3ee' },  // ENV1 = cyan
-        { prefix: 'smae2', color: '#fb923c' },  // ENV2 = orange
-      ]
-      for (const { prefix, color } of envConfigs) {
-        const centerArr = barData[`${prefix}Center`]
-        if (!centerArr) continue
-        const upperArr = barData[`${prefix}Upper`]
-        const lowerArr = barData[`${prefix}Lower`]
-        const priceFormat = { type: 'price', precision: pricePrecision, minMove: Math.pow(10, -pricePrecision) }
-        const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => ({ priceRange: null }), priceFormat }
-        // Center line (solid)
-        const centerData = []
-        for (let i = 0; i < len; i++) if (centerArr[i] != null) centerData.push({ time: i, value: centerArr[i] })
-        if (centerData.length > 0) {
-          const s = chart.addSeries(LineSeries, { ...baseOpts, color, lineWidth: 1, lineStyle: 0 })
-          s.setData(centerData)
-        }
-        // Upper band (dashed)
-        if (upperArr) {
-          const d = []
-          for (let i = 0; i < len; i++) if (upperArr[i] != null) d.push({ time: i, value: upperArr[i] })
-          if (d.length > 0) {
-            const s = chart.addSeries(LineSeries, { ...baseOpts, color, lineWidth: 1, lineStyle: 2 })
-            s.setData(d)
-          }
-        }
-        // Lower band (dashed)
-        if (lowerArr) {
-          const d = []
-          for (let i = 0; i < len; i++) if (lowerArr[i] != null) d.push({ time: i, value: lowerArr[i] })
-          if (d.length > 0) {
-            const s = chart.addSeries(LineSeries, { ...baseOpts, color, lineWidth: 1, lineStyle: 2 })
-            s.setData(d)
-          }
-        }
+    // Helper: render SMAE (envelope) from settings
+    const renderSMAE = (prefix, settings) => {
+      if (!settings?.enabled) return
+      const centerArr = barData[`${prefix}Center`]
+      if (!centerArr) return
+      const upperArr = barData[`${prefix}Upper`]
+      const lowerArr = barData[`${prefix}Lower`]
+      if (settings.showCenter) {
+        addLineSeries(centerArr, { color: settings.centerColor, lineWidth: settings.lineWidth, lineStyle: 0 })
       }
+      addLineSeries(upperArr, { color: settings.bandColor, lineWidth: settings.lineWidth, lineStyle: settings.bandLineStyle })
+      addLineSeries(lowerArr, { color: settings.bandColor, lineWidth: settings.lineWidth, lineStyle: settings.bandLineStyle })
     }
+
+    // LTF EMA line series (added first so bars render on top)
+    const emaConfigs = [
+      { key: 'ema1Price', settings: indicatorSettings?.ema1 },
+      { key: 'ema2Price', settings: indicatorSettings?.ema2 },
+      { key: 'ema3Price', settings: indicatorSettings?.ema3 },
+    ]
+    for (let m = 0; m < 3; m++) {
+      const { key, settings: emaCfg } = emaConfigs[m]
+      if (!emaCfg?.enabled) continue
+      const s = addLineSeries(barData[key], { color: emaCfg.color, lineWidth: emaCfg.lineWidth, lineStyle: emaCfg.lineStyle })
+      if (s) maSeriesRefs.current[m] = s
+    }
+
+    // HTF EMA line series
+    const htfEmaConfigs = [
+      { key: 'htfEma1Price', settings: indicatorSettings?.htfEma1 },
+      { key: 'htfEma2Price', settings: indicatorSettings?.htfEma2 },
+      { key: 'htfEma3Price', settings: indicatorSettings?.htfEma3 },
+    ]
+    for (const { key, settings: emaCfg } of htfEmaConfigs) {
+      if (!emaCfg?.enabled) continue
+      addLineSeries(barData[key], { color: emaCfg.color, lineWidth: emaCfg.lineWidth, lineStyle: emaCfg.lineStyle })
+    }
+
+    // LTF SMAE (ENV1/ENV2) overlay series
+    renderSMAE('smae1', indicatorSettings?.smae1)
+    renderSMAE('smae2', indicatorSettings?.smae2)
+
+    // HTF SMAE overlay series
+    renderSMAE('htfSmae1', indicatorSettings?.htfSmae1)
+    renderSMAE('htfSmae2', indicatorSettings?.htfSmae2)
 
     // PWAP overlay series
-    if (showPWAP) {
-      const pwapColor = '#f472b6'
+    if (indicatorSettings?.pwap?.enabled) {
+      const pwap = indicatorSettings.pwap
       const priceFormat = { type: 'price', precision: pricePrecision, minMove: Math.pow(10, -pricePrecision) }
       const baseOpts = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => ({ priceRange: null }), priceFormat }
       const breaksSet = sessionBreaks ? new Set(sessionBreaks) : null
@@ -496,12 +584,16 @@ function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBa
           s.setData(seg)
         }
       }
-      // Mean line (solid, thicker)
-      addSegmented(barData.pwapMean, { ...baseOpts, color: pwapColor, lineWidth: 2, lineStyle: 0 })
-      // Upper/Lower bands (dashed)
-      for (let b = 1; b <= 4; b++) {
-        for (const side of ['Upper', 'Lower']) {
-          addSegmented(barData[`pwap${side}${b}`], { ...baseOpts, color: pwapColor, lineWidth: 1, lineStyle: 2 })
+      // Mean line
+      if (pwap.showMean !== false) {
+        addSegmented(barData.pwapMean, { ...baseOpts, color: pwap.meanColor || '#f472b6', lineWidth: pwap.meanWidth || 2, lineStyle: pwap.meanStyle ?? 0 })
+      }
+      // Upper/Lower bands
+      if (pwap.showBands !== false) {
+        for (let b = 1; b <= 4; b++) {
+          for (const side of ['Upper', 'Lower']) {
+            addSegmented(barData[`pwap${side}${b}`], { ...baseOpts, color: pwap.bandColor || '#f472b6', lineWidth: pwap.bandWidth || 1, lineStyle: pwap.bandStyle ?? 2 })
+          }
         }
       }
     }
@@ -537,6 +629,47 @@ function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBa
     const dayBoundPrim = new DayBoundaryGridPrimitive()
     dayBoundPrim.setBoundaries(sessionBreaks)
     candleSeries.attachPrimitive(dayBoundPrim)
+
+    // HTF brick overlay (O2 mode)
+    if (indicatorSettings?.htfBars?.enabled && barData.htfBarIndex) {
+      const htfBarIdx = barData.htfBarIndex
+      const htfOpen = barData.htfOpen
+      const htfClose = barData.htfClose
+      const htfHigh = barData.htfHigh
+      const htfLow = barData.htfLow
+      if (htfBarIdx && htfOpen && htfClose) {
+        // Reconstruct HTF bricks by grouping consecutive LTF bars with same htfBarIndex
+        const htfBricks = []
+        let currentBI = null
+        let startPos = 0
+        for (let i = 0; i <= len; i++) {
+          const bi = i < len ? htfBarIdx[i] : null
+          if (bi !== currentBI) {
+            if (currentBI != null) {
+              // Emit brick from startPos to i-1
+              htfBricks.push({
+                ltfBarIndexOpen: startPos,
+                ltfBarIndexClose: i - 1,
+                priceOpen: htfOpen[startPos],
+                priceClose: htfClose[startPos],
+                priceHigh: htfHigh ? htfHigh[startPos] : null,
+                priceLow: htfLow ? htfLow[startPos] : null,
+                isUp: htfClose[startPos] > htfOpen[startPos],
+              })
+            }
+            currentBI = bi
+            startPos = i
+          }
+        }
+        const htfPrim = new HTFRenkoBricksPrimitive()
+        htfPrim.setBricks(htfBricks)
+        htfPrim.setColors({
+          upColor: indicatorSettings.htfBars.upColor || '#3b82f6',
+          downColor: indicatorSettings.htfBars.downColor || '#fb923c',
+        })
+        candleSeries.attachPrimitive(htfPrim)
+      }
+    }
 
     // Trade line primitive (lines connecting entry → exit)
     const tradeLinePrim = new TradeLinePrimitive()
@@ -622,7 +755,7 @@ function BacktestChart({ barData, trades, pricePrecision, showIndicator, focusBa
       tradeLinePrimRef.current = null
       tradeMarkerPrimRef.current = null
     }
-  }, [barData, trades, pricePrecision, lineWeight, lineStyle, markerSize, sessionBreaks, showEMA, showSMAE, showPWAP])
+  }, [barData, trades, pricePrecision, lineWeight, lineStyle, markerSize, sessionBreaks, indicatorSettings])
 
   // Indicator pane (togglable)
   useEffect(() => {

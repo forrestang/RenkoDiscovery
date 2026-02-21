@@ -3580,6 +3580,28 @@ def get_parquet_stats(filepath: str):
             arr = df[src_col].tolist()
             bar_data[dest_key] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
 
+    # Add HTF overlay columns (only present in O2-mode parquets)
+    htf_overlay_cols = {
+        'HTF_open': 'htfOpen', 'HTF_close': 'htfClose',
+        'HTF_high': 'htfHigh', 'HTF_low': 'htfLow',
+        'HTF_bar_index': 'htfBarIndex',
+        'HTF_ltf_bar_index_open': 'htfLtfBarIndexOpen',
+        'HTF_ltf_bar_index_close': 'htfLtfBarIndexClose',
+        'HTF_EMA1_Price': 'htfEma1Price',
+        'HTF_EMA2_Price': 'htfEma2Price',
+        'HTF_EMA3_Price': 'htfEma3Price',
+        'HTF_SMAE1_Center': 'htfSmae1Center',
+        'HTF_SMAE1_Upper': 'htfSmae1Upper',
+        'HTF_SMAE1_Lower': 'htfSmae1Lower',
+        'HTF_SMAE2_Center': 'htfSmae2Center',
+        'HTF_SMAE2_Upper': 'htfSmae2Upper',
+        'HTF_SMAE2_Lower': 'htfSmae2Lower',
+    }
+    for src_col, dest_key in htf_overlay_cols.items():
+        if src_col in df.columns:
+            arr = df[src_col].tolist()
+            bar_data[dest_key] = [None if (isinstance(v, float) and np.isnan(v)) else v for v in arr]
+
     # Compute session break indices from session_date column
     session_breaks = []
     if 'session_date' in df.columns:

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom'
 import Plot from 'react-plotly.js'
 import { COLUMN_DESCRIPTIONS, ColumnItem } from '../utils/columnDescriptions'
 import BacktestChart from './BacktestChart'
+import { IndicatorDropdown, TradeMarkerDropdown } from './BacktestChartControls'
 import './StatsPage.css'
 
 const STORAGE_PREFIX = 'RenkoDiscovery_'
@@ -666,13 +667,54 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     return v !== null ? v === 'true' : true
   })
   const [btChartDecimals, setBtChartDecimals] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btChartDecimals`)) || 5)
-  const [btShowIndicator, setBtShowIndicator] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowIndicator`) === 'true')
-  const [btShowEMA, setBtShowEMA] = useState(() => {
-    const v = localStorage.getItem(`${STORAGE_PREFIX}btShowEMA`)
-    return v === null ? true : v === 'true'
+  const [btIndicatorSettings, setBtIndicatorSettings] = useState(() => {
+    const stored = localStorage.getItem(`${STORAGE_PREFIX}btIndicatorSettings`)
+    const defaults = {
+      ema1:     { enabled: true,  color: '#f59e0b', lineWidth: 2, lineStyle: 0 },
+      ema2:     { enabled: true,  color: '#3b82f6', lineWidth: 2, lineStyle: 0 },
+      ema3:     { enabled: true,  color: '#a855f7', lineWidth: 2, lineStyle: 0 },
+      smae1:    { enabled: false, showCenter: true, centerColor: '#22d3ee', bandColor: '#22d3ee', lineWidth: 1, bandLineStyle: 2 },
+      smae2:    { enabled: false, showCenter: true, centerColor: '#fb923c', bandColor: '#fb923c', lineWidth: 1, bandLineStyle: 2 },
+      htfBars:  { enabled: false, upColor: '#3b82f6', downColor: '#fb923c' },
+      htfEma1:  { enabled: false, color: '#f59e0b', lineWidth: 2, lineStyle: 2 },
+      htfEma2:  { enabled: false, color: '#3b82f6', lineWidth: 2, lineStyle: 2 },
+      htfEma3:  { enabled: false, color: '#a855f7', lineWidth: 2, lineStyle: 2 },
+      htfSmae1: { enabled: false, showCenter: true, centerColor: '#22d3ee', bandColor: '#22d3ee', lineWidth: 1, bandLineStyle: 2 },
+      htfSmae2: { enabled: false, showCenter: true, centerColor: '#fb923c', bandColor: '#fb923c', lineWidth: 1, bandLineStyle: 2 },
+      pwap:     { enabled: false, showMean: true, meanColor: '#f472b6', meanWidth: 2, meanStyle: 0, showBands: true, bandColor: '#f472b6', bandWidth: 1, bandStyle: 2 },
+      indicator: { enabled: false },
+    }
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored)
+        // Deep-merge: defaults + stored (handles future key additions)
+        const merged = {}
+        for (const key of Object.keys(defaults)) {
+          merged[key] = { ...defaults[key], ...(parsed[key] || {}) }
+        }
+        return merged
+      } catch { return defaults }
+    }
+    // Migrate from old individual keys
+    const oldEMA = localStorage.getItem(`${STORAGE_PREFIX}btShowEMA`)
+    const oldSMAE = localStorage.getItem(`${STORAGE_PREFIX}btShowSMAE`)
+    const oldPWAP = localStorage.getItem(`${STORAGE_PREFIX}btShowPWAP`)
+    if (oldEMA !== null || oldSMAE !== null || oldPWAP !== null) {
+      const emaEnabled = oldEMA === null ? true : oldEMA === 'true'
+      const smaeEnabled = oldSMAE === 'true'
+      const pwapEnabled = oldPWAP === 'true'
+      defaults.ema1.enabled = emaEnabled
+      defaults.ema2.enabled = emaEnabled
+      defaults.ema3.enabled = emaEnabled
+      defaults.smae1.enabled = smaeEnabled
+      defaults.smae2.enabled = smaeEnabled
+      defaults.pwap.enabled = pwapEnabled
+      localStorage.removeItem(`${STORAGE_PREFIX}btShowEMA`)
+      localStorage.removeItem(`${STORAGE_PREFIX}btShowSMAE`)
+      localStorage.removeItem(`${STORAGE_PREFIX}btShowPWAP`)
+    }
+    return defaults
   })
-  const [btShowSMAE, setBtShowSMAE] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowSMAE`) === 'true')
-  const [btShowPWAP, setBtShowPWAP] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btShowPWAP`) === 'true')
   const [btLineWeight, setBtLineWeight] = useState(() => parseFloat(localStorage.getItem(`${STORAGE_PREFIX}btLineWeight`)) || 1.5)
   const [btLineStyle, setBtLineStyle] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}btLineStyle`) || 'dotted')
   const [btMarkerSize, setBtMarkerSize] = useState(() => parseInt(localStorage.getItem(`${STORAGE_PREFIX}btMarkerSize`)) || 4)
@@ -759,17 +801,8 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
     localStorage.setItem(`${STORAGE_PREFIX}btChartDecimals`, btChartDecimals.toString())
   }, [btChartDecimals])
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_PREFIX}btShowIndicator`, btShowIndicator.toString())
-  }, [btShowIndicator])
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_PREFIX}btShowEMA`, btShowEMA.toString())
-  }, [btShowEMA])
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_PREFIX}btShowSMAE`, btShowSMAE.toString())
-  }, [btShowSMAE])
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_PREFIX}btShowPWAP`, btShowPWAP.toString())
-  }, [btShowPWAP])
+    localStorage.setItem(`${STORAGE_PREFIX}btIndicatorSettings`, JSON.stringify(btIndicatorSettings))
+  }, [btIndicatorSettings])
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}btLineWeight`, btLineWeight.toString())
   }, [btLineWeight])
@@ -3429,56 +3462,25 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                         <option value={4}>4</option>
                         <option value={5}>5</option>
                       </select>
-                      <label className="backtest-config-label">Line</label>
-                      <select
-                        className="backtest-config-select"
-                        value={btLineWeight}
-                        onChange={e => setBtLineWeight(parseFloat(e.target.value))}
-                      >
-                        <option value={1}>1</option>
-                        <option value={1.5}>1.5</option>
-                        <option value={2}>2</option>
-                        <option value={3}>3</option>
-                      </select>
-                      <select
-                        className="backtest-config-select"
-                        value={btLineStyle}
-                        onChange={e => setBtLineStyle(e.target.value)}
-                      >
-                        <option value="solid">Solid</option>
-                        <option value="dashed">Dashed</option>
-                        <option value="dotted">Dotted</option>
-                      </select>
-                      <label className="backtest-config-label">Marker</label>
-                      <select
-                        className="backtest-config-select"
-                        value={btMarkerSize}
-                        onChange={e => setBtMarkerSize(parseInt(e.target.value))}
-                      >
-                        <option value={2}>2</option>
-                        <option value={3}>3</option>
-                        <option value={4}>4</option>
-                        <option value={5}>5</option>
-                        <option value={6}>6</option>
-                      </select>
+                      <IndicatorDropdown
+                        settings={btIndicatorSettings}
+                        onChange={setBtIndicatorSettings}
+                        hasHTF={!!stats?.barData?.htfBarIndex}
+                        hasSMAE={!!stats?.barData?.smae1Center}
+                        hasPWAP={!!stats?.barData?.pwapMean}
+                      />
+                      <TradeMarkerDropdown
+                        lineWeight={btLineWeight}
+                        lineStyle={btLineStyle}
+                        markerSize={btMarkerSize}
+                        onLineWeightChange={setBtLineWeight}
+                        onLineStyleChange={setBtLineStyle}
+                        onMarkerSizeChange={setBtMarkerSize}
+                      />
                       <button
-                        className={`filter-action-btn${btShowIndicator ? ' active' : ''}`}
-                        onClick={() => setBtShowIndicator(p => !p)}
+                        className={`filter-action-btn${btIndicatorSettings.indicator?.enabled ? ' active' : ''}`}
+                        onClick={() => setBtIndicatorSettings(p => ({ ...p, indicator: { ...p.indicator, enabled: !p.indicator.enabled } }))}
                       >Indicator</button>
-                      <button
-                        className={`filter-action-btn${btShowEMA ? ' active' : ''}`}
-                        onClick={() => setBtShowEMA(p => !p)}
-                      >EMA</button>
-                      <button
-                        className={`filter-action-btn${btShowSMAE ? ' active' : ''}`}
-                        onClick={() => setBtShowSMAE(p => !p)}
-                        disabled={!stats?.barData?.smae1Center}
-                      >ENV</button>
-                      <button
-                        className={`filter-action-btn${btShowPWAP ? ' active' : ''}`}
-                        onClick={() => setBtShowPWAP(p => !p)}
-                        disabled={!stats?.barData?.pwapMean}
-                      >PWAP</button>
                     </>
                   )}
                   <button
@@ -3494,14 +3496,12 @@ function StatsPage({ stats, filename, filepath, isLoading, onDelete, apiBase }) 
                       barData={stats.barData}
                       trades={btChartTrades}
                       pricePrecision={btChartDecimals}
-                      showIndicator={btShowIndicator}
+                      showIndicator={btIndicatorSettings.indicator?.enabled}
                       focusBar={btFocusBar}
                       lineWeight={btLineWeight}
                       lineStyle={btLineStyle}
                       markerSize={btMarkerSize}
-                      showEMA={btShowEMA}
-                      showSMAE={btShowSMAE}
-                      showPWAP={btShowPWAP}
+                      indicatorSettings={btIndicatorSettings}
                       sessionBreaks={stats.sessionBreaks || []}
                     />
                   </div>
